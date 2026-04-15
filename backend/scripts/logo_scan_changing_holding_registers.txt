@@ -1,0 +1,7 @@
+RUN NORMAL
+cd /Users/jerry/APPS/valke-apps/agro_data_control/backend
+dart run scripts/logo_scan_changing_holding_registers.dart --host 192.168.10.51 --port 502 --unit-id 1 --start 0 --count 60 --samples 30 --interval-ms 1000
+
+RUN FUERTE
+cd /Users/jerry/APPS/valke-apps/agro_data_control/backend
+dart run scripts/logo_scan_changing_holding_registers.dart --host 192.168.10.51 --port 502 --unit-id 1 --start 0 --count 120 --samples 120 --interval-ms 1000 --csv

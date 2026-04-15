@@ -1,0 +1,41 @@
+PROGRAMACION BASICA
+
+
+
+PROGRAMACION PROFUNDA
+Datos técnicos
+1,5v a 10v velocidad de fans.
+10v = 2570 rpm
+
+Icono indicador en cada modulo cuando hay un problema. Hay que definir cuales son los disparadores de los eventos.
+Tablero de Alarmas deben estar todas las alarmas
+Iconos ventiladores apagados en gris, y en rojo cuando es falla. (Ver como detectar la falla).
+Aperturas de munters: diferenciar con supervisión de sin supervisión.
+Estados: Apagado, En mantenimiento (se usa una llave), En Marcha, En Emergencia (indica que hay alguna alarma activada).
+Indicar con iconos si están encendidas las resistencias o el humidificador, al lado de las temperaturas en secciónenles AMBIENTE.
+
+
+
+
+
+
+
+
+
+
+
+
+Alarma general indica algún problema en algún estado.
+
+
+TAREAS FINALIZADAS
+- Fans apagados en rojo, porque todos deberían estar encendidos: Hecho
+- Eliminar Comparativo como titulo: Hecho
+- Eliminar delta de las medidas de temp y hum exterior,
+- PLC en linea en cada Munters (debajo de los títulos Munters 1 y MUnters 2)
+- Mantener Munters 1 y Munters 2 arriba fijo como titulo.
+- Estados Mecanicos: Sala abierta es malo (rojo) y cerrada es bueno.
+- Bomba humidificador: cambiar si / no por ON / OFF
+- Munter es Puerta de Munter, para saber si abrieron el equipo. Y la lógica es la misma> abierto es malo, cerrado es bueno.
+- Funcionamiento arriba, como primer modulo
+- Calefacción. Cambiar si/no por on/off.

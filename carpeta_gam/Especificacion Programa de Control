@@ -1,0 +1,61 @@
+A continuación te paso qué deberíamos controlar en AgroData Control, según las salidas del PLC.
+El programa ya está hecho y funciona. Es un programa bastante grande que controla uno de los equipos Munters "Munters 1" (hay 2 equipos munters y deberíamos tener este mismo esquema para el "Munters 2").
+
+Visualizar:
+
+Alarma General
+	 Salida= Q12
+
+Temperatura y humedad interior de sala y exterior 
+	Temperatura interior = AM1
+	Humedad Interior = AM4
+	Temperatura Exterior = AM5
+	Humedad Exterios = AM6
+
+Velocidad de forzadores 
+	Fans Q5; Q6; Q7 = AQ1 Salida analogica de 0-10v
+	Fans Q8; Q9; Q10 = AQ2 Salida analogica de 0-10v
+
+Estados de Variadores (ON - OFF)
+ Fans Q5; Q6; Q7; Q8; Q9; Q10
+
+Estado de bomba humidificador (ON - OFF)
+	Bomba = Q1 
+
+Contador de Sin Agua Tanque Humidificador
+	Contador= C053
+
+Estado de Resistencias (ON-OFF)
+	Etapa1 = Q2 
+	Etapa 2 = Q3
+
+Numero de aperturas de sala y su estado (abierto o Cerrado)
+	Contador = C012
+	Micro = I9
+
+Contador de apertura puerta Muntes y su estado (abierto o Cerrado)
+	Contador =C054
+	Micro = I6 (indica si esta abierta o cerrada).
+
+Numero de apagadas de Munter su estado (Encendido o apagado)
+	Contador =C056
+	Salida fan = Q5
+
+
+Falla por problema de red eléctrica (alarma)
+	Entrada = I2
+
+Contador de horas Funcionamiento Munter.
+	Contador = C052
+
+Contador de Horas Panel humidificador
+	Contador = C059
+
+Contador de Horas Filtro F9 (bacteriológico )
+	Contador = C062
+
+Contador de Horas Filtro G4 (Pre filtro )
+	Contador = C061
+
+Contador dev Horas Polifofato
+	Contador = C063

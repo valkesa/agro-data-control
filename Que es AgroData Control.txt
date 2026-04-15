@@ -1,0 +1,480 @@
+Al 10/04/26, esto es lo que tenemos
+
+Agro Data Control: explicación integral del proyecto
+1. Qué es Agro Data Control
+
+Agro Data Control es una plataforma orientada al monitoreo y visualización de variables productivas en granjas, especialmente en ambientes tecnificados donde hay equipos de control climático y automatización.
+
+En este caso, el foco actual está puesto en:
+
+lectura de datos de PLCs Siemens LOGO!
+integración con equipos Munters
+visualización web de variables clave
+registro histórico de ciertos datos
+futura capacidad multiusuario / multicliente
+
+La idea central del sistema es simple:
+
+tomar datos del mundo físico, procesarlos en un backend y mostrarlos en una interfaz web clara, accesible y útil para supervisión operativa.
+
+No es solo “una página que muestra números”. Es una arquitectura que conecta:
+
+hardware industrial
+red
+backend de lectura
+frontend web
+persistencia de configuración e históricos
+posible esquema multi-tenant para distintos clientes
+2. Qué problema resuelve
+
+En un entorno productivo, muchas variables importantes quedan encerradas dentro del PLC o dentro del equipo de control y no están disponibles de forma cómoda para supervisión remota, análisis o trazabilidad.
+
+Agro Data Control busca resolver eso permitiendo:
+
+ver el estado de los equipos desde cualquier navegador
+centralizar variables operativas relevantes
+detectar situaciones anormales
+construir histórico de datos
+tener una base escalable para agregar más sensores, más equipos y más clientes
+
+En otras palabras, transforma información industrial dispersa o poco accesible en un dashboard web de supervisión operativa.
+
+3. Qué hace hoy la app
+
+Hoy la app está enfocada en mostrar información de unidades tipo Munters conectadas o relacionadas con un PLC Siemens LOGO.
+
+Actualmente puede:
+
+leer datos del PLC por Modbus/TCP
+exponer esos datos vía una API backend
+mostrar esos datos en una web hecha en Flutter
+reflejar estados operativos del PLC/equipos
+guardar ciertos históricos, como temperatura, en Firestore
+mantener configuraciones del dashboard
+preparar el camino para multi-cliente y autenticación
+
+Entre las cosas que puede mostrar o fue diseñada para mostrar están:
+
+temperatura interna
+humedad interna
+temperatura externa
+humedad externa
+presión diferencial
+setpoints o variables de control
+estado manual/automático
+estado de ventiladores
+salidas digitales específicas
+contadores u horas de funcionamiento
+estado de conectividad / salud del PLC
+4. Cómo funciona a nivel general
+
+La arquitectura lógica es esta:
+
+Capa 1: PLC / Equipos de campo
+
+En planta hay un Siemens LOGO! 8.4 que expone información por Modbus/TCP.
+También hay equipos Munters y distintas señales físicas asociadas.
+
+Capa 2: Backend
+
+Un backend en Dart se conecta al PLC, consulta los registros Modbus, interpreta los valores y arma un “snapshot” consolidado del estado actual.
+
+Capa 3: API
+
+Ese backend expone un endpoint HTTP, por ejemplo:
+
+/snapshot
+/api/snapshot
+
+Desde ahí el frontend obtiene el estado actual del sistema.
+
+Capa 4: Frontend
+
+La interfaz web, hecha en Flutter Web, consulta ese endpoint y renderiza el dashboard en tiempo real o semi tiempo real.
+
+Capa 5: Firestore
+
+Firestore se usa para persistir información que no conviene dejar solo en memoria o en el PLC, por ejemplo:
+
+históricos de temperatura
+configuraciones del dashboard
+datos de clientes / unidades
+futura estructura multi-tenant
+5. Explicación del Frontend
+Tecnología
+
+El frontend está hecho en Flutter Web.
+
+Eso significa que la interfaz se desarrolla con Flutter/Dart pero se publica como aplicación web, accesible desde navegador.
+
+Por qué Flutter
+
+Flutter permite:
+
+una UI moderna
+buena velocidad de desarrollo
+reutilización de modelos y lógica en Dart
+mantener consistencia visual
+escalar a futuro a otras plataformas si hiciera falta
+Qué hace el frontend
+
+El frontend tiene como responsabilidad principal:
+
+consumir el snapshot del backend
+parsear el JSON recibido
+mostrar las variables del dashboard
+presentar estados visuales entendibles
+mostrar históricos o mini gráficos
+eventualmente permitir configuración persistente
+
+No habla directamente con el PLC.
+Eso es importante.
+
+El frontend no debe conectarse al hardware industrial.
+El frontend habla con el backend, y el backend habla con el PLC.
+
+Ventajas de esa separación
+
+Esto da varias ventajas:
+
+más seguridad
+menos complejidad en el cliente
+lógica centralizada
+posibilidad de cambiar mappings o validaciones sin tocar tanto la UI
+mejor control de timeouts, errores y diagnósticos
+Qué ve el usuario en la web
+
+La web funciona como un tablero operativo.
+Busca que una persona pueda entrar y entender rápidamente:
+
+si el sistema está recibiendo datos
+cómo están las variables ambientales
+si los equipos están en estado normal o anómalo
+si el PLC parece online, offline o con problemas
+cómo evolucionó cierta variable en el tiempo
+6. Explicación del Backend
+Tecnología
+
+El backend está hecho en Dart, separado del frontend.
+
+No es un backend genérico de CRUD.
+Es un backend especializado en:
+
+conectarse al PLC
+leer Modbus
+transformar señales crudas en datos útiles
+consolidar estado
+exponerlo por HTTP
+Qué hace concretamente
+
+El backend corre un proceso que:
+
+se conecta al PLC
+lee periódicamente registros Modbus
+interpreta esos valores
+arma una estructura de snapshot
+la deja disponible vía API
+en algunos casos persiste históricos o metadatos
+Polling
+
+La lectura funciona mediante polling periódico.
+Es decir, cada cierto intervalo el backend vuelve a consultar el PLC.
+
+Eso permite:
+
+tener datos relativamente frescos
+desacoplar la UI del timing del hardware
+manejar reintentos, timeouts y fallos de forma controlada
+Qué resuelve el backend que el frontend no debería resolver
+
+El backend se ocupa de toda la parte delicada:
+
+conexiones de red al PLC
+timeouts
+errores de socket
+interpretación de coils, holding registers y discrete inputs
+conversión de tipos
+manejo de señales inválidas
+definición de estado operativo
+logs y diagnóstico
+Snapshot
+
+El concepto central del backend es el snapshot.
+
+Un snapshot es una “foto” del estado actual del sistema, que incluye por ejemplo:
+
+estado general del PLC
+estado por unidad (munters1, munters2)
+variables medidas
+señales derivadas
+timestamps
+diagnósticos de lectura
+
+El frontend no necesita saber toda la complejidad de Modbus.
+Solo consume un snapshot limpio.
+
+7. Cómo interviene Modbus
+Protocolo
+
+El backend se comunica con el PLC por Modbus/TCP.
+
+Qué se lee
+
+En Modbus se pueden leer áreas como:
+
+coils
+discrete inputs
+holding registers
+Qué dificultad tiene esto
+
+La dificultad no está solo en “leer algo”.
+La dificultad real está en:
+
+saber en qué dirección está cada señal
+entender cómo está mapeada en el PLC
+distinguir bits, words, flags y escalas
+evitar errores de interpretación
+
+Gran parte del trabajo del proyecto estuvo precisamente en validar mappings reales, porque una definición errónea hace que la web muestre estados falsos.
+
+Por ejemplo, en este proyecto se fue validando qué coil o qué registro representa de verdad cada ventilador, cada salida y cada variable ambiental.
+
+8. Qué rol cumple Firestore
+No es la fuente del dato industrial en tiempo real
+
+Firestore no reemplaza al PLC y no es la fuente primaria del estado operativo instantáneo.
+
+La fuente real de los datos de proceso es:
+
+PLC -> backend -> snapshot
+
+Entonces, para qué se usa Firestore
+
+Firestore sirve para persistencia complementaria. Por ejemplo:
+
+configuraciones del dashboard
+históricos de temperatura
+datos de clientes
+datos de unidades
+futura autenticación y permisos por cliente
+settings compartidos entre usuarios
+Ejemplo claro
+
+Si querés guardar la temperatura diaria o un histórico para hacer mini gráficos, eso tiene sentido en Firestore.
+
+Si querés saber si ahora mismo el ventilador está prendido, eso debe venir del snapshot del backend, no de Firestore.
+
+Ventajas de usar Firestore
+backend serverless complementario para datos persistentes
+escalabilidad
+integración natural con Flutter
+fácil estructura multi-tenant
+buena opción para settings compartidos y datos históricos
+9. Diferencia entre backend y Firestore
+
+Esto conviene explicarlo bien porque mucha gente lo mezcla.
+
+Backend
+
+Sirve para:
+
+conectarse al PLC
+leer datos industriales
+procesar estado actual
+resolver conectividad y protocolo
+exponer la API en vivo
+Firestore
+
+Sirve para:
+
+guardar configuraciones
+guardar históricos
+manejar estructura de clientes/unidades
+persistir datos que sobreviven al reinicio del backend
+Resumen simple
+backend = tiempo real / integración industrial
+Firestore = persistencia / configuración / histórico
+10. Flujo completo de datos
+
+Te lo dejo en formato bien claro:
+
+El PLC tiene variables reales del proceso.
+El backend se conecta por Modbus/TCP.
+El backend lee coils / registers / inputs.
+El backend interpreta esos valores.
+El backend genera un snapshot JSON.
+El frontend consulta ese snapshot.
+El frontend renderiza la información en la web.
+Algunas configuraciones e históricos se guardan en Firestore.
+El frontend también puede leer de Firestore para históricos o settings.
+11. Infraestructura actual
+Hosting del frontend
+
+El frontend puede estar publicado en:
+
+VPS propio
+o Firebase Hosting / hosting externo
+Backend
+
+El backend corre en un VPS, generalmente detrás de:
+
+systemd para mantener el proceso vivo
+Caddy como reverse proxy
+Red
+
+La comunicación con el PLC suele requerir conectividad especial porque el PLC está en una red local industrial.
+
+Para eso se usa una red tipo:
+
+WireGuard o VPN equivalente
+
+Eso permite que el VPS alcance la red donde está el PLC.
+
+Reverse proxy
+
+Caddy se usa para:
+
+servir el frontend si hiciera falta
+exponer /api/*
+redirigir al backend local
+manejar compresión y routing
+12. Arquitectura tecnológica resumida
+Frontend
+Flutter Web
+Dart
+UI del dashboard
+consume API + Firestore
+Backend
+Dart
+Modbus/TCP
+polling
+armado de snapshot
+API HTTP
+Persistencia / nube
+Firebase / Firestore
+settings
+históricos
+estructura multi-cliente
+Infraestructura
+VPS
+systemd
+Caddy
+WireGuard / VPN
+13. Qué valor tiene el proyecto
+
+Desde negocio y operación, Agro Data Control tiene mucho valor porque:
+
+convierte automatización en información visible
+permite supervisión remota
+reduce dependencia de mirar localmente el PLC
+prepara el terreno para alertas e inteligencia operativa
+puede crecer hacia un producto multi-cliente
+une industria tradicional con software moderno
+
+No es solamente “leer sensores”.
+Es empezar a construir una capa digital de control y supervisión sobre procesos reales.
+
+14. Qué tan escalable es
+
+La base es bastante escalable conceptualmente.
+
+Se puede crecer en varias direcciones:
+
+Más variables
+
+Agregar más registers, coils y señales.
+
+Más equipos
+
+No solo Munters. También otros PLCs o dispositivos compatibles.
+
+Más clientes
+
+Con Firestore y una estructura multi-tenant, podría haber distintos clientes con sus propios dashboards.
+
+Más funcionalidades
+alertas
+históricos más ricos
+analytics
+tendencias
+reportes
+login por usuario
+permisos
+configuración remota
+comparación entre granjas o salas
+15. Limitaciones actuales o trade-offs
+
+También es importante explicarlas con honestidad.
+
+1. Dependencia del backend para datos en vivo
+
+Si el backend se cae, el frontend puede quedar mostrando datos viejos si no se maneja bien el error.
+Eso ya fue un punto de trabajo importante.
+
+2. Complejidad del mapping industrial
+
+Si el mapeo Modbus no está perfectamente validado, puede haber lecturas incorrectas.
+
+3. Firestore no reemplaza lógica industrial
+
+No conviene mezclar demasiado tiempo real con persistencia. Hay que mantener clara la separación de roles.
+
+4. Conectividad
+
+La calidad de la solución depende de que exista conectividad entre VPS y PLC.
+
+5. Diagnóstico de estados reales
+
+Distinguir entre:
+
+PLC apagado
+PLC en stop
+backend caído
+red caída
+snapshot viejo
+
+no siempre es trivial.
+Se requiere lógica específica y bien pensada.
+
+16. Cómo lo explicaría en una versión corta
+
+Si querés una versión corta para contar verbalmente:
+
+Agro Data Control es una plataforma web para monitorear variables de equipos y PLCs en entornos productivos. El backend se conecta al PLC por Modbus/TCP, lee los datos y genera un snapshot del estado actual. El frontend, hecho en Flutter Web, consume ese snapshot y lo muestra en un dashboard claro y accesible desde navegador. Firestore se usa para guardar históricos, configuraciones y estructura de clientes, mientras que el backend se encarga de la parte de tiempo real y conectividad industrial. La idea es transformar datos de planta en información útil, remota y escalable.
+
+17. Cómo lo explicaría en una versión más comercial
+
+Agro Data Control digitaliza la supervisión operativa de ambientes productivos. Integra hardware industrial con software moderno para ofrecer visibilidad remota, monitoreo en tiempo real, históricos y una base escalable para control, trazabilidad y futura analítica.
+
+18. Cómo lo explicaría en una versión más técnica
+
+Agro Data Control es una solución compuesta por un frontend en Flutter Web, un backend en Dart y persistencia en Firestore. El backend realiza polling sobre PLCs Siemens LOGO! vía Modbus/TCP, normaliza y consolida señales en un snapshot JSON servido por API HTTP. El frontend consume ese snapshot para renderizar dashboards operativos y complementa la experiencia con datos persistidos en Firestore, como históricos de temperatura y configuraciones. La infraestructura corre sobre VPS con systemd, Caddy y conectividad VPN hacia la red industrial.
+
+19. Qué puntos conviene remarcarle a otra persona
+
+Si se lo vas a explicar a alguien que debe entender bien el proyecto, yo remarcaría estos:
+
+A. No es solo una web
+
+Es un sistema completo que conecta software con automatización industrial.
+
+B. El backend es clave
+
+El backend es el puente entre el PLC y la UI. Sin esa capa, el frontend no debería tocar el hardware.
+
+C. Firestore cumple un rol complementario
+
+Sirve para persistencia, no para reemplazar el tiempo real industrial.
+
+D. Flutter fue una decisión tecnológica deliberada
+
+Se buscó velocidad de desarrollo, UI moderna y consistencia usando Dart en frontend.
+
+E. El verdadero activo del proyecto no es solo la pantalla
+
+También lo es:
+
+el modelo de datos
+la validación del mapping
+la arquitectura
+la capacidad de escalar a más clientes y más equipos

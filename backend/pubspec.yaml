@@ -1,0 +1,12 @@
+name: agro_data_control_backend
+description: Backend adapter for Siemens LOGO! Modbus TCP snapshots.
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  args: ^2.7.0
+  dart_jsonwebtoken: ^2.8.0
+  modbus_client: ^1.4.4
+  modbus_client_tcp: ^1.2.3

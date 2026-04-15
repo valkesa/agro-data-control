@@ -1,0 +1,8 @@
+Solo holding registers:
+dart run scripts/logo_scan_modbus_activity.dart --host 192.168.10.51 --port 502 --unit-id 1 --hr-start 0 --hr-count 80 --coil-count 0 --di-count 0 --samples 120 --interval-ms 500
+
+Solo coils:
+dart run scripts/logo_scan_modbus_activity.dart --host 192.168.10.51 --port 502 --unit-id 1 --hr-count 0 --coil-start 0 --coil-count 80 --di-count 0 --samples 120 --interval-ms 500
+
+Solo discrete inputs:
+dart run scripts/logo_scan_modbus_activity.dart --host 192.168.10.51 --port 502 --unit-id 1 --hr-count 0 --coil-count 0 --di-start 0 --di-count 40 --samples 120 --interval-ms 500

@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!--
+    If you are serving your web app in a path other than the root, change the
+    href value below to reflect the base path you are serving from.
+
+    The path provided below has to start and end with a slash "/" in order for
+    it to work correctly.
+
+    For more details:
+    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
+
+    This is a placeholder for base href that will be replaced by the value of
+    the `--base-href` argument provided to `flutter build`.
+  -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes"
+  >
+  <style>
+    html,
+    body {
+      touch-action: pinch-zoom;
+      overscroll-behavior: auto;
+    }
+
+    flt-glass-pane,
+    flt-scene-host,
+    flt-scene,
+    flutter-view,
+    canvas {
+      touch-action: pinch-zoom !important;
+      overscroll-behavior: auto !important;
+    }
+  </style>
+
+  <!-- iOS meta tags & icons -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="agro_data_control">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>agro_data_control</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!--
+    You can customize the "flutter_bootstrap.js" script.
+    This is useful to provide a custom configuration to the Flutter loader
+    or to give the user feedback during the initialization process.
+
+    For more details:
+    * https://docs.flutter.dev/platform-integration/web/initialization
+  -->
+  <script>
+    // Este script corre ANTES de que Flutter cargue (flutter_bootstrap.js es async).
+    // Fuerza touch-action: pinch-zoom con !important en todos los elementos Flutter,
+    // y re-aplica cada vez que Flutter resetea el atributo style.
+    (function () {
+      var selectors = [
+        'flt-glass-pane',
+        'flt-scene-host',
+        'flt-scene',
+        'flutter-view',
+        'canvas',
+      ];
+
+      function applyPinchZoom() {
+        for (var i = 0; i < selectors.length; i++) {
+          var elements = document.querySelectorAll(selectors[i]);
+          for (var j = 0; j < elements.length; j++) {
+            var el = elements[j];
+            // Solo tocar si ya no está configurado correctamente (evita loops).
+            if (
+              el.style.getPropertyValue('touch-action') !== 'pinch-zoom' ||
+              el.style.getPropertyPriority('touch-action') !== 'important'
+            ) {
+              // setProperty con 'important' supera cualquier inline style de Flutter.
+              el.style.setProperty('touch-action', 'pinch-zoom', 'important');
+            }
+          }
+        }
+      }
+
+      applyPinchZoom();
+
+      // Observar TANTO adición de nodos COMO cambios en el atributo style.
+      // Flutter resetea touch-action cambiando el atributo style de elementos
+      // existentes — eso no dispara childList, solo attributes.
+      new MutationObserver(applyPinchZoom).observe(document.documentElement, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['style'],
+      });
+    })();
+  </script>
+  <script src="flutter_bootstrap.js" async></script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dart analyze:*)",
+      "Bash(ssh root@72.60.57.85 \"ls -la /root/backend/config/\")",
+      "Bash(cat /Users/jerry/APPS/valke-apps/agro_data_control/backend/config/*.json)"
+    ]
+  }
+}

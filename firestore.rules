@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return /databases/$(database)/documents/users/$(request.auth.uid);
+    }
+
+    function userData() {
+      return get(userDoc()).data;
+    }
+
+    function hasUserContext() {
+      return signedIn()
+        && exists(userDoc())
+        && userData().active == true;
+    }
+
+    function isUserActiveTenant(tenantId) {
+      return hasUserContext() && userData().activeTenantId == tenantId;
+    }
+
+    function memberDoc(tenantId) {
+      return /databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid);
+    }
+
+    function membershipData(tenantId) {
+      return get(memberDoc(tenantId)).data;
+    }
+
+    function isTenantMember(tenantId) {
+      return isUserActiveTenant(tenantId)
+        && exists(memberDoc(tenantId))
+        && membershipData(tenantId).active == true;
+    }
+
+    function memberRole(tenantId) {
+      return membershipData(tenantId).role;
+    }
+
+    function canEditTenantConfig(tenantId) {
+      return isTenantMember(tenantId)
+        && (memberRole(tenantId) == 'owner' || memberRole(tenantId) == 'admin');
+    }
+
+    function isOwner() {
+      return hasUserContext() && userData().role == 'owner';
+    }
+
+    match /users/{uid} {
+      allow get: if signedIn() && (request.auth.uid == uid || isOwner());
+      allow list: if isOwner();
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.role == 'tenant_operator'
+        && request.resource.data.active == false;
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']);
+      allow delete: if false;
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if isTenantMember(tenantId) || isOwner();
+
+      match /members/{uid} {
+        allow get: if (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId)) || isOwner();
+        allow list: if isOwner();
+        allow create, update, delete: if false;
+      }
+
+      match /sites/{siteId} {
+        allow read: if isTenantMember(tenantId) || isOwner();
+
+        match /settings/{docId} {
+          allow read: if isTenantMember(tenantId) || isOwner();
+          allow create, update: if docId == 'controlDashboard' && (canEditTenantConfig(tenantId) || isOwner());
+          allow delete: if false;
+        }
+      }
+    }
+
+    match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/temperature {
+      allow read: if isTenantMember(tenantId) || isOwner();
+      allow create, update, delete: if false;
+
+      match /hourly/{docId} {
+        allow read: if isTenantMember(tenantId) || isOwner();
+        allow create, update, delete: if false;
+      }
+
+      match /daily/{docId} {
+        allow read: if isTenantMember(tenantId) || isOwner();
+        allow create, update, delete: if false;
+      }
+    }
+
+    match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/waterShortage {
+      allow read: if isTenantMember(tenantId) || isOwner();
+      allow create, update: if isTenantMember(tenantId) || isOwner();
+      allow delete: if false;
+
+      match /events/{eventId} {
+        allow read: if isTenantMember(tenantId) || isOwner();
+        allow create: if isTenantMember(tenantId) || isOwner();
+        allow update, delete: if false;
+      }
+
+      match /monthly/{monthKey} {
+        allow read: if isTenantMember(tenantId) || isOwner();
+        allow create, update: if isTenantMember(tenantId) || isOwner();
+        allow delete: if false;
+      }
+    }
+  }
+}

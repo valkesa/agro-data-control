@@ -1,0 +1,263 @@
+
+🔴 1.
+Problema potencial: list en members
+allow get, list: if signedIn() && request.auth.uid == uid;
+list permite queries sobre la colección
+pero esa condición no protege bien el conjunto
+👉 Podrías estar exponiendo metadata si hacés queries raras
+Recomendación:
+allow get: if signedIn() && request.auth.uid == uid;
+allow list: if false;
+👉 más seguro y suficiente para tu modelo
+
+
+🔴 2.
+Falta protección en tenant root (lectura total)
+allow read: if isTenantMember(tenantId);
+Esto permite leer TODO el documento tenant.
+👉 hoy no es grave, pero ojo si después metés:
+
+billing
+configs internas
+métricas
+Recomendación (futuro):
+
+eventualmente separar:
+tenants/{tenantId}/public
+tenants/{tenantId}/private
+
+
+🔴 3.
+No validás estructura en writes
+Hoy permitís:
+allow create, update: if docId == 'controlDashboard' && canEditTenantConfig(...)
+Pero no validás:
+
+tipos
+campos permitidos
+límites
+
+👉 riesgo:
+un cliente podría escribir cualquier cosa
+
+Ejemplo riesgo:
+{
+  "munters": "hola",
+  "hack": true
+}
+Recomendación (más adelante):
+validaciones tipo:
+request.resource.data.munters is map
+
+
+🔴 4.
+Falta control de updatedByUid
+Ya lo estás guardando (bien), pero no lo validás.
+👉 cualquiera podría falsificarlo desde el cliente
+Mejor (futuro):
+request.resource.data.updatedByUid == request.auth.uid
+
+
+
+
+🔴 5.
+Validación de existencia de user doc
+
+Antes de hacer:
+
+doc.data()
+
+tenés que validar:
+
+if (!doc.exists) {
+  // usuario sin configuración
+}
+
+👉 si no, podés romper.
+
+🔴 6.
+Validar campos críticos
+
+No asumas que existen:
+
+final tenantId = data['activeTenantId'];
+final siteId = data['defaultSiteId'];
+
+Mejor:
+
+if (data['activeTenantId'] == null || data['defaultSiteId'] == null) {
+  // estado inválido
+}
+
+👉 Esto te salva de bugs raros más adelante.
+
+🔴 7.
+Reglas Firestore (chequeo clave)
+
+Ahora necesitás esto sí o sí:
+
+users
+match /users/{userId} {
+  allow read: if request.auth != null && request.auth.uid == userId;
+}
+members (sin list global)
+match /tenants/{tenantId}/members/{uid} {
+  allow get: if request.auth != null && request.auth.uid == uid;
+  allow list: if false;
+}
+
+👉 Con esto evitás volver a caer en el problema anterior.
+
+🔴 8.
+Seguridad: validación real en tenant access
+
+Ahora tu acceso depende de:
+
+users/{uid} → activeTenantId
+
+👉 pero eso no es suficiente seguridad por sí solo
+
+Necesitás que tus reglas también verifiquen membresía:
+
+function isTenantMember(tenantId) {
+  return exists(/databases/$(database)/documents/tenants/$(tenantId)/members/$(request.auth.uid));
+}
+
+Y usarlo en:
+
+match /tenants/{tenantId}/sites/{siteId}/settings/{docId} {
+  allow read: if isTenantMember(tenantId);
+}
+
+👉 Esto evita que alguien edite el users/{uid} y acceda a otro tenant.
+
+
+
+🔴 9.
+Timeout (CRÍTICO en tu caso)
+
+Tu backend está en VPS + VPN + PLC.
+
+👉 puede tardar.
+
+Si no pusiste timeout, estás en riesgo de que la UI quede colgada.
+
+Agregá esto sí o sí:
+final response = await http
+    .get(Uri.parse('$baseUrl/api/snapshot'))
+    .timeout(const Duration(seconds: 5));
+
+👉 5–8 segundos razonable.
+
+
+
+🔴 10.
+Manejo de backend caído
+
+Tenés que diferenciar:
+
+❌ backend caído
+❌ backend responde pero PLC offline
+❌ JSON inválido
+
+No mezclar todo como “error”.
+
+Ejemplo:
+
+if (response.statusCode != 200) {
+  throw Exception('Backend error ${response.statusCode}');
+}
+
+
+🔴 11.
+Validar JSON antes de usarlo
+
+Muy común error:
+
+final data = jsonDecode(response.body);
+
+👉 sin validar estructura.
+
+Mínimo:
+if (data is! Map<String, dynamic>) {
+  throw Exception('Invalid response format');
+}
+
+🔴 12.
+No atar UI al JSON crudo
+
+Si estás haciendo algo tipo:
+
+Text(data['munters1']['tempInterior'].toString())
+
+👉 eso es frágil.
+
+Para esta etapa está bien, pero mínimo:
+
+usar ?.
+defaults
+final temp = data['munters1']?['tempInterior'] ?? 'N/A';
+
+🔴 13.
+Botón “Releer”
+
+Clave que haga esto:
+
+👉 vuelva a llamar al backend
+
+No solo refrescar UI.
+
+🔴 14.
+Evitar mezclar errores de Firestore con backend
+
+Ahora tenés dos mundos:
+
+Firestore OK pero backend FAIL
+Backend OK pero Firestore FAIL
+
+👉 UI tiene que reflejar eso separado.
+
+🔴 15.
+Firestore por REST + token manual
+“usa FIRESTORE_ACCESS_TOKEN”
+Esto es frágil.
+Problemas:
+el token expira
+tenés que renovarlo
+riesgo de caídas silenciosas
+👉 Recomendación:
+En cuanto puedas, migrá a:
+Service Account + OAuth automático
+o usar el SDK oficial (si es viable en Dart backend)
+
+🔴 16.
+⚠️ 3. Recalcular daily cada hora (para el calculo de las temperaturas)
+
+“recalcula el daily usando los hourly del día”
+Funciona, pero no es óptimo.
+Problema:
+cada hora estás leyendo todos los hourly del día
+escala peor con muchos PLCs
+👉 Alternativa mejor (más adelante):
+mantener el daily incremental (tipo monthlyStats que ya usás en Simplex)
+Pero por ahora está OK.
+
+🔴 17.
+
+clientId derivado de clientName
+Funciona, pero no es ideal como identidad estable.
+Riesgo:
+si cambiás el nombre visible del cliente,
+cambia el sanitizado,
+y te puede romper paths.
+A futuro, lo correcto sería tener un clientId real, estable, separado del nombre.
+
+🔴 18.
+Query daily todavía por dateKey
+Está bien por ahora.
+Pero sí, más adelante conviene migrar a orderBy(timestampDayStart desc) cuando ya tengas suficientes documentos nuevos.
+
+🔴 19.
+Cache TTL fijo
+Está bien para v1 mejorada.
+Más adelante capaz querés invalidación manual o refresh pull-to-refresh, pero ahora no es prioridad.

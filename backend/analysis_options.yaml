@@ -1,0 +1,7 @@
+analyzer:
+  exclude:
+    - tmp/**
+
+linter:
+  rules:
+    - avoid_print: false

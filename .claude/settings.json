@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dart pub:*)",
+      "Bash(dart scripts/seed_temperature_data.dart)",
+      "Bash(ssh root@72.60.57.85 \"cat /etc/systemd/system/agrodata-backend.service\")",
+      "Bash(ssh -i ~/.ssh/id_rsa root@72.60.57.85 \"cat /etc/systemd/system/agrodata-backend.service && echo '---' && cat /root/backend/config/sites/default.json\")",
+      "Read(//Users/jerry/.ssh/**)",
+      "Bash(dart scripts/delete_seed_temperature_data.dart)",
+      "Bash(bash deploy-backend.sh)",
+      "Bash(flutter build:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(flutter analyze:*)"
+    ]
+  }
+}
