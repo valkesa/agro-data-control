@@ -163,13 +163,9 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final _ModuleStatus functioningStatus = _resolveFunctioningModuleStatus(
       <MuntersModel>[munters1, munters2],
     );
-    final _WitnessDotVisual plcWitnessVisual = _resolvePlcWitnessVisual(
-      <MuntersModel>[munters1, munters2],
-    );
-    final bool hasFunctioningStop =
-        _isPlcStopState(munters1) || _isPlcStopState(munters2);
+    final _WitnessDotVisual m1WitnessVisual = _resolvePlcWitnessVisual(<MuntersModel>[munters1]);
+    final _WitnessDotVisual m2WitnessVisual = _resolvePlcWitnessVisual(<MuntersModel>[munters2]);
     final bool hasAlarm = _hasAlarm(munters1) || _hasAlarm(munters2);
-    final bool hasDoorAlarm = _hasDoorAlarm(munters1) || _hasDoorAlarm(munters2);
     final _ModuleStatus aperturasStatus = _resolveAperturasStatus(
       munters1,
       munters2,
@@ -179,12 +175,6 @@ class _ComparisonPageState extends State<ComparisonPage> {
       munters2: munters2,
       rangeSettings: rangeSettings,
     );
-    final _HumidityHeaderVisual environmentHumidityVisual =
-        _resolveEnvironmentHumidityVisual(
-          munters1: munters1,
-          munters2: munters2,
-          rangeSettings: rangeSettings,
-        );
     final _ModuleStatus ventilationStatus = _resolveVentilationStatus(
       munters1,
       munters2,
@@ -209,25 +199,122 @@ class _ComparisonPageState extends State<ComparisonPage> {
       hasAlarmOutput: hasAlarm,
     );
     final bool hasAnyModuleAlarm = _isModuleStatusAlarm(alarmasStatus);
+
+    // Per-PLC icon data
+    Color funcIconColor(_ModuleStatus s) => switch (s.kind) {
+      _ModuleStatusKind.alert || _ModuleStatusKind.error => const Color(0xFFEF4444),
+      _ModuleStatusKind.ok => const Color(0xFF22C55E),
+      _ => const Color(0xFF94A3B8),
+    };
+    final _ModuleStatus m1FuncStatus = _resolveFunctioningStatusForUnit(munters1);
+    final _ModuleStatus m2FuncStatus = _resolveFunctioningStatusForUnit(munters2);
+    final List<_PlcModuleIconData> funcionamientoPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.power_settings_new,
+        iconColor: funcIconColor(m1FuncStatus),
+        status: m1FuncStatus,
+        witnessVisual: m1WitnessVisual,
+        showPulseDot: widget.showSnapshotPulse,
+        pulseDotBackendAlive: !widget.snapshotStale,
+        pulseDotColor: _isPlcStopState(munters1) ? const Color(0xFFF59E0B) : const Color(0xFF22C55E),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.power_settings_new,
+        iconColor: funcIconColor(m2FuncStatus),
+        status: m2FuncStatus,
+        witnessVisual: m2WitnessVisual,
+        showPulseDot: widget.showSnapshotPulse,
+        pulseDotBackendAlive: !widget.snapshotStale,
+        pulseDotColor: _isPlcStopState(munters2) ? const Color(0xFFF59E0B) : const Color(0xFF22C55E),
+      ),
+    ];
+    final List<_PlcModuleIconData> ambientePlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.thermostat,
+        iconColor: _resolveEnvironmentIconColorForUnit(unit: munters1, rangeSettings: rangeSettings),
+        status: _resolveEnvironmentStatusForUnit(unit: munters1, rangeSettings: rangeSettings),
+        extraWidget: _EnvironmentHeaderHumidityIcon(
+          visual: _resolveEnvironmentHumidityVisualForUnit(unit: munters1, rangeSettings: rangeSettings),
+        ),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.thermostat,
+        iconColor: _resolveEnvironmentIconColorForUnit(unit: munters2, rangeSettings: rangeSettings),
+        status: _resolveEnvironmentStatusForUnit(unit: munters2, rangeSettings: rangeSettings),
+        extraWidget: _EnvironmentHeaderHumidityIcon(
+          visual: _resolveEnvironmentHumidityVisualForUnit(unit: munters2, rangeSettings: rangeSettings),
+        ),
+      ),
+    ];
+    final List<_PlcModuleIconData> ventilacionPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.cyclone_rounded,
+        iconColor: _resolveVentilationIconColorForUnit(munters1),
+        status: _resolveVentilationStatusForUnit(munters1),
+        spinning: _isVentilationFullyRunning(munters1),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.cyclone_rounded,
+        iconColor: _resolveVentilationIconColorForUnit(munters2),
+        status: _resolveVentilationStatusForUnit(munters2),
+        spinning: _isVentilationFullyRunning(munters2),
+      ),
+    ];
+    final List<_PlcModuleIconData> humidificacionPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.water_drop,
+        iconColor: !munters1DataBlocked && munters1.bombaHumidificador == true ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+        status: _resolveHumidificationStatusForUnit(munters1, rangeSettings),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.water_drop,
+        iconColor: !munters2DataBlocked && munters2.bombaHumidificador == true ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+        status: _resolveHumidificationStatusForUnit(munters2, rangeSettings),
+      ),
+    ];
+    final List<_PlcModuleIconData> aperturasPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: _hasDoorAlarm(munters1) ? Icons.meeting_room_outlined : Icons.door_front_door_outlined,
+        iconColor: _hasDoorAlarm(munters1) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        status: _resolveAperturasStatusForUnit(munters1),
+      ),
+      _PlcModuleIconData(
+        icon: _hasDoorAlarm(munters2) ? Icons.meeting_room_outlined : Icons.door_front_door_outlined,
+        iconColor: _hasDoorAlarm(munters2) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        status: _resolveAperturasStatusForUnit(munters2),
+      ),
+    ];
+    final List<_PlcModuleIconData> calefaccionPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.local_fire_department,
+        iconColor: !munters1DataBlocked && (munters1.resistencia1 == true || munters1.resistencia2 == true) ? const Color(0xFFEF4444) : const Color(0xFF94A3B8),
+        status: _resolveCalefaccionStatusForUnit(munters1, rangeSettings),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.local_fire_department,
+        iconColor: !munters2DataBlocked && (munters2.resistencia1 == true || munters2.resistencia2 == true) ? const Color(0xFFEF4444) : const Color(0xFF94A3B8),
+        status: _resolveCalefaccionStatusForUnit(munters2, rangeSettings),
+      ),
+    ];
+    final _ModuleStatus m1AlarmasStatus = _resolveAlarmasStatusForUnit(munters1, rangeSettings);
+    final _ModuleStatus m2AlarmasStatus = _resolveAlarmasStatusForUnit(munters2, rangeSettings);
+    final List<_PlcModuleIconData> alarmasPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.warning_amber_rounded,
+        iconColor: _isModuleStatusAlarm(m1AlarmasStatus) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        status: m1AlarmasStatus,
+      ),
+      _PlcModuleIconData(
+        icon: Icons.warning_amber_rounded,
+        iconColor: _isModuleStatusAlarm(m2AlarmasStatus) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        status: m2AlarmasStatus,
+      ),
+    ];
+
     final Widget funcionamientoSection = _SectionTable(
       key: _sectionKeys[_sectionFuncionamiento],
       title: 'FUNCIONAMIENTO',
-      icon: Icons.power_settings_new,
-      iconColor: switch (functioningStatus.kind) {
-        _ModuleStatusKind.alert || _ModuleStatusKind.error =>
-          const Color(0xFFEF4444),
-        _ModuleStatusKind.ok => const Color(0xFF22C55E),
-        _ => const Color(0xFF94A3B8),
-      },
-      status: functioningStatus,
-      showActivityDots: true,
-      activityDotColor: plcWitnessVisual.color,
-      activityDotMode: plcWitnessVisual.mode,
-      showSnapshotPulse: widget.showSnapshotPulse,
-      backendAlive: !widget.snapshotStale,
-      snapshotPulseColor: hasFunctioningStop
-          ? const Color(0xFFF59E0B)
-          : const Color(0xFF22C55E),
+      plcIconData: funcionamientoPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionFuncionamiento] ?? 0,
@@ -354,16 +441,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget ambienteSection = _SectionTable(
       key: _sectionKeys[_sectionAmbiente],
       title: 'AMBIENTE',
-      icon: Icons.thermostat,
-      iconColor: _resolveEnvironmentIconColor(
-        munters1: munters1,
-        munters2: munters2,
-        rangeSettings: rangeSettings,
-      ),
-      headerWidget: _EnvironmentHeaderHumidityIcon(
-        visual: environmentHumidityVisual,
-      ),
-      status: environmentStatus,
+      plcIconData: ambientePlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAmbiente] ?? 0,
@@ -464,9 +542,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget ventilacionSection = _SectionTable(
       key: _sectionKeys[_sectionVentilacion],
       title: 'VENTILACION',
-      icon: Icons.cyclone_rounded,
-      iconColor: _resolveVentilationIconColor(munters1, munters2),
-      status: ventilationStatus,
+      plcIconData: ventilacionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionVentilacion] ?? 0,
@@ -517,12 +593,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget humidificacionSection = _SectionTable(
       key: _sectionKeys[_sectionHumidificacion],
       title: 'HUMIDIFICACION',
-      icon: Icons.water_drop,
-      iconColor: (!munters1DataBlocked && munters1.bombaHumidificador == true) ||
-              (!munters2DataBlocked && munters2.bombaHumidificador == true)
-          ? const Color(0xFF38BDF8)
-          : const Color(0xFF94A3B8),
-      status: humidificationStatus,
+      plcIconData: humidificacionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionHumidificacion] ?? 0,
@@ -591,13 +662,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget estadosMecanicosSection = _SectionTable(
       key: _sectionKeys[_sectionAperturas],
       title: 'APERTURAS',
-      icon: hasDoorAlarm
-          ? Icons.meeting_room_outlined
-          : Icons.door_front_door_outlined,
-      iconColor: hasDoorAlarm
-          ? const Color(0xFFFACC15)
-          : const Color(0xFF94A3B8),
-      status: aperturasStatus,
+      plcIconData: aperturasPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAperturas] ?? 0,
@@ -664,16 +729,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget calefaccionSection = _SectionTable(
       key: _sectionKeys[_sectionCalefaccion],
       title: 'CALEFACCION',
-      icon: Icons.local_fire_department,
-      iconColor: (!munters1DataBlocked &&
-                  (munters1.resistencia1 == true ||
-                      munters1.resistencia2 == true)) ||
-              (!munters2DataBlocked &&
-                  (munters2.resistencia1 == true ||
-                      munters2.resistencia2 == true))
-          ? const Color(0xFFEF4444)
-          : const Color(0xFF94A3B8),
-      status: calefaccionStatus,
+      plcIconData: calefaccionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionCalefaccion] ?? 0,
@@ -726,10 +782,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final Widget alarmasSection = _SectionTable(
       key: _sectionKeys[_sectionAlarmas],
       title: 'ALARMAS',
-      icon: Icons.warning_amber_rounded,
-      iconColor:
-          hasAnyModuleAlarm ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
-      status: alarmasStatus,
+      plcIconData: alarmasPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAlarmas] ?? 0,
@@ -1002,17 +1055,11 @@ class _TableHeader extends StatelessWidget {
               collapsed: munters2Collapsed,
               onToggle: onToggleMunters2,
             ),
-          Expanded(
-            flex: 3,
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: _HeaderTapIcon(
-                icon: allSectionsExpanded
-                    ? Icons.unfold_less_rounded
-                    : Icons.unfold_more_rounded,
-                onTap: onToggleAll,
-              ),
-            ),
+          _HeaderTapIcon(
+            icon: allSectionsExpanded
+                ? Icons.unfold_less_rounded
+                : Icons.unfold_more_rounded,
+            onTap: onToggleAll,
           ),
         ],
       ),
@@ -1315,52 +1362,165 @@ class _ComparisonColumnsScope extends InheritedWidget {
   }
 }
 
+class _PlcModuleIconData {
+  const _PlcModuleIconData({
+    required this.icon,
+    required this.iconColor,
+    required this.status,
+    this.extraWidget,
+    this.spinning = false,
+    this.witnessVisual,
+    this.showPulseDot = false,
+    this.pulseDotBackendAlive = true,
+    this.pulseDotColor = const Color(0xFF22C55E),
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final _ModuleStatus status;
+  final Widget? extraWidget;
+  final bool spinning;
+  final _WitnessDotVisual? witnessVisual;
+  final bool showPulseDot;
+  final bool pulseDotBackendAlive;
+  final Color pulseDotColor;
+}
+
+class _PlcModuleIconWidget extends StatelessWidget {
+  const _PlcModuleIconWidget({required this.data});
+
+  final _PlcModuleIconData data;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ModuleStatusIndicator(status: data.status),
+        const SizedBox(width: 4),
+        _SpinningIcon(
+          icon: data.icon,
+          color: data.iconColor,
+          size: 14,
+          spinning: data.spinning,
+        ),
+        if (data.extraWidget != null) ...[
+          const SizedBox(width: 2),
+          data.extraWidget!,
+        ],
+        if (data.witnessVisual != null) ...[
+          const SizedBox(width: 4),
+          _SectionBlinkDot(
+            color: data.witnessVisual!.color,
+            intervalMs: 1000,
+            mode: data.witnessVisual!.mode,
+          ),
+          const SizedBox(width: 2),
+          _SectionTitlePulseDot(
+            active: data.showPulseDot,
+            backendAlive: data.pulseDotBackendAlive,
+            color: data.pulseDotColor,
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _SpinningIcon extends StatefulWidget {
+  const _SpinningIcon({
+    required this.icon,
+    required this.color,
+    required this.size,
+    required this.spinning,
+  });
+
+  final IconData icon;
+  final Color color;
+  final double size;
+  final bool spinning;
+
+  @override
+  State<_SpinningIcon> createState() => _SpinningIconState();
+}
+
+class _SpinningIconState extends State<_SpinningIcon>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 900),
+    );
+    if (widget.spinning) {
+      _controller.repeat();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SpinningIcon oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.spinning != widget.spinning) {
+      if (widget.spinning) {
+        _controller.repeat();
+      } else {
+        _controller.stop();
+        _controller.value = 0;
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget icon = Icon(widget.icon, size: widget.size, color: widget.color);
+    if (!widget.spinning) {
+      return icon;
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      child: icon,
+      builder: (BuildContext context, Widget? child) => Transform.rotate(
+        angle: _controller.value * math.pi * 2,
+        child: child,
+      ),
+    );
+  }
+}
+
 class _SectionTable extends StatefulWidget {
   const _SectionTable({
     super.key,
     required this.title,
-    required this.icon,
     required this.rows,
-    required this.iconColor,
-    required this.status,
+    required this.plcIconData,
     required this.collapseGeneration,
     required this.expandGeneration,
     required this.expandRequestGeneration,
     required this.onExpanded,
-    this.showActivityDots = false,
-    this.activityDotColor = const Color(0xFF4ADE80),
-    this.activityDotMode = _WitnessDotMode.blinking,
-    this.showSnapshotPulse = false,
-    this.backendAlive = true,
-    this.snapshotPulseColor = const Color(0xFF22C55E),
-    this.headerWidget,
   });
 
   final String title;
-  final IconData icon;
   final List<Widget> rows;
-  final Color iconColor;
-  final _ModuleStatus status;
+  final List<_PlcModuleIconData> plcIconData;
   final int collapseGeneration;
   final int expandGeneration;
   final int expandRequestGeneration;
   final VoidCallback onExpanded;
-  final bool showActivityDots;
-  final Color activityDotColor;
-  final _WitnessDotMode activityDotMode;
-  final bool showSnapshotPulse;
-  final bool backendAlive;
-  final Color snapshotPulseColor;
-  final Widget? headerWidget;
 
   @override
   State<_SectionTable> createState() => _SectionTableState();
 }
 
 class _SectionTableState extends State<_SectionTable> {
-  static const double _indicatorInset = 6;
-  static const double _leadingIconsWidth = 40;
-
   bool _expanded = false;
 
   @override
@@ -1386,117 +1546,98 @@ class _SectionTableState extends State<_SectionTable> {
 
   @override
   Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(left: _indicatorInset),
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(10),
-            decoration: BoxDecoration(
-              color: const Color(0xFF162133),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                InkWell(
-                  borderRadius: BorderRadius.circular(6),
-                  onTap: () {
-                    setState(() {
-                      _expanded = !_expanded;
-                    });
-                    if (_expanded) {
-                      widget.onExpanded();
-                    }
-                  },
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 2),
-                    child: Row(
-                      children: [
-                        SizedBox(
-                          width: _leadingIconsWidth,
-                          child: Row(
-                            children: [
-                              Icon(
-                                widget.icon,
-                                size: 16,
-                                color: widget.iconColor,
+    final _ComparisonColumnsScope scope = _ComparisonColumnsScope.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF162133),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(6),
+            onTap: () {
+              setState(() {
+                _expanded = !_expanded;
+              });
+              if (_expanded) {
+                widget.onExpanded();
+              }
+            },
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Row(
+                children: [
+                  Expanded(
+                    flex: 3,
+                    child: SizedBox(
+                      height: 18,
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Center(
+                            child: Text(
+                              widget.title,
+                              style: const TextStyle(
+                                color: Color(0xFFE5E7EB),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                height: 1,
                               ),
-                              if (widget.headerWidget != null) ...[
-                                const SizedBox(width: 6),
-                                widget.headerWidget!,
-                              ],
-                            ],
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: SizedBox(
-                            height: 18,
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.center,
-                              children: [
-                                Center(
-                                  child: Text(
-                                    widget.title,
-                                    style: const TextStyle(
-                                      color: Color(0xFFE5E7EB),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                      height: 1,
-                                    ),
-                                  ),
-                                ),
-                                if (widget.showActivityDots) ...[
-                                  const SizedBox(width: 8),
-                                  _SectionBlinkDot(
-                                    // Testigo de funcionamiento PLC
-                                    color: widget.activityDotColor,
-                                    intervalMs: 1000,
-                                    mode: widget.activityDotMode,
-                                  ),
-                                const SizedBox(width: 6),
-                                _SectionTitlePulseDot(
-                                  active: widget.showSnapshotPulse,
-                                  backendAlive: widget.backendAlive,
-                                  color: widget.snapshotPulseColor,
-                                ),
-                                ],
-                            ],
-                          ),
-                        ),
-                        ),
-                        Icon(
-                          _expanded
-                              ? Icons.keyboard_arrow_up_rounded
-                              : Icons.keyboard_arrow_down_rounded,
-                          color: const Color(0xFF94A3B8),
-                          size: 18,
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
-                ),
-                if (_expanded) ...[
-                  const SizedBox(height: 6),
-                  ...widget.rows,
-                ] else ...[
-                  const SizedBox(height: 2),
+                  if (!scope.showMunters1)
+                    const SizedBox.shrink()
+                  else if (scope.munters1Collapsed)
+                    const SizedBox(width: 52)
+                  else
+                    Expanded(
+                      flex: 4,
+                      child: Center(
+                        child: widget.plcIconData.isNotEmpty
+                            ? _PlcModuleIconWidget(data: widget.plcIconData[0])
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
+                  if (!scope.showMunters2)
+                    const SizedBox.shrink()
+                  else if (scope.munters2Collapsed)
+                    const SizedBox(width: 52)
+                  else
+                    Expanded(
+                      flex: 4,
+                      child: Center(
+                        child: widget.plcIconData.length > 1
+                            ? _PlcModuleIconWidget(data: widget.plcIconData[1])
+                            : const SizedBox.shrink(),
+                      ),
+                    ),
+                  Icon(
+                    _expanded
+                        ? Icons.keyboard_arrow_up_rounded
+                        : Icons.keyboard_arrow_down_rounded,
+                    color: const Color(0xFF94A3B8),
+                    size: 18,
+                  ),
                 ],
-              ],
+              ),
             ),
           ),
-        ),
-        Positioned(
-          left: 0,
-          top: -3,
-          child: IgnorePointer(
-            child: _ModuleStatusIndicator(status: widget.status),
-          ),
-        ),
-      ],
+          if (_expanded) ...[
+            const SizedBox(height: 6),
+            ...widget.rows,
+          ] else ...[
+            const SizedBox(height: 2),
+          ],
+        ],
+      ),
     );
   }
 }
@@ -1816,74 +1957,112 @@ List<String> _eventModulesForUnit(
   return modules;
 }
 
-Color _resolveVentilationIconColor(MuntersModel munters1, MuntersModel munters2) {
+bool _isVentilationFullyRunning(MuntersModel unit) {
+  if (_shouldBlockOperationalData(unit)) {
+    return false;
+  }
   final List<bool> fans = <bool?>[
-    if (!_shouldBlockOperationalData(munters1)) ...<bool?>[
-      munters1.fanQ5,
-      munters1.fanQ6,
-      munters1.fanQ7,
-      munters1.fanQ8,
-      munters1.fanQ9,
-      munters1.fanQ10,
-    ],
-    if (!_shouldBlockOperationalData(munters2)) ...<bool?>[
-      munters2.fanQ5,
-      munters2.fanQ6,
-      munters2.fanQ7,
-      munters2.fanQ8,
-      munters2.fanQ9,
-      munters2.fanQ10,
-    ],
+    unit.fanQ5, unit.fanQ6, unit.fanQ7,
+    unit.fanQ8, unit.fanQ9, unit.fanQ10,
   ].whereType<bool>().toList(growable: false);
+  return fans.isNotEmpty && fans.every((bool f) => f == true);
+}
 
+Color _resolveVentilationIconColorForUnit(MuntersModel unit) {
+  if (_shouldBlockOperationalData(unit)) {
+    return const Color(0xFF94A3B8);
+  }
+  final List<bool> fans = <bool?>[
+    unit.fanQ5,
+    unit.fanQ6,
+    unit.fanQ7,
+    unit.fanQ8,
+    unit.fanQ9,
+    unit.fanQ10,
+  ].whereType<bool>().toList(growable: false);
   if (fans.isEmpty) {
     return const Color(0xFF94A3B8);
   }
-  if (fans.every((bool fan) => fan == false)) {
+  if (fans.every((bool f) => f == false)) {
     return const Color(0xFFEF4444);
   }
-  if (fans.every((bool fan) => fan == true)) {
+  if (fans.every((bool f) => f == true)) {
     return const Color(0xFF22C55E);
   }
-  if (fans.any((bool fan) => fan == false)) {
+  if (fans.any((bool f) => f == false)) {
     return const Color(0xFFFACC15);
   }
   return const Color(0xFF94A3B8);
 }
 
-Color _resolveEnvironmentIconColor({
-  required MuntersModel munters1,
-  required MuntersModel munters2,
+Color _resolveEnvironmentIconColorForUnit({
+  required MuntersModel unit,
   required DashboardRangeSettings rangeSettings,
 }) {
-  final List<double> temperatures = <double>[
-    if (!_shouldBlockOperationalData(munters1) && munters1.tempInterior != null)
-      munters1.tempInterior!,
-    if (!_shouldBlockOperationalData(munters2) && munters2.tempInterior != null)
-      munters2.tempInterior!,
-  ];
-  if (temperatures.isEmpty) {
+  if (_shouldBlockOperationalData(unit) || unit.tempInterior == null) {
     return const Color(0xFF94A3B8);
   }
-
+  final double temp = unit.tempInterior!;
   final double min = rangeSettings.temperatureMin;
   final double max = rangeSettings.temperatureMax;
   final double span = max - min;
   if (span <= 0) {
     return const Color(0xFF94A3B8);
   }
-
   final double coldLimit = min + (span * 0.25);
   final double hotLimit = min + (span * 0.75);
-
-  if (temperatures.any((double temp) => temp >= hotLimit)) {
+  if (temp >= hotLimit) {
     return const Color(0xFFEF4444);
   }
-  if (temperatures.any((double temp) => temp <= coldLimit)) {
+  if (temp <= coldLimit) {
     return const Color(0xFF38BDF8);
   }
   return const Color(0xFF22C55E);
 }
+
+_HumidityHeaderVisual _resolveEnvironmentHumidityVisualForUnit({
+  required MuntersModel unit,
+  required DashboardRangeSettings rangeSettings,
+}) {
+  if (_shouldBlockOperationalData(unit) || unit.humInterior == null) {
+    return _HumidityHeaderVisual.empty;
+  }
+  final double humidity = unit.humInterior!;
+  final double min = rangeSettings.humidityMin;
+  final double max = rangeSettings.humidityMax;
+  final double span = max - min;
+  if (span <= 0) {
+    return _HumidityHeaderVisual.empty;
+  }
+  final double lowerQuarter = min + (span * 0.25);
+  final double upperQuarter = min + (span * 0.75);
+  if (humidity <= lowerQuarter) {
+    return _HumidityHeaderVisual.low;
+  }
+  if (humidity >= upperQuarter) {
+    return _HumidityHeaderVisual.high;
+  }
+  return _HumidityHeaderVisual.medium;
+}
+
+_ModuleStatus _resolveAlarmasStatusForUnit(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  return _resolveAlarmasStatus(
+    functioningStatus: _resolveFunctioningStatusForUnit(unit),
+    environmentStatus: _resolveEnvironmentStatusForUnit(
+      unit: unit,
+      rangeSettings: rangeSettings,
+    ),
+    ventilationStatus: _resolveVentilationStatusForUnit(unit),
+    humidificationStatus: _resolveHumidificationStatusForUnit(unit, rangeSettings),
+    aperturasStatus: _resolveAperturasStatusForUnit(unit),
+    calefaccionStatus: _resolveCalefaccionStatusForUnit(unit, rangeSettings),
+    hasAlarmOutput: unit.alarmaGeneral == true,
+  );
+}
+
 
 _RangeAssessment _assessRange(double? value, double min, double max) {
   if (value == null) {
@@ -1969,40 +2148,6 @@ _ModuleStatus _resolveEnvironmentStatusForUnit({
   };
 }
 
-_HumidityHeaderVisual _resolveEnvironmentHumidityVisual({
-  required MuntersModel munters1,
-  required MuntersModel munters2,
-  required DashboardRangeSettings rangeSettings,
-}) {
-  final List<double> humidities = <double>[
-    if (!_shouldBlockOperationalData(munters1) && munters1.humInterior != null)
-      munters1.humInterior!,
-    if (!_shouldBlockOperationalData(munters2) && munters2.humInterior != null)
-      munters2.humInterior!,
-  ];
-  if (humidities.isEmpty) {
-    return _HumidityHeaderVisual.empty;
-  }
-
-  final double averageHumidity =
-      humidities.reduce((double a, double b) => a + b) / humidities.length;
-  final double min = rangeSettings.humidityMin;
-  final double max = rangeSettings.humidityMax;
-  final double span = max - min;
-  if (span <= 0) {
-    return _HumidityHeaderVisual.empty;
-  }
-
-  final double lowerQuarter = min + (span * 0.25);
-  final double upperQuarter = min + (span * 0.75);
-  if (averageHumidity <= lowerQuarter) {
-    return _HumidityHeaderVisual.low;
-  }
-  if (averageHumidity >= upperQuarter) {
-    return _HumidityHeaderVisual.high;
-  }
-  return _HumidityHeaderVisual.medium;
-}
 
 _ModuleStatus _resolveVentilationStatus(
   MuntersModel munters1,
@@ -2192,6 +2337,9 @@ _ModuleStatus _resolveCalefaccionStatusForUnit(
   }
   if (_isTempBelowMinimumAndHeatingOff(unit, rangeSettings)) {
     return const _ModuleStatus.error();
+  }
+  if (unit.resistencia1 == null && unit.resistencia2 == null) {
+    return const _ModuleStatus.pending();
   }
   return const _ModuleStatus.ok();
 }
