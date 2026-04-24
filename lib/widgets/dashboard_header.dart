@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/site_config_service.dart';
+
 class DashboardHeader extends StatelessWidget {
   const DashboardHeader({
     super.key,
@@ -7,12 +9,20 @@ class DashboardHeader extends StatelessWidget {
     required this.onSignOut,
     required this.onOpenSettings,
     required this.onSelectComparison,
+    this.siteName,
+    this.activeSiteId,
+    this.availableSites = const <SiteDocument>[],
+    this.onSiteChanged,
   });
 
   final String selectedTab;
   final VoidCallback onSignOut;
   final VoidCallback onOpenSettings;
   final VoidCallback onSelectComparison;
+  final String? siteName;
+  final String? activeSiteId;
+  final List<SiteDocument> availableSites;
+  final void Function(String siteId)? onSiteChanged;
 
   @override
   Widget build(BuildContext context) {
@@ -25,10 +35,15 @@ class DashboardHeader extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          const Expanded(
+          Expanded(
             child: Align(
               alignment: Alignment.centerLeft,
-              child: _HeaderTitle(),
+              child: _HeaderTitle(
+                siteName: siteName,
+                activeSiteId: activeSiteId,
+                availableSites: availableSites,
+                onSiteChanged: onSiteChanged,
+              ),
             ),
           ),
           const SizedBox(width: 20),
@@ -112,21 +127,31 @@ class _HeaderActionButton extends StatelessWidget {
 }
 
 class _HeaderTitle extends StatelessWidget {
-  const _HeaderTitle();
+  const _HeaderTitle({
+    required this.siteName,
+    required this.activeSiteId,
+    required this.availableSites,
+    required this.onSiteChanged,
+  });
+
+  final String? siteName;
+  final String? activeSiteId;
+  final List<SiteDocument> availableSites;
+  final void Function(String siteId)? onSiteChanged;
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.center,
-      children: const [
-        _ValkeLogo(),
-        SizedBox(width: 14),
+      children: [
+        const _ValkeLogo(),
+        const SizedBox(width: 14),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
+            const Text(
               'AgroDataControl',
               style: TextStyle(
                 color: Color(0xFFE5E7EB),
@@ -134,14 +159,70 @@ class _HeaderTitle extends StatelessWidget {
                 fontWeight: FontWeight.w800,
               ),
             ),
-            SizedBox(height: 4),
-            Text(
-              'Sala Genetica',
-              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
-            ),
+            const SizedBox(height: 4),
+            if (availableSites.length > 1)
+              _SiteDropdown(
+                availableSites: availableSites,
+                activeSiteId: activeSiteId,
+                onSiteChanged: onSiteChanged,
+              )
+            else
+              Text(
+                siteName ?? '—',
+                style: const TextStyle(
+                  color: Color(0xFF94A3B8),
+                  fontSize: 13,
+                ),
+              ),
           ],
         ),
       ],
+    );
+  }
+}
+
+class _SiteDropdown extends StatelessWidget {
+  const _SiteDropdown({
+    required this.availableSites,
+    required this.activeSiteId,
+    required this.onSiteChanged,
+  });
+
+  final List<SiteDocument> availableSites;
+  final String? activeSiteId;
+  final void Function(String siteId)? onSiteChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: activeSiteId ?? availableSites.first.siteId,
+        isDense: true,
+        dropdownColor: const Color(0xFF1E293B),
+        style: const TextStyle(
+          color: Color(0xFF94A3B8),
+          fontSize: 13,
+          fontFamily: 'monospace',
+        ),
+        icon: const Icon(
+          Icons.keyboard_arrow_down,
+          color: Color(0xFF64748B),
+          size: 16,
+        ),
+        items: availableSites
+            .map(
+              (SiteDocument site) => DropdownMenuItem<String>(
+                value: site.siteId,
+                child: Text(site.name),
+              ),
+            )
+            .toList(),
+        onChanged: (String? siteId) {
+          if (siteId != null) {
+            onSiteChanged?.call(siteId);
+          }
+        },
+      ),
     );
   }
 }

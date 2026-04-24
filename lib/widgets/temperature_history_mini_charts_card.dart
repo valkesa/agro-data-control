@@ -16,6 +16,7 @@ class TemperatureHistoryMiniChartsCard extends StatefulWidget {
     this.siteId,
     this.plcId,
     this.repository,
+    this.horizontalMargin = 0,
   });
 
   final String unitName;
@@ -25,6 +26,7 @@ class TemperatureHistoryMiniChartsCard extends StatefulWidget {
   final String? siteId;
   final String? plcId;
   final TemperatureHistoryRepository? repository;
+  final double horizontalMargin;
 
   @override
   State<TemperatureHistoryMiniChartsCard> createState() =>
@@ -88,10 +90,40 @@ class _TemperatureHistoryMiniChartsCardState
     );
   }
 
+  Future<void> _openExpandedChart(
+    BuildContext context,
+    _TemperatureHistoryBundle bundle,
+  ) async {
+    if (bundle.notConfigured) {
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 28,
+            vertical: 24,
+          ),
+          backgroundColor: Colors.transparent,
+          child: _ExpandedTemperatureHistoryDialog(
+            unitName: widget.unitName,
+            bundle: bundle,
+            initialMode: _mode,
+            initialSelectedIndex: _selectedIndex,
+            lowerLimit: widget.lowerLimit,
+            upperLimit: widget.upperLimit,
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
+      margin: EdgeInsets.symmetric(horizontal: widget.horizontalMargin),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: const Color(0xFF162133),
@@ -125,6 +157,7 @@ class _TemperatureHistoryMiniChartsCardState
           final List<TemperatureHistoryPointBase> points =
               _mode == _ChartMode.hourly ? bundle.hourly : bundle.daily;
           final bool hasData = points.isNotEmpty;
+          final bool hasExterior = hasData && _pointsHaveExterior(points);
           final int effectiveIndex = hasData
               ? (_selectedIndex == null
                     ? points.length - 1
@@ -133,9 +166,10 @@ class _TemperatureHistoryMiniChartsCardState
           return Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Mode chips at the top, centered.
               Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Spacer(),
                   _ModeChip(
                     label: 'Horario',
                     selected: _mode == _ChartMode.hourly,
@@ -159,21 +193,13 @@ class _TemperatureHistoryMiniChartsCardState
                   ),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 2),
               if (!hasData)
                 const _HistoryState(
                   message:
                       'Todavia no hay historial de temperatura suficiente para mostrar.',
                 )
               else ...[
-                Text(
-                  _buildRangeLabel(points, _mode),
-                  style: const TextStyle(
-                    color: Color(0xFF94A3B8),
-                    fontSize: 11,
-                  ),
-                ),
-                const SizedBox(height: 8),
                 SizedBox(
                   height: 160,
                   child: _MiniLineChart(
@@ -182,12 +208,30 @@ class _TemperatureHistoryMiniChartsCardState
                     selectedIndex: effectiveIndex,
                     lowerLimit: widget.lowerLimit,
                     upperLimit: widget.upperLimit,
+                    onTap: () => _openExpandedChart(context, bundle),
                     onIndexChanged: (int? index) {
                       setState(() {
                         _selectedIndex = index;
                       });
                     },
                   ),
+                ),
+                const SizedBox(height: 8),
+                // Legend at the bottom.
+                Row(
+                  children: [
+                    _LegendDot(
+                      color: const Color(0xFF38BDF8),
+                      label: 'Interior',
+                    ),
+                    if (hasExterior) ...[
+                      const SizedBox(width: 12),
+                      _LegendDot(
+                        color: const Color(0xFFF59E0B),
+                        label: 'Exterior',
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ],
@@ -206,6 +250,7 @@ class _MiniLineChart extends StatefulWidget {
     required this.lowerLimit,
     required this.upperLimit,
     required this.onIndexChanged,
+    this.onTap,
   });
 
   final List<TemperatureHistoryPointBase> points;
@@ -214,6 +259,7 @@ class _MiniLineChart extends StatefulWidget {
   final double lowerLimit;
   final double upperLimit;
   final ValueChanged<int?> onIndexChanged;
+  final VoidCallback? onTap;
 
   @override
   State<_MiniLineChart> createState() => _MiniLineChartState();
@@ -285,6 +331,7 @@ class _MiniLineChartState extends State<_MiniLineChart> {
         return GestureDetector(
           behavior: HitTestBehavior.opaque,
           onTapDown: (details) => _updateSelection(details.localPosition, size),
+          onTap: widget.onTap,
           onHorizontalDragStart: (details) =>
               _updateSelection(details.localPosition, size),
           onHorizontalDragUpdate: (details) =>
@@ -313,7 +360,7 @@ class _MiniLineChartState extends State<_MiniLineChart> {
                     ),
                     top: 0,
                     child: _ChartTooltip(
-                      avgLabel: _tooltipAvgLabel(selectedPoint),
+                      avgLabel: _tooltipAvgLabel(selectedPoint, widget.mode),
                       timestampLabel: _tooltipTimestamp(
                         selectedPoint,
                         widget.mode,
@@ -340,6 +387,156 @@ class _MiniLineChartState extends State<_MiniLineChart> {
   }
 }
 
+class _ExpandedTemperatureHistoryDialog extends StatefulWidget {
+  const _ExpandedTemperatureHistoryDialog({
+    required this.unitName,
+    required this.bundle,
+    required this.initialMode,
+    required this.initialSelectedIndex,
+    required this.lowerLimit,
+    required this.upperLimit,
+  });
+
+  final String unitName;
+  final _TemperatureHistoryBundle bundle;
+  final _ChartMode initialMode;
+  final int? initialSelectedIndex;
+  final double lowerLimit;
+  final double upperLimit;
+
+  @override
+  State<_ExpandedTemperatureHistoryDialog> createState() =>
+      _ExpandedTemperatureHistoryDialogState();
+}
+
+class _ExpandedTemperatureHistoryDialogState
+    extends State<_ExpandedTemperatureHistoryDialog> {
+  late _ChartMode _mode;
+  int? _selectedIndex;
+
+  @override
+  void initState() {
+    super.initState();
+    _mode = widget.initialMode;
+    _selectedIndex = widget.initialSelectedIndex;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<TemperatureHistoryPointBase> points = _mode == _ChartMode.hourly
+        ? widget.bundle.hourly
+        : widget.bundle.daily;
+    final bool hasData = points.isNotEmpty;
+    final bool hasExterior = hasData && _pointsHaveExterior(points);
+    final int effectiveIndex = hasData
+        ? (_selectedIndex == null
+              ? points.length - 1
+              : _selectedIndex!.clamp(0, points.length - 1))
+        : -1;
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 980, maxHeight: 720),
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: const Color(0xFF162133),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF223046)),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x66000000),
+            blurRadius: 28,
+            offset: Offset(0, 16),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Historial de temperatura · ${widget.unitName}',
+                  style: const TextStyle(
+                    color: Color(0xFFE5E7EB),
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.close, color: Color(0xFFCBD5E1)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              _ModeChip(
+                label: 'Horario',
+                selected: _mode == _ChartMode.hourly,
+                onTap: () {
+                  setState(() {
+                    _mode = _ChartMode.hourly;
+                    _selectedIndex = null;
+                  });
+                },
+              ),
+              const SizedBox(width: 6),
+              _ModeChip(
+                label: 'Diario',
+                selected: _mode == _ChartMode.daily,
+                onTap: () {
+                  setState(() {
+                    _mode = _ChartMode.daily;
+                    _selectedIndex = null;
+                  });
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          if (!hasData)
+            const _HistoryState(
+              message:
+                  'Todavia no hay historial de temperatura suficiente para mostrar.',
+            )
+          else ...[
+            SizedBox(
+              height: 420,
+              width: double.infinity,
+              child: _MiniLineChart(
+                points: points,
+                mode: _mode,
+                selectedIndex: effectiveIndex,
+                lowerLimit: widget.lowerLimit,
+                upperLimit: widget.upperLimit,
+                onIndexChanged: (int? index) {
+                  setState(() {
+                    _selectedIndex = index;
+                  });
+                },
+              ),
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                const _LegendDot(color: Color(0xFF38BDF8), label: 'Interior'),
+                if (hasExterior)
+                  const _LegendDot(color: Color(0xFFF59E0B), label: 'Exterior'),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _MiniChartPainter extends CustomPainter {
   const _MiniChartPainter({
     required this.points,
@@ -357,7 +554,12 @@ class _MiniChartPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final Rect chartRect = Rect.fromLTWH(0, 30, size.width, size.height - 46);
+    final Rect chartRect = Rect.fromLTWH(
+      28,
+      16,
+      size.width - 28,
+      size.height - 32,
+    );
     final Paint gridPaint = Paint()
       ..color = const Color(0xFF223046)
       ..strokeWidth = 1;
@@ -399,22 +601,32 @@ class _MiniChartPainter extends CustomPainter {
       final TemperatureHistoryPointBase single = points.first;
       final double minValue = single.minTemp;
       final double maxValue = single.maxTemp;
+      final double singleRange = math.max(1, maxValue - minValue + 1);
+      final double singleChartMin = minValue;
+      final double singleChartMax = minValue + singleRange;
       final double y =
           chartRect.bottom -
-          (((single.avgTemp - minValue) /
-                  math.max(1, maxValue - minValue + 1)) *
+          (((single.avgTemp - singleChartMin) / singleRange) *
               chartRect.height);
       final Offset point = Offset(chartRect.center.dx, y);
       canvas.drawCircle(point, 3.5, Paint()..color = const Color(0xFF38BDF8));
       _paintXAxisLabels(canvas, size, chartRect);
+      _paintYAxisLabels(canvas, chartRect, singleChartMin, singleChartMax);
       return;
     }
 
-    final double minValue = points.map((item) => item.minTemp).reduce(math.min);
-    final double maxValue = points.map((item) => item.maxTemp).reduce(math.max);
+    double minValue = points.map((item) => item.minTemp).reduce(math.min);
+    double maxValue = points.map((item) => item.maxTemp).reduce(math.max);
+    for (final TemperatureHistoryPointBase p in points) {
+      final double? extMin = _pointExteriorMin(p);
+      final double? extMax = _pointExteriorMax(p);
+      if (extMin != null && extMin < minValue) minValue = extMin;
+      if (extMax != null && extMax > maxValue) maxValue = extMax;
+    }
     final double effectiveMinValue = math.min(minValue, lowerLimit);
     final double effectiveMaxValue = math.max(maxValue, upperLimit);
-    final double rawRange = (effectiveMaxValue - effectiveMinValue).abs() < 0.001
+    final double rawRange =
+        (effectiveMaxValue - effectiveMinValue).abs() < 0.001
         ? 1
         : (effectiveMaxValue - effectiveMinValue);
     final double verticalPadding = math.max(0.35, rawRange * 0.08);
@@ -500,6 +712,36 @@ class _MiniChartPainter extends CustomPainter {
     canvas.drawPath(fillPath, averageFillPaint);
     canvas.drawPath(linePath, linePaint);
 
+    // Draw exterior temperature line (amber).
+    final Paint exteriorLinePaint = Paint()
+      ..color = const Color(0xFFF59E0B)
+      ..strokeWidth = 1.5
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final Path exteriorPath = Path();
+    bool exteriorPathStarted = false;
+    for (int i = 0; i < points.length; i += 1) {
+      final double? extAvg = _pointExteriorAvg(points[i]);
+      if (extAvg == null) {
+        exteriorPathStarted = false;
+        continue;
+      }
+      final double dx = chartRect.left + (stepX * i);
+      final double extY =
+          chartRect.bottom -
+          (((extAvg - chartMin) / safeRange) * chartRect.height);
+      if (!exteriorPathStarted) {
+        exteriorPath.moveTo(dx, extY);
+        exteriorPathStarted = true;
+      } else {
+        exteriorPath.lineTo(dx, extY);
+      }
+    }
+    if (exteriorPathStarted) {
+      canvas.drawPath(exteriorPath, exteriorLinePaint);
+    }
+
     final Offset selectedOffset = avgOffsets[selectedIndex];
     canvas.drawLine(
       Offset(selectedOffset.dx, chartRect.top),
@@ -520,6 +762,37 @@ class _MiniChartPainter extends CustomPainter {
     );
 
     _paintXAxisLabels(canvas, size, chartRect);
+    _paintYAxisLabels(canvas, chartRect, chartMin, chartMax);
+  }
+
+  void _paintYAxisLabels(
+    Canvas canvas,
+    Rect chartRect,
+    double chartMin,
+    double chartMax,
+  ) {
+    const TextStyle style = TextStyle(color: Color(0xFF94A3B8), fontSize: 10);
+    const int labelCount = 3;
+    for (int i = 0; i < labelCount; i++) {
+      final double fraction = i / (labelCount - 1);
+      final double value = chartMin + fraction * (chartMax - chartMin);
+      final double y = chartRect.bottom - fraction * chartRect.height;
+      final String label = value.round().toString();
+      final TextPainter tp = TextPainter(
+        text: TextSpan(text: label, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      tp.paint(
+        canvas,
+        Offset(
+          chartRect.left - tp.width - 4,
+          (y - tp.height / 2).clamp(
+            chartRect.top,
+            chartRect.bottom - tp.height,
+          ),
+        ),
+      );
+    }
   }
 
   void _paintDashedHorizontalLine({
@@ -621,6 +894,32 @@ class _ChartTooltip extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _LegendDot extends StatelessWidget {
+  const _LegendDot({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 8,
+          height: 8,
+          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+        ),
+      ],
     );
   }
 }
@@ -754,34 +1053,57 @@ class _TemperatureHistoryBundle {
 
 enum _ChartMode { hourly, daily }
 
-String _buildRangeLabel(
-  List<TemperatureHistoryPointBase> points,
-  _ChartMode mode,
-) {
-  final TemperatureHistoryPointBase first = points.first;
-  final TemperatureHistoryPointBase last = points.last;
-  return mode == _ChartMode.hourly
-      ? '${_formatDate(first.timestamp)} ${_formatHour(first.timestamp)} - ${_formatDate(last.timestamp)} ${_formatHour(last.timestamp)}'
-      : '${_formatDate(first.timestamp)} - ${_formatDate(last.timestamp)}';
+bool _pointsHaveExterior(List<TemperatureHistoryPointBase> points) {
+  for (final TemperatureHistoryPointBase p in points) {
+    if (p is TemperatureHourlyPoint && p.avgExteriorTemp != null) {
+      return true;
+    }
+    if (p is TemperatureDailyPoint && p.avgExteriorTemp != null) {
+      return true;
+    }
+  }
+  return false;
 }
 
-String _tooltipAvgLabel(TemperatureHistoryPointBase point) =>
-    'Prom ${point.avgTemp.toStringAsFixed(1)} °C';
+double? _pointExteriorAvg(TemperatureHistoryPointBase p) {
+  if (p is TemperatureHourlyPoint) return p.avgExteriorTemp;
+  if (p is TemperatureDailyPoint) return p.avgExteriorTemp;
+  return null;
+}
 
-String _tooltipTimestamp(TemperatureHistoryPointBase point, _ChartMode mode) =>
+double? _pointExteriorMin(TemperatureHistoryPointBase p) {
+  if (p is TemperatureHourlyPoint) return p.minExteriorTemp;
+  if (p is TemperatureDailyPoint) return p.minExteriorTemp;
+  return null;
+}
+
+double? _pointExteriorMax(TemperatureHistoryPointBase p) {
+  if (p is TemperatureHourlyPoint) return p.maxExteriorTemp;
+  if (p is TemperatureDailyPoint) return p.maxExteriorTemp;
+  return null;
+}
+
+// Tooltip: first line is the timestamp (bold).
+String _tooltipAvgLabel(TemperatureHistoryPointBase point, _ChartMode mode) =>
     mode == _ChartMode.hourly
-        ? '${_formatDate(point.timestamp)} ${_formatHour(point.timestamp)}'
-        : _formatDate(point.timestamp);
+    ? '${_formatDate(point.timestamp)} ${_formatHour(point.timestamp)}'
+    : _formatDate(point.timestamp);
 
+// Tooltip: second line is the column header.
+String _tooltipTimestamp(TemperatureHistoryPointBase point, _ChartMode mode) =>
+    'Prom / Max / Min';
+
+// Tooltip: one line per series (interior always, exterior when available).
 List<String> _tooltipLines(TemperatureHistoryPointBase point, _ChartMode mode) {
+  String t(double v) => v.round().toString();
   final List<String> lines = <String>[
-    'Min ${point.minTemp.toStringAsFixed(1)} °C',
-    'Max ${point.maxTemp.toStringAsFixed(1)} °C',
+    'I: ${t(point.avgTemp)}/${t(point.maxTemp)}/${t(point.minTemp)} °C',
   ];
-  if (mode == _ChartMode.hourly && point is TemperatureHourlyPoint) {
-    lines.add('Samples ${point.samplesCount}');
-  } else if (mode == _ChartMode.daily && point is TemperatureDailyPoint) {
-    lines.add('Hours ${point.hoursCount}');
+  final double? extAvg = _pointExteriorAvg(point);
+  final double? extMax = _pointExteriorMax(point);
+  final double? extMin = _pointExteriorMin(point);
+  if (extAvg != null && extMax != null && extMin != null) {
+    lines.add('E: ${t(extAvg)}/${t(extMax)}/${t(extMin)} °C');
   }
   return lines;
 }

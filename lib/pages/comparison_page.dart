@@ -4,9 +4,11 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../models/dashboard_range_settings.dart';
+import '../models/dashboard_door_event.dart';
 import '../models/magnifier_settings.dart';
 import '../models/munters_model.dart';
 import '../models/plc_unit_diagnostics.dart';
+import '../widgets/door_openings_module.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/temperature_history_mini_charts_card.dart';
 
@@ -15,6 +17,7 @@ class ComparisonPage extends StatefulWidget {
     super.key,
     required this.munters1,
     required this.munters2,
+    required this.doorEvents,
     this.tenantId,
     this.siteId,
     required this.showMunters1,
@@ -23,10 +26,59 @@ class ComparisonPage extends StatefulWidget {
     required this.showSnapshotPulse,
     required this.rangeSettings,
     required this.magnifierSettings,
+    required this.moduleOrder,
+    required this.onModuleOrderChanged,
   });
+
+  static const String sectionEstado = 'Estado';
+  static const String sectionAmbiente = 'Ambiente';
+  static const String sectionFiltros = 'Filtros';
+  static const String sectionVentilacion = 'Ventilacion';
+  static const String sectionEnfriamiento = 'Enfriamiento';
+  static const String sectionAperturas = 'Aperturas';
+  static const String sectionCalefaccion = 'Calefaccion';
+  static const String sectionAlarmas = 'Alarmas';
+
+  static const List<String> defaultModuleOrder = <String>[
+    sectionEstado,
+    sectionAmbiente,
+    sectionFiltros,
+    sectionVentilacion,
+    sectionEnfriamiento,
+    sectionAperturas,
+    sectionCalefaccion,
+    sectionAlarmas,
+  ];
+
+  static List<String> normalizeModuleOrder(List<String> rawOrder) {
+    final Set<String> allowed = defaultModuleOrder.toSet();
+    final List<String> normalized = <String>[];
+
+    void addIfAllowed(String value) {
+      if (allowed.contains(value) && !normalized.contains(value)) {
+        normalized.add(value);
+      }
+    }
+
+    for (final String value in rawOrder) {
+      if (value == 'Funcionamiento') {
+        addIfAllowed(sectionEstado);
+      } else if (value == 'Humidificacion') {
+        addIfAllowed(sectionEnfriamiento);
+      } else {
+        addIfAllowed(value);
+      }
+    }
+
+    for (final String value in defaultModuleOrder) {
+      addIfAllowed(value);
+    }
+    return normalized;
+  }
 
   final MuntersModel munters1;
   final MuntersModel munters2;
+  final Map<String, DashboardDoorEvent> doorEvents;
   final String? tenantId;
   final String? siteId;
   final bool showMunters1;
@@ -35,6 +87,8 @@ class ComparisonPage extends StatefulWidget {
   final bool showSnapshotPulse;
   final DashboardRangeSettings rangeSettings;
   final MagnifierSettings magnifierSettings;
+  final List<String> moduleOrder;
+  final ValueChanged<List<String>> onModuleOrderChanged;
 
   @override
   State<ComparisonPage> createState() => _ComparisonPageState();
@@ -43,26 +97,30 @@ class ComparisonPage extends StatefulWidget {
 class _ComparisonPageState extends State<ComparisonPage> {
   static const Duration _technicalDataAutoCollapseDelay = Duration(minutes: 5);
   static const Duration _sectionsAutoCollapseDelay = Duration(minutes: 10);
-  static const String _sectionFuncionamiento = 'Funcionamiento';
-  static const String _sectionAmbiente = 'Ambiente';
-  static const String _sectionVentilacion = 'Ventilacion';
-  static const String _sectionHumidificacion = 'Humidificacion';
-  static const String _sectionAperturas = 'Aperturas';
-  static const String _sectionCalefaccion = 'Calefaccion';
-  static const String _sectionAlarmas = 'Alarmas';
+  static const String _sectionFuncionamiento = ComparisonPage.sectionEstado;
+  static const String _sectionAmbiente = ComparisonPage.sectionAmbiente;
+  static const String _sectionFiltros = ComparisonPage.sectionFiltros;
+  static const String _sectionVentilacion = ComparisonPage.sectionVentilacion;
+  static const String _sectionHumidificacion =
+      ComparisonPage.sectionEnfriamiento;
+  static const String _sectionAperturas = ComparisonPage.sectionAperturas;
+  static const String _sectionCalefaccion = ComparisonPage.sectionCalefaccion;
+  static const String _sectionAlarmas = ComparisonPage.sectionAlarmas;
 
   Timer? _technicalDataAutoCollapseTimer;
   Timer? _sectionsAutoCollapseTimer;
   bool _technicalDataExpanded = false;
-  bool _munters1Collapsed = false;
-  bool _munters2Collapsed = false;
+  final bool _munters1Collapsed = false;
+  final bool _munters2Collapsed = false;
   bool _allSectionsExpanded = false;
+  bool _reorderEnabled = false;
   int _sectionsCollapseGeneration = 0;
   int _sectionsExpandGeneration = 0;
   final Map<String, int> _sectionExpandRequests = <String, int>{};
   final Map<String, GlobalKey> _sectionKeys = <String, GlobalKey>{
     _sectionFuncionamiento: GlobalKey(),
     _sectionAmbiente: GlobalKey(),
+    _sectionFiltros: GlobalKey(),
     _sectionVentilacion: GlobalKey(),
     _sectionHumidificacion: GlobalKey(),
     _sectionAperturas: GlobalKey(),
@@ -163,8 +221,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final _ModuleStatus functioningStatus = _resolveFunctioningModuleStatus(
       <MuntersModel>[munters1, munters2],
     );
-    final _WitnessDotVisual m1WitnessVisual = _resolvePlcWitnessVisual(<MuntersModel>[munters1]);
-    final _WitnessDotVisual m2WitnessVisual = _resolvePlcWitnessVisual(<MuntersModel>[munters2]);
+    final _WitnessDotVisual m1WitnessVisual = _resolvePlcWitnessVisual(
+      <MuntersModel>[munters1],
+    );
+    final _WitnessDotVisual m2WitnessVisual = _resolvePlcWitnessVisual(
+      <MuntersModel>[munters2],
+    );
     final bool hasAlarm = _hasAlarm(munters1) || _hasAlarm(munters2);
     final _ModuleStatus aperturasStatus = _resolveAperturasStatus(
       munters1,
@@ -174,6 +236,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
       munters1: munters1,
       munters2: munters2,
       rangeSettings: rangeSettings,
+    );
+    final _ModuleStatus filtrosStatus = _resolveFiltrosStatus(
+      munters1,
+      munters2,
+      rangeSettings,
     );
     final _ModuleStatus ventilationStatus = _resolveVentilationStatus(
       munters1,
@@ -189,135 +256,247 @@ class _ComparisonPageState extends State<ComparisonPage> {
       munters2,
       rangeSettings,
     );
-    final _ModuleStatus alarmasStatus = _resolveAlarmasStatus(
+    _resolveAlarmasStatus(
       functioningStatus: functioningStatus,
       environmentStatus: environmentStatus,
+      filtrosStatus: filtrosStatus,
       ventilationStatus: ventilationStatus,
       humidificationStatus: humidificationStatus,
       aperturasStatus: aperturasStatus,
       calefaccionStatus: calefaccionStatus,
       hasAlarmOutput: hasAlarm,
     );
-    final bool hasAnyModuleAlarm = _isModuleStatusAlarm(alarmasStatus);
 
     // Per-PLC icon data
     Color funcIconColor(_ModuleStatus s) => switch (s.kind) {
-      _ModuleStatusKind.alert || _ModuleStatusKind.error => const Color(0xFFEF4444),
+      _ModuleStatusKind.alert ||
+      _ModuleStatusKind.error => const Color(0xFFEF4444),
       _ModuleStatusKind.ok => const Color(0xFF22C55E),
       _ => const Color(0xFF94A3B8),
     };
-    final _ModuleStatus m1FuncStatus = _resolveFunctioningStatusForUnit(munters1);
-    final _ModuleStatus m2FuncStatus = _resolveFunctioningStatusForUnit(munters2);
-    final List<_PlcModuleIconData> funcionamientoPlcIconData = <_PlcModuleIconData>[
-      _PlcModuleIconData(
-        icon: Icons.power_settings_new,
-        iconColor: funcIconColor(m1FuncStatus),
-        status: m1FuncStatus,
-        witnessVisual: m1WitnessVisual,
-        showPulseDot: widget.showSnapshotPulse,
-        pulseDotBackendAlive: !widget.snapshotStale,
-        pulseDotColor: _isPlcStopState(munters1) ? const Color(0xFFF59E0B) : const Color(0xFF22C55E),
-      ),
-      _PlcModuleIconData(
-        icon: Icons.power_settings_new,
-        iconColor: funcIconColor(m2FuncStatus),
-        status: m2FuncStatus,
-        witnessVisual: m2WitnessVisual,
-        showPulseDot: widget.showSnapshotPulse,
-        pulseDotBackendAlive: !widget.snapshotStale,
-        pulseDotColor: _isPlcStopState(munters2) ? const Color(0xFFF59E0B) : const Color(0xFF22C55E),
-      ),
-    ];
+    final _ModuleStatus m1FuncStatus = _resolveFunctioningStatusForUnit(
+      munters1,
+    );
+    final _ModuleStatus m2FuncStatus = _resolveFunctioningStatusForUnit(
+      munters2,
+    );
+    final List<_PlcModuleIconData> funcionamientoPlcIconData =
+        <_PlcModuleIconData>[
+          _PlcModuleIconData(
+            icon: Icons.power_settings_new,
+            iconColor: funcIconColor(m1FuncStatus),
+            status: m1FuncStatus,
+            witnessVisual: m1WitnessVisual,
+            showPulseDot: widget.showSnapshotPulse,
+            pulseDotBackendAlive: !widget.snapshotStale,
+            pulseDotColor: _isPlcStopState(munters1)
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF22C55E),
+          ),
+          _PlcModuleIconData(
+            icon: Icons.power_settings_new,
+            iconColor: funcIconColor(m2FuncStatus),
+            status: m2FuncStatus,
+            witnessVisual: m2WitnessVisual,
+            showPulseDot: widget.showSnapshotPulse,
+            pulseDotBackendAlive: !widget.snapshotStale,
+            pulseDotColor: _isPlcStopState(munters2)
+                ? const Color(0xFFF59E0B)
+                : const Color(0xFF22C55E),
+          ),
+        ];
     final List<_PlcModuleIconData> ambientePlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
         icon: Icons.thermostat,
-        iconColor: _resolveEnvironmentIconColorForUnit(unit: munters1, rangeSettings: rangeSettings),
-        status: _resolveEnvironmentStatusForUnit(unit: munters1, rangeSettings: rangeSettings),
-        extraWidget: _EnvironmentHeaderHumidityIcon(
-          visual: _resolveEnvironmentHumidityVisualForUnit(unit: munters1, rangeSettings: rangeSettings),
+        iconColor: _resolveEnvironmentIconColorForUnit(
+          unit: munters1,
+          rangeSettings: rangeSettings,
+        ),
+        status: _resolveEnvironmentStatusForUnit(
+          unit: munters1,
+          rangeSettings: rangeSettings,
+        ),
+        extraWidget: _EnvironmentHeaderExtra(
+          temperature: munters1DataBlocked ? null : munters1.tempInterior,
+          visual: _resolveEnvironmentHumidityVisualForUnit(
+            unit: munters1,
+            rangeSettings: rangeSettings,
+          ),
         ),
       ),
       _PlcModuleIconData(
         icon: Icons.thermostat,
-        iconColor: _resolveEnvironmentIconColorForUnit(unit: munters2, rangeSettings: rangeSettings),
-        status: _resolveEnvironmentStatusForUnit(unit: munters2, rangeSettings: rangeSettings),
-        extraWidget: _EnvironmentHeaderHumidityIcon(
-          visual: _resolveEnvironmentHumidityVisualForUnit(unit: munters2, rangeSettings: rangeSettings),
+        iconColor: _resolveEnvironmentIconColorForUnit(
+          unit: munters2,
+          rangeSettings: rangeSettings,
+        ),
+        status: _resolveEnvironmentStatusForUnit(
+          unit: munters2,
+          rangeSettings: rangeSettings,
+        ),
+        extraWidget: _EnvironmentHeaderExtra(
+          temperature: munters2DataBlocked ? null : munters2.tempInterior,
+          visual: _resolveEnvironmentHumidityVisualForUnit(
+            unit: munters2,
+            rangeSettings: rangeSettings,
+          ),
         ),
       ),
     ];
-    final List<_PlcModuleIconData> ventilacionPlcIconData = <_PlcModuleIconData>[
+    final List<_PlcModuleIconData> filtrosPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.filter_alt_rounded,
+        iconColor: _resolveFiltrosIconColorForUnit(munters1, rangeSettings),
+        status: _resolveFiltrosStatusForUnit(munters1, rangeSettings),
+        iconWidget: _SquareAirFilterIcon(
+          color: _resolveFiltrosIconColorForUnit(munters1, rangeSettings),
+          denseMesh: true,
+        ),
+        extraWidget: _FilterHeaderPressureValue(
+          pressure: munters1DataBlocked ? null : munters1.presionDiferencial,
+        ),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.filter_alt_rounded,
+        iconColor: _resolveFiltrosIconColorForUnit(munters2, rangeSettings),
+        status: _resolveFiltrosStatusForUnit(munters2, rangeSettings),
+        iconWidget: _SquareAirFilterIcon(
+          color: _resolveFiltrosIconColorForUnit(munters2, rangeSettings),
+          denseMesh: true,
+        ),
+        extraWidget: _FilterHeaderPressureValue(
+          pressure: munters2DataBlocked ? null : munters2.presionDiferencial,
+        ),
+      ),
+    ];
+    final List<_PlcModuleIconData>
+    ventilacionPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
         icon: Icons.cyclone_rounded,
         iconColor: _resolveVentilationIconColorForUnit(munters1),
         status: _resolveVentilationStatusForUnit(munters1),
         spinning: _isVentilationFullyRunning(munters1),
+        extraWidget: _VentilationHeaderPowerValue(
+          value: munters1DataBlocked
+              ? null
+              : _normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
+        ),
       ),
       _PlcModuleIconData(
         icon: Icons.cyclone_rounded,
         iconColor: _resolveVentilationIconColorForUnit(munters2),
         status: _resolveVentilationStatusForUnit(munters2),
         spinning: _isVentilationFullyRunning(munters2),
+        extraWidget: _VentilationHeaderPowerValue(
+          value: munters2DataBlocked
+              ? null
+              : _normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
+        ),
       ),
     ];
-    final List<_PlcModuleIconData> humidificacionPlcIconData = <_PlcModuleIconData>[
+    final List<_PlcModuleIconData>
+    humidificacionPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
-        icon: Icons.water_drop,
-        iconColor: !munters1DataBlocked && munters1.bombaHumidificador == true ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+        icon: Icons.power_settings_new,
+        iconColor: !munters1DataBlocked && munters1.bombaHumidificador == true
+            ? const Color(0xFF22C55E)
+            : const Color(0xFF94A3B8),
         status: _resolveHumidificationStatusForUnit(munters1, rangeSettings),
+        extraWidget: _OnOffHeaderValue(
+          active: munters1DataBlocked ? null : munters1.bombaHumidificador,
+        ),
       ),
       _PlcModuleIconData(
-        icon: Icons.water_drop,
-        iconColor: !munters2DataBlocked && munters2.bombaHumidificador == true ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+        icon: Icons.power_settings_new,
+        iconColor: !munters2DataBlocked && munters2.bombaHumidificador == true
+            ? const Color(0xFF22C55E)
+            : const Color(0xFF94A3B8),
         status: _resolveHumidificationStatusForUnit(munters2, rangeSettings),
+        extraWidget: _OnOffHeaderValue(
+          active: munters2DataBlocked ? null : munters2.bombaHumidificador,
+        ),
       ),
     ];
     final List<_PlcModuleIconData> aperturasPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
-        icon: _hasDoorAlarm(munters1) ? Icons.meeting_room_outlined : Icons.door_front_door_outlined,
-        iconColor: _hasDoorAlarm(munters1) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        icon: _hasDoorAlarm(munters1)
+            ? Icons.meeting_room_outlined
+            : Icons.door_front_door_outlined,
+        iconColor: _hasDoorAlarm(munters1)
+            ? const Color(0xFFFACC15)
+            : const Color(0xFF94A3B8),
         status: _resolveAperturasStatusForUnit(munters1),
       ),
       _PlcModuleIconData(
-        icon: _hasDoorAlarm(munters2) ? Icons.meeting_room_outlined : Icons.door_front_door_outlined,
-        iconColor: _hasDoorAlarm(munters2) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        icon: _hasDoorAlarm(munters2)
+            ? Icons.meeting_room_outlined
+            : Icons.door_front_door_outlined,
+        iconColor: _hasDoorAlarm(munters2)
+            ? const Color(0xFFFACC15)
+            : const Color(0xFF94A3B8),
         status: _resolveAperturasStatusForUnit(munters2),
       ),
     ];
-    final List<_PlcModuleIconData> calefaccionPlcIconData = <_PlcModuleIconData>[
+    final List<_PlcModuleIconData>
+    calefaccionPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
         icon: Icons.local_fire_department,
-        iconColor: !munters1DataBlocked && (munters1.resistencia1 == true || munters1.resistencia2 == true) ? const Color(0xFFEF4444) : const Color(0xFF94A3B8),
+        iconColor:
+            !munters1DataBlocked &&
+                (munters1.resistencia1 == true || munters1.resistencia2 == true)
+            ? const Color(0xFFEF4444)
+            : const Color(0xFF94A3B8),
         status: _resolveCalefaccionStatusForUnit(munters1, rangeSettings),
+        extraWidget: _OnOffHeaderValue(
+          active: munters1DataBlocked ? null : _hasAnyHeatingOn(munters1),
+        ),
       ),
       _PlcModuleIconData(
         icon: Icons.local_fire_department,
-        iconColor: !munters2DataBlocked && (munters2.resistencia1 == true || munters2.resistencia2 == true) ? const Color(0xFFEF4444) : const Color(0xFF94A3B8),
+        iconColor:
+            !munters2DataBlocked &&
+                (munters2.resistencia1 == true || munters2.resistencia2 == true)
+            ? const Color(0xFFEF4444)
+            : const Color(0xFF94A3B8),
         status: _resolveCalefaccionStatusForUnit(munters2, rangeSettings),
+        extraWidget: _OnOffHeaderValue(
+          active: munters2DataBlocked ? null : _hasAnyHeatingOn(munters2),
+        ),
       ),
     ];
-    final _ModuleStatus m1AlarmasStatus = _resolveAlarmasStatusForUnit(munters1, rangeSettings);
-    final _ModuleStatus m2AlarmasStatus = _resolveAlarmasStatusForUnit(munters2, rangeSettings);
+    final _ModuleStatus m1AlarmasStatus = _resolveAlarmasStatusForUnit(
+      munters1,
+      rangeSettings,
+    );
+    final _ModuleStatus m2AlarmasStatus = _resolveAlarmasStatusForUnit(
+      munters2,
+      rangeSettings,
+    );
     final List<_PlcModuleIconData> alarmasPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
         icon: Icons.warning_amber_rounded,
-        iconColor: _isModuleStatusAlarm(m1AlarmasStatus) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        iconColor: _isModuleStatusAlarm(m1AlarmasStatus)
+            ? const Color(0xFFFACC15)
+            : const Color(0xFF94A3B8),
         status: m1AlarmasStatus,
       ),
       _PlcModuleIconData(
         icon: Icons.warning_amber_rounded,
-        iconColor: _isModuleStatusAlarm(m2AlarmasStatus) ? const Color(0xFFFACC15) : const Color(0xFF94A3B8),
+        iconColor: _isModuleStatusAlarm(m2AlarmasStatus)
+            ? const Color(0xFFFACC15)
+            : const Color(0xFF94A3B8),
         status: m2AlarmasStatus,
       ),
     ];
 
     final Widget funcionamientoSection = _SectionTable(
       key: _sectionKeys[_sectionFuncionamiento],
-      title: 'FUNCIONAMIENTO',
+      title: 'ESTADO',
       plcIconData: funcionamientoPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
-      expandRequestGeneration: _sectionExpandRequests[_sectionFuncionamiento] ?? 0,
+      expandRequestGeneration:
+          _sectionExpandRequests[_sectionFuncionamiento] ?? 0,
       onExpanded: _handleSectionExpanded,
       rows: [
         _ComparisonRow(
@@ -339,10 +518,14 @@ class _ComparisonPageState extends State<ComparisonPage> {
         _ComparisonRow(
           label: 'Cantidad de apagadas',
           munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatInt(widget.munters1.cantidadApagadas),
+            munters1DataBlocked
+                ? '-'
+                : _formatInt(widget.munters1.cantidadApagadas),
           ),
           munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatInt(widget.munters2.cantidadApagadas),
+            munters2DataBlocked
+                ? '-'
+                : _formatInt(widget.munters2.cantidadApagadas),
           ),
         ),
         _ComparisonTechnicalDataGroup(
@@ -350,24 +533,33 @@ class _ComparisonPageState extends State<ComparisonPage> {
           onToggle: () => _setTechnicalDataExpanded(!_technicalDataExpanded),
           rows: [
             _ComparisonRow(
-              label: 'Latency',
+              label: 'Latency PLC',
               munters1: _TextValue(
-                munters1DataBlocked
-                    ? '-'
-                    : _formatIntWithUnit(widget.munters1.plcLatencyMs, 'ms'),
+                _formatIntWithUnit(widget.munters1.plcLatencyMs, 'ms'),
                 fontWeight: FontWeight.w400,
               ),
               munters2: _TextValue(
-                munters2DataBlocked
-                    ? '-'
-                    : _formatIntWithUnit(widget.munters2.plcLatencyMs, 'ms'),
+                _formatIntWithUnit(widget.munters2.plcLatencyMs, 'ms'),
+                fontWeight: FontWeight.w400,
+              ),
+            ),
+            _ComparisonRow(
+              label: 'Latency ER605',
+              munters1: _TextValue(
+                _formatIntWithUnit(widget.munters1.routerLatencyMs, 'ms'),
+                fontWeight: FontWeight.w400,
+              ),
+              munters2: _TextValue(
+                _formatIntWithUnit(widget.munters2.routerLatencyMs, 'ms'),
                 fontWeight: FontWeight.w400,
               ),
             ),
             _ComparisonRow(
               label: 'Backend',
               munters1: _StateValue(
-                active: munters1DataBlocked ? null : widget.munters1.backendOnline,
+                active: munters1DataBlocked
+                    ? null
+                    : widget.munters1.backendOnline,
                 activeLabel: 'on-line',
                 inactiveLabel: 'off-line',
                 activeColor: const Color(0xFF22C55E),
@@ -375,7 +567,9 @@ class _ComparisonPageState extends State<ComparisonPage> {
                 fontWeight: FontWeight.w400,
               ),
               munters2: _StateValue(
-                active: munters2DataBlocked ? null : widget.munters2.backendOnline,
+                active: munters2DataBlocked
+                    ? null
+                    : widget.munters2.backendOnline,
                 activeLabel: 'on-line',
                 inactiveLabel: 'off-line',
                 activeColor: const Color(0xFF22C55E),
@@ -403,13 +597,17 @@ class _ComparisonPageState extends State<ComparisonPage> {
               munters1: _TextValue(
                 munters1DataBlocked
                     ? '-'
-                    : _formatPreviousLastUpdated(widget.munters1.previousLastUpdatedAt),
+                    : _formatPreviousLastUpdated(
+                        widget.munters1.previousLastUpdatedAt,
+                      ),
                 fontWeight: FontWeight.w400,
               ),
               munters2: _TextValue(
                 munters2DataBlocked
                     ? '-'
-                    : _formatPreviousLastUpdated(widget.munters2.previousLastUpdatedAt),
+                    : _formatPreviousLastUpdated(
+                        widget.munters2.previousLastUpdatedAt,
+                      ),
                 fontWeight: FontWeight.w400,
               ),
             ),
@@ -447,20 +645,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
       expandRequestGeneration: _sectionExpandRequests[_sectionAmbiente] ?? 0,
       onExpanded: _handleSectionExpanded,
       rows: [
-        _ComparisonRow(
-          label: 'Temp. interior',
-          munters1: _TemperatureValue(
-            value: munters1.tempInterior,
-            min: rangeSettings.temperatureMin,
-            max: rangeSettings.temperatureMax,
-            blocked: munters1DataBlocked,
-          ),
-          munters2: _TemperatureValue(
-            value: munters2.tempInterior,
-            min: rangeSettings.temperatureMin,
-            max: rangeSettings.temperatureMax,
-            blocked: munters2DataBlocked,
-          ),
+        _EnvironmentTemperatureBlock(
+          munters1: munters1,
+          munters2: munters2,
+          rangeSettings: rangeSettings,
+          munters1Blocked: munters1DataBlocked,
+          munters2Blocked: munters2DataBlocked,
         ),
         _ComparisonRow(
           label: '',
@@ -498,23 +688,42 @@ class _ComparisonPageState extends State<ComparisonPage> {
           ),
         ),
         _ComparisonRow(
-          label: 'Temp. exterior',
+          label: 'Humedad exterior',
           munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatValueWithUnit(munters1.tempExterior, '°C'),
+            munters1DataBlocked
+                ? '-'
+                : _formatValueWithUnit(munters1.humExterior, '%'),
           ),
           munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatValueWithUnit(munters2.tempExterior, '°C'),
+            munters2DataBlocked
+                ? '-'
+                : _formatValueWithUnit(munters2.humExterior, '%'),
           ),
         ),
         _ComparisonRow(
-          label: 'Humedad exterior',
+          label: 'NH3',
           munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatValueWithUnit(munters1.humExterior, '%'),
+            munters1DataBlocked
+                ? '-'
+                : _formatValueWithUnit(munters1.nh3, 'ppm'),
           ),
           munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatValueWithUnit(munters2.humExterior, '%'),
+            munters2DataBlocked
+                ? '-'
+                : _formatValueWithUnit(munters2.nh3, 'ppm'),
           ),
         ),
+      ],
+    );
+    final Widget filtrosSection = _SectionTable(
+      key: _sectionKeys[_sectionFiltros],
+      title: 'FILTROS',
+      plcIconData: filtrosPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandGeneration: _sectionsExpandGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionFiltros] ?? 0,
+      onExpanded: _handleSectionExpanded,
+      rows: [
         _ComparisonRow(
           label: 'Presion diferencial',
           munters1: _TextValue(
@@ -529,12 +738,14 @@ class _ComparisonPageState extends State<ComparisonPage> {
           ),
         ),
         _ComparisonRow(
-          label: 'NH3',
+          label: 'Seteo alarma',
           munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatValueWithUnit(munters1.nh3, 'ppm'),
+            _formatValueWithUnit(rangeSettings.filterPressureMax, 'Pa'),
+            fontWeight: FontWeight.w400,
           ),
           munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatValueWithUnit(munters2.nh3, 'ppm'),
+            _formatValueWithUnit(rangeSettings.filterPressureMax, 'Pa'),
+            fontWeight: FontWeight.w400,
           ),
         ),
       ],
@@ -578,13 +789,17 @@ class _ComparisonPageState extends State<ComparisonPage> {
           munters1: _BarValue(
             value: munters1DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
+                : _normalizeVoltageToPercent(
+                    munters1.tensionSalidaVentiladores,
+                  ),
             blocked: munters1DataBlocked,
           ),
           munters2: _BarValue(
             value: munters2DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
+                : _normalizeVoltageToPercent(
+                    munters2.tensionSalidaVentiladores,
+                  ),
             blocked: munters2DataBlocked,
           ),
         ),
@@ -592,11 +807,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget humidificacionSection = _SectionTable(
       key: _sectionKeys[_sectionHumidificacion],
-      title: 'HUMIDIFICACION',
+      title: 'ENFRIAMIENTO',
       plcIconData: humidificacionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandGeneration: _sectionsExpandGeneration,
-      expandRequestGeneration: _sectionExpandRequests[_sectionHumidificacion] ?? 0,
+      expandRequestGeneration:
+          _sectionExpandRequests[_sectionHumidificacion] ?? 0,
       onExpanded: _handleSectionExpanded,
       rows: [
         _ComparisonRow(
@@ -668,61 +884,10 @@ class _ComparisonPageState extends State<ComparisonPage> {
       expandRequestGeneration: _sectionExpandRequests[_sectionAperturas] ?? 0,
       onExpanded: _handleSectionExpanded,
       rows: [
-        _ComparisonRow(
-          label: 'Puerta sala',
-          munters1: _StateValue(
-            active: munters1DataBlocked ? null : munters1.salaAbierta,
-            activeLabel: 'Abierta',
-            inactiveLabel: 'Cerrada',
-            activeColor: const Color(0xFFEF4444),
-            inactiveColor: const Color(0xFF22C55E),
-            blocked: munters1DataBlocked,
-          ),
-          munters2: _StateValue(
-            active: munters2DataBlocked ? null : munters2.salaAbierta,
-            activeLabel: 'Abierta',
-            inactiveLabel: 'Cerrada',
-            activeColor: const Color(0xFFEF4444),
-            inactiveColor: const Color(0xFF22C55E),
-            blocked: munters2DataBlocked,
-          ),
-        ),
-        _ComparisonRow(
-          label: 'Aperturas sala',
-          munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatInt(munters1.aperturasSala),
-          ),
-          munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatInt(munters2.aperturasSala),
-          ),
-        ),
-        _ComparisonRow(
-          label: 'Puerta Munter',
-          munters1: _StateValue(
-            active: munters1DataBlocked ? null : munters1.munterAbierto,
-            activeLabel: 'Abierto',
-            inactiveLabel: 'Cerrado',
-            activeColor: const Color(0xFFEF4444),
-            inactiveColor: const Color(0xFF22C55E),
-            blocked: munters1DataBlocked,
-          ),
-          munters2: _StateValue(
-            active: munters2DataBlocked ? null : munters2.munterAbierto,
-            activeLabel: 'Abierto',
-            inactiveLabel: 'Cerrado',
-            activeColor: const Color(0xFFEF4444),
-            inactiveColor: const Color(0xFF22C55E),
-            blocked: munters2DataBlocked,
-          ),
-        ),
-        _ComparisonRow(
-          label: 'Aperturas Munter',
-          munters1: _TextValue(
-            munters1DataBlocked ? '-' : _formatInt(munters1.aperturasMunter),
-          ),
-          munters2: _TextValue(
-            munters2DataBlocked ? '-' : _formatInt(munters2.aperturasMunter),
-          ),
+        DoorOpeningsModule(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          doorEvents: widget.doorEvents,
         ),
       ],
     );
@@ -837,25 +1002,62 @@ class _ComparisonPageState extends State<ComparisonPage> {
         ),
       ],
     );
-    final List<Widget> orderedSections = hasAnyModuleAlarm
-        ? <Widget>[
-            alarmasSection,
-            funcionamientoSection,
-            ambienteSection,
-            ventilacionSection,
-            humidificacionSection,
-            estadosMecanicosSection,
-            calefaccionSection,
+    final bool hasAnyModuleAlarm =
+        _isModuleStatusAlarm(m1AlarmasStatus) ||
+        _isModuleStatusAlarm(m2AlarmasStatus);
+    final Map<String, Widget> sectionById = <String, Widget>{
+      _sectionFuncionamiento: funcionamientoSection,
+      _sectionAmbiente: ambienteSection,
+      _sectionFiltros: filtrosSection,
+      _sectionVentilacion: ventilacionSection,
+      _sectionHumidificacion: humidificacionSection,
+      _sectionAperturas: estadosMecanicosSection,
+      _sectionCalefaccion: calefaccionSection,
+      _sectionAlarmas: alarmasSection,
+    };
+    final List<String> storedModuleIds = ComparisonPage.normalizeModuleOrder(
+      widget.moduleOrder,
+    );
+    final List<String> orderedModuleIds = hasAnyModuleAlarm
+        ? <String>[
+            _sectionAlarmas,
+            ...storedModuleIds.where((String id) => id != _sectionAlarmas),
           ]
-        : <Widget>[
-            funcionamientoSection,
-            ambienteSection,
-            ventilacionSection,
-            humidificacionSection,
-            estadosMecanicosSection,
-            calefaccionSection,
-            alarmasSection,
-          ];
+        : storedModuleIds;
+    final List<Widget> orderedSections = orderedModuleIds
+        .asMap()
+        .entries
+        .map((MapEntry<int, String> entry) {
+          final int index = entry.key;
+          final String id = entry.value;
+          final bool canDragSection =
+              _reorderEnabled && !(hasAnyModuleAlarm && id == _sectionAlarmas);
+          return Container(
+            key: ValueKey<String>(id),
+            margin: const EdgeInsets.only(bottom: 8),
+            child: _ComparisonColumnsScope(
+              showMunters1: widget.showMunters1,
+              showMunters2: widget.showMunters2,
+              munters1Collapsed: _munters1Collapsed,
+              munters2Collapsed: _munters2Collapsed,
+              child: Stack(
+                children: [
+                  sectionById[id]!,
+                  if (canDragSection)
+                    Positioned(
+                      top: 10,
+                      left: 6,
+                      child: ReorderableDragStartListener(
+                        index: index,
+                        child: const _SectionDragHandle(),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          );
+        })
+        .toList(growable: false);
 
     return Container(
       padding: const EdgeInsets.all(12),
@@ -864,50 +1066,91 @@ class _ComparisonPageState extends State<ComparisonPage> {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF334155)),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Stack(
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _TableHeader(
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _TableHeader(
+                      showMunters1: widget.showMunters1,
+                      showMunters2: widget.showMunters2,
+                      magnifierSettings: widget.magnifierSettings,
+                      onToggleAll: _allSectionsExpanded
+                          ? _collapseAllSections
+                          : _expandAllSections,
+                      allSectionsExpanded: _allSectionsExpanded,
+                      reorderEnabled: _reorderEnabled,
+                      onToggleReorder: () {
+                        setState(() {
+                          _reorderEnabled = !_reorderEnabled;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: ReorderableListView(
+                        padding: EdgeInsets.zero,
+                        buildDefaultDragHandles: false,
+                        proxyDecorator:
+                            (
+                              Widget child,
+                              int index,
+                              Animation<double> animation,
+                            ) {
+                              return AnimatedBuilder(
+                                animation: animation,
+                                child: child,
+                                builder: (BuildContext context, Widget? child) {
+                                  return Material(
+                                    type: MaterialType.transparency,
+                                    child: Opacity(opacity: 0.96, child: child),
+                                  );
+                                },
+                              );
+                            },
+                        onReorder: (int oldIndex, int newIndex) {
+                          final List<String> nextOrder = List<String>.from(
+                            orderedModuleIds,
+                          );
+                          if (newIndex > oldIndex) {
+                            newIndex -= 1;
+                          }
+                          final String moved = nextOrder.removeAt(oldIndex);
+                          nextOrder.insert(newIndex, moved);
+                          if (hasAnyModuleAlarm) {
+                            final int alarmStoredIndex = storedModuleIds
+                                .indexOf(_sectionAlarmas);
+                            nextOrder.remove(_sectionAlarmas);
+                            final int insertionIndex = alarmStoredIndex.clamp(
+                              0,
+                              nextOrder.length,
+                            );
+                            nextOrder.insert(insertionIndex, _sectionAlarmas);
+                          }
+                          widget.onModuleOrderChanged(nextOrder);
+                        },
+                        children: orderedSections,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _ComparisonColumnDividerPainter(
                   showMunters1: widget.showMunters1,
                   showMunters2: widget.showMunters2,
                   munters1Collapsed: _munters1Collapsed,
                   munters2Collapsed: _munters2Collapsed,
-                  magnifierSettings: widget.magnifierSettings,
-                  onToggleAll: _allSectionsExpanded
-                      ? _collapseAllSections
-                      : _expandAllSections,
-                  allSectionsExpanded: _allSectionsExpanded,
-                  onToggleMunters1: () {
-                    setState(() {
-                      _munters1Collapsed = !_munters1Collapsed;
-                    });
-                  },
-                  onToggleMunters2: () {
-                    setState(() {
-                      _munters2Collapsed = !_munters2Collapsed;
-                    });
-                  },
                 ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: SingleChildScrollView(
-                    child: _ComparisonColumnsScope(
-                      showMunters1: widget.showMunters1,
-                      showMunters2: widget.showMunters2,
-                      munters1Collapsed: _munters1Collapsed,
-                      munters2Collapsed: _munters2Collapsed,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: _withSectionSpacing(orderedSections, 8),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
         ],
@@ -916,16 +1159,76 @@ class _ComparisonPageState extends State<ComparisonPage> {
   }
 }
 
-enum _WitnessDotMode {
-  blinking,
-  fixed,
+class _ComparisonColumnDividerPainter extends CustomPainter {
+  const _ComparisonColumnDividerPainter({
+    required this.showMunters1,
+    required this.showMunters2,
+    required this.munters1Collapsed,
+    required this.munters2Collapsed,
+  });
+
+  final bool showMunters1;
+  final bool showMunters2;
+  final bool munters1Collapsed;
+  final bool munters2Collapsed;
+
+  static const double _actionColumnWidth = 26;
+  static const double _collapsedColumnWidth = 52;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = const Color(0x66CBD5E1)
+      ..strokeWidth = 0.8;
+
+    final double actionReservedWidth = showMunters1 || showMunters2
+        ? _actionColumnWidth
+        : 0;
+    final double flexAreaWidth = math.max(0, size.width - actionReservedWidth);
+    final List<double> widths = <double>[3];
+    double fixedWidth = 0;
+    double flexTotal = 3;
+
+    if (showMunters1) {
+      if (munters1Collapsed) {
+        fixedWidth += _collapsedColumnWidth;
+        widths.add(-_collapsedColumnWidth);
+      } else {
+        flexTotal += 4;
+        widths.add(4);
+      }
+    }
+    if (showMunters2) {
+      if (munters2Collapsed) {
+        fixedWidth += _collapsedColumnWidth;
+        widths.add(-_collapsedColumnWidth);
+      } else {
+        flexTotal += 4;
+        widths.add(4);
+      }
+    }
+
+    final double flexibleWidth = math.max(0, flexAreaWidth - fixedWidth);
+    double x = 0;
+    for (final double width in widths) {
+      x += width < 0 ? -width : flexibleWidth * (width / flexTotal);
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ComparisonColumnDividerPainter oldDelegate) {
+    return showMunters1 != oldDelegate.showMunters1 ||
+        showMunters2 != oldDelegate.showMunters2 ||
+        munters1Collapsed != oldDelegate.munters1Collapsed ||
+        munters2Collapsed != oldDelegate.munters2Collapsed;
+  }
 }
 
+enum _WitnessDotMode { blinking, fixed }
+
 class _WitnessDotVisual {
-  const _WitnessDotVisual({
-    required this.color,
-    required this.mode,
-  });
+  const _WitnessDotVisual({required this.color, required this.mode});
 
   final Color color;
   final _WitnessDotMode mode;
@@ -1005,24 +1308,20 @@ class _TableHeader extends StatelessWidget {
   const _TableHeader({
     required this.showMunters1,
     required this.showMunters2,
-    required this.munters1Collapsed,
-    required this.munters2Collapsed,
     required this.magnifierSettings,
     required this.onToggleAll,
     required this.allSectionsExpanded,
-    required this.onToggleMunters1,
-    required this.onToggleMunters2,
+    required this.reorderEnabled,
+    required this.onToggleReorder,
   });
 
   final bool showMunters1;
   final bool showMunters2;
-  final bool munters1Collapsed;
-  final bool munters2Collapsed;
   final MagnifierSettings magnifierSettings;
   final VoidCallback onToggleAll;
   final bool allSectionsExpanded;
-  final VoidCallback onToggleMunters1;
-  final VoidCallback onToggleMunters2;
+  final bool reorderEnabled;
+  final VoidCallback onToggleReorder;
 
   @override
   Widget build(BuildContext context) {
@@ -1040,21 +1339,17 @@ class _TableHeader extends StatelessWidget {
             child: Row(
               children: [
                 _InstantMagnifierButton(settings: magnifierSettings),
+                const SizedBox(width: 6),
+                _HeaderToggleIcon(
+                  icon: Icons.drag_indicator_rounded,
+                  active: reorderEnabled,
+                  onTap: onToggleReorder,
+                ),
               ],
             ),
           ),
-          if (showMunters1)
-            _HeaderUnit(
-              title: 'M1',
-              collapsed: munters1Collapsed,
-              onToggle: onToggleMunters1,
-            ),
-          if (showMunters2)
-            _HeaderUnit(
-              title: 'M2',
-              collapsed: munters2Collapsed,
-              onToggle: onToggleMunters2,
-            ),
+          if (showMunters1) _HeaderUnit(title: 'M1'),
+          if (showMunters2) _HeaderUnit(title: 'M2'),
           _HeaderTapIcon(
             icon: allSectionsExpanded
                 ? Icons.unfold_less_rounded
@@ -1067,67 +1362,13 @@ class _TableHeader extends StatelessWidget {
   }
 }
 
-List<Widget> _withSectionSpacing(List<Widget> children, double spacing) {
-  if (children.isEmpty) {
-    return const <Widget>[];
-  }
-
-  final List<Widget> spaced = <Widget>[];
-  for (int index = 0; index < children.length; index += 1) {
-    if (index > 0) {
-      spaced.add(SizedBox(height: spacing));
-    }
-    spaced.add(children[index]);
-  }
-  return spaced;
-}
-
 class _HeaderUnit extends StatelessWidget {
-  const _HeaderUnit({
-    required this.title,
-    required this.collapsed,
-    required this.onToggle,
-  });
+  const _HeaderUnit({required this.title});
 
   final String title;
-  final bool collapsed;
-  final VoidCallback onToggle;
 
   @override
   Widget build(BuildContext context) {
-    if (collapsed) {
-      return SizedBox(
-        width: 52,
-        height: 24,
-        child: InkWell(
-          onTap: onToggle,
-          borderRadius: BorderRadius.circular(8),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  title,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xFFE5E7EB),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const Icon(
-                  Icons.keyboard_arrow_right_rounded,
-                  color: Color(0xFF94A3B8),
-                  size: 16,
-                ),
-              ],
-            ),
-          ),
-        ),
-      );
-    }
-
     return Expanded(
       flex: 4,
       child: SizedBox(
@@ -1143,19 +1384,6 @@ class _HeaderUnit extends StatelessWidget {
                 color: Color(0xFFE5E7EB),
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(width: 6),
-            InkWell(
-              onTap: onToggle,
-              borderRadius: BorderRadius.circular(8),
-              child: const Padding(
-                padding: EdgeInsets.all(2),
-                child: Icon(
-                  Icons.keyboard_arrow_left_rounded,
-                  color: Color(0xFF94A3B8),
-                  size: 16,
-                ),
               ),
             ),
           ],
@@ -1191,10 +1419,7 @@ class _HeaderTapIcon extends StatelessWidget {
 }
 
 class _HeaderActionIcon extends StatelessWidget {
-  const _HeaderActionIcon({
-    required this.icon,
-    required this.onPointerDown,
-  });
+  const _HeaderActionIcon({required this.icon, required this.onPointerDown});
 
   final IconData icon;
   final ValueChanged<PointerDownEvent>? onPointerDown;
@@ -1223,7 +1448,8 @@ class _InstantMagnifierButton extends StatefulWidget {
   final MagnifierSettings settings;
 
   @override
-  State<_InstantMagnifierButton> createState() => _InstantMagnifierButtonState();
+  State<_InstantMagnifierButton> createState() =>
+      _InstantMagnifierButtonState();
 }
 
 class _InstantMagnifierButtonState extends State<_InstantMagnifierButton> {
@@ -1332,6 +1558,85 @@ class _InstantMagnifierButtonState extends State<_InstantMagnifierButton> {
   }
 }
 
+class _HeaderToggleIcon extends StatelessWidget {
+  const _HeaderToggleIcon({
+    required this.icon,
+    required this.active,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final bool active;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        width: 26,
+        height: 26,
+        decoration: BoxDecoration(
+          color: active ? const Color(0xFF1F2937) : const Color(0xFF162133),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: active ? const Color(0xFF475569) : const Color(0xFF223046),
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 15,
+          color: active ? const Color(0xFFCBD5E1) : const Color(0xFF94A3B8),
+        ),
+      ),
+    );
+  }
+}
+
+class _SectionDragHandle extends StatelessWidget {
+  const _SectionDragHandle();
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.grab,
+      child: SizedBox(
+        width: 10,
+        height: 16,
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: List<Widget>.generate(
+              3,
+              (int row) => Padding(
+                padding: EdgeInsets.only(bottom: row == 2 ? 0 : 2),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: List<Widget>.generate(
+                    2,
+                    (int column) => Padding(
+                      padding: EdgeInsets.only(right: column == 1 ? 0 : 2),
+                      child: Container(
+                        width: 2.1,
+                        height: 2.1,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFF94A3B8),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _ComparisonColumnsScope extends InheritedWidget {
   const _ComparisonColumnsScope({
     required this.showMunters1,
@@ -1367,6 +1672,7 @@ class _PlcModuleIconData {
     required this.icon,
     required this.iconColor,
     required this.status,
+    this.iconWidget,
     this.extraWidget,
     this.spinning = false,
     this.witnessVisual,
@@ -1378,6 +1684,7 @@ class _PlcModuleIconData {
   final IconData icon;
   final Color iconColor;
   final _ModuleStatus status;
+  final Widget? iconWidget;
   final Widget? extraWidget;
   final bool spinning;
   final _WitnessDotVisual? witnessVisual;
@@ -1393,17 +1700,21 @@ class _PlcModuleIconWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        _ModuleStatusIndicator(status: data.status),
-        const SizedBox(width: 4),
+    final Widget leadingIcon =
+        data.iconWidget ??
         _SpinningIcon(
           icon: data.icon,
           color: data.iconColor,
           size: 14,
           spinning: data.spinning,
-        ),
+        );
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ModuleStatusIndicator(status: data.status),
+        const SizedBox(width: 4),
+        leadingIcon,
         if (data.extraWidget != null) ...[
           const SizedBox(width: 2),
           data.extraWidget!,
@@ -1481,7 +1792,11 @@ class _SpinningIconState extends State<_SpinningIcon>
 
   @override
   Widget build(BuildContext context) {
-    final Widget icon = Icon(widget.icon, size: widget.size, color: widget.color);
+    final Widget icon = Icon(
+      widget.icon,
+      size: widget.size,
+      color: widget.color,
+    );
     if (!widget.spinning) {
       return icon;
     }
@@ -1491,6 +1806,121 @@ class _SpinningIconState extends State<_SpinningIcon>
       builder: (BuildContext context, Widget? child) => Transform.rotate(
         angle: _controller.value * math.pi * 2,
         child: child,
+      ),
+    );
+  }
+}
+
+class _VentilationHeaderPowerValue extends StatelessWidget {
+  const _VentilationHeaderPowerValue({required this.value});
+
+  final double? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final int? percent = value == null ? null : (value! * 100).round();
+    return Text(
+      percent == null ? '--' : '$percent%',
+      style: const TextStyle(
+        color: Color(0xFFCBD5E1),
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _FilterHeaderPressureValue extends StatelessWidget {
+  const _FilterHeaderPressureValue({required this.pressure});
+
+  final double? pressure;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = pressure == null
+        ? '--'
+        : _formatValueWithUnit(pressure, 'Pa');
+    return Text(
+      label,
+      style: const TextStyle(
+        color: Color(0xFFCBD5E1),
+        fontSize: 11,
+        fontWeight: FontWeight.w700,
+      ),
+    );
+  }
+}
+
+class _SquareAirFilterIcon extends StatelessWidget {
+  const _SquareAirFilterIcon({required this.color, this.denseMesh = false});
+
+  final Color color;
+  final bool denseMesh;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<double> guides = denseMesh
+        ? const <double>[4, 7, 10]
+        : const <double>[5.5, 8.5];
+
+    return SizedBox(
+      width: 14,
+      height: 14,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned(
+            left: 0,
+            top: 0,
+            child: Container(
+              width: 14,
+              height: 14,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(2),
+                border: Border.all(color: color, width: 1.3),
+              ),
+            ),
+          ),
+          for (final double x in guides)
+            Positioned(
+              left: x,
+              top: 2,
+              bottom: 2,
+              child: Container(width: 1, color: color.withValues(alpha: 0.85)),
+            ),
+          for (final double y in guides)
+            Positioned(
+              left: 2,
+              right: 2,
+              top: y,
+              child: Container(height: 1, color: color.withValues(alpha: 0.85)),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OnOffHeaderValue extends StatelessWidget {
+  const _OnOffHeaderValue({required this.active});
+
+  final bool? active;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool? current = active;
+    final String label = current == null ? '--' : (current ? 'ON' : 'OFF');
+    final Color color = current == null
+        ? const Color(0xFF94A3B8)
+        : (current ? const Color(0xFF22C55E) : const Color(0xFFCBD5E1));
+
+    return Text(
+      label,
+      style: TextStyle(
+        color: color,
+        fontSize: 11,
+        fontWeight: FontWeight.w800,
+        letterSpacing: 0.3,
       ),
     );
   }
@@ -1526,7 +1956,8 @@ class _SectionTableState extends State<_SectionTable> {
   @override
   void didUpdateWidget(covariant _SectionTable oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.collapseGeneration != oldWidget.collapseGeneration && _expanded) {
+    if (widget.collapseGeneration != oldWidget.collapseGeneration &&
+        _expanded) {
       setState(() {
         _expanded = false;
       });
@@ -1578,15 +2009,14 @@ class _SectionTableState extends State<_SectionTable> {
                       child: Row(
                         crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          Center(
-                            child: Text(
-                              widget.title,
-                              style: const TextStyle(
-                                color: Color(0xFFE5E7EB),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                height: 1,
-                              ),
+                          const SizedBox(width: 14),
+                          Text(
+                            widget.title,
+                            style: const TextStyle(
+                              color: Color(0xFFE5E7EB),
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              height: 1,
                             ),
                           ),
                         ],
@@ -1600,7 +2030,8 @@ class _SectionTableState extends State<_SectionTable> {
                   else
                     Expanded(
                       flex: 4,
-                      child: Center(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
                         child: widget.plcIconData.isNotEmpty
                             ? _PlcModuleIconWidget(data: widget.plcIconData[0])
                             : const SizedBox.shrink(),
@@ -1613,7 +2044,8 @@ class _SectionTableState extends State<_SectionTable> {
                   else
                     Expanded(
                       flex: 4,
-                      child: Center(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
                         child: widget.plcIconData.length > 1
                             ? _PlcModuleIconWidget(data: widget.plcIconData[1])
                             : const SizedBox.shrink(),
@@ -1760,9 +2192,7 @@ class _SectionBlinkDotState extends State<_SectionBlinkDot>
         final double t = _controller.value;
         final double pulse = t < 0.22
             ? Curves.easeOut.transform(t / 0.22)
-            : (t < 0.44
-                  ? 1 - Curves.easeIn.transform((t - 0.22) / 0.22)
-                  : 0);
+            : (t < 0.44 ? 1 - Curves.easeIn.transform((t - 0.22) / 0.22) : 0);
         return Opacity(
           opacity: 0.16 + (pulse * 0.84),
           child: Container(
@@ -1933,12 +2363,15 @@ List<String> _eventModulesForUnit(
 ) {
   final List<String> modules = <String>[];
   if (_isModuleStatusAlarm(_resolveFunctioningStatusForUnit(unit))) {
-    modules.add('Funcionamiento');
+    modules.add('Estado');
   }
   if (_isModuleStatusAlarm(
     _resolveEnvironmentStatusForUnit(unit: unit, rangeSettings: rangeSettings),
   )) {
     modules.add('Ambiente');
+  }
+  if (_isModuleStatusAlarm(_resolveFiltrosStatusForUnit(unit, rangeSettings))) {
+    modules.add('Filtros');
   }
   if (_isModuleStatusAlarm(_resolveVentilationStatusForUnit(unit))) {
     modules.add('Ventilacion');
@@ -1946,12 +2379,14 @@ List<String> _eventModulesForUnit(
   if (_isModuleStatusAlarm(
     _resolveHumidificationStatusForUnit(unit, rangeSettings),
   )) {
-    modules.add('Humidificacion');
+    modules.add('Enfriamiento');
   }
   if (_isModuleStatusAlarm(_resolveAperturasStatusForUnit(unit))) {
     modules.add('Aperturas');
   }
-  if (_isModuleStatusAlarm(_resolveCalefaccionStatusForUnit(unit, rangeSettings))) {
+  if (_isModuleStatusAlarm(
+    _resolveCalefaccionStatusForUnit(unit, rangeSettings),
+  )) {
     modules.add('Calefaccion');
   }
   return modules;
@@ -1962,8 +2397,12 @@ bool _isVentilationFullyRunning(MuntersModel unit) {
     return false;
   }
   final List<bool> fans = <bool?>[
-    unit.fanQ5, unit.fanQ6, unit.fanQ7,
-    unit.fanQ8, unit.fanQ9, unit.fanQ10,
+    unit.fanQ5,
+    unit.fanQ6,
+    unit.fanQ7,
+    unit.fanQ8,
+    unit.fanQ9,
+    unit.fanQ10,
   ].whereType<bool>().toList(growable: false);
   return fans.isNotEmpty && fans.every((bool f) => f == true);
 }
@@ -2055,14 +2494,17 @@ _ModuleStatus _resolveAlarmasStatusForUnit(
       unit: unit,
       rangeSettings: rangeSettings,
     ),
+    filtrosStatus: _resolveFiltrosStatusForUnit(unit, rangeSettings),
     ventilationStatus: _resolveVentilationStatusForUnit(unit),
-    humidificationStatus: _resolveHumidificationStatusForUnit(unit, rangeSettings),
+    humidificationStatus: _resolveHumidificationStatusForUnit(
+      unit,
+      rangeSettings,
+    ),
     aperturasStatus: _resolveAperturasStatusForUnit(unit),
     calefaccionStatus: _resolveCalefaccionStatusForUnit(unit, rangeSettings),
     hasAlarmOutput: unit.alarmaGeneral == true,
   );
 }
-
 
 _RangeAssessment _assessRange(double? value, double min, double max) {
   if (value == null) {
@@ -2147,7 +2589,6 @@ _ModuleStatus _resolveEnvironmentStatusForUnit({
     _RangeAssessment.pending => const _ModuleStatus.pending(),
   };
 }
-
 
 _ModuleStatus _resolveVentilationStatus(
   MuntersModel munters1,
@@ -2254,6 +2695,7 @@ _ModuleStatus _resolveAperturasStatus(
 _ModuleStatus _resolveAlarmasStatus({
   required _ModuleStatus functioningStatus,
   required _ModuleStatus environmentStatus,
+  required _ModuleStatus filtrosStatus,
   required _ModuleStatus ventilationStatus,
   required _ModuleStatus humidificationStatus,
   required _ModuleStatus aperturasStatus,
@@ -2263,6 +2705,7 @@ _ModuleStatus _resolveAlarmasStatus({
   if (hasAlarmOutput ||
       _isModuleStatusAlarm(functioningStatus) ||
       _isModuleStatusAlarm(environmentStatus) ||
+      _isModuleStatusAlarm(filtrosStatus) ||
       _isModuleStatusAlarm(ventilationStatus) ||
       _isModuleStatusAlarm(humidificationStatus) ||
       _isModuleStatusAlarm(aperturasStatus) ||
@@ -2271,6 +2714,7 @@ _ModuleStatus _resolveAlarmasStatus({
   }
   if (functioningStatus.kind == _ModuleStatusKind.pending &&
       environmentStatus.kind == _ModuleStatusKind.pending &&
+      filtrosStatus.kind == _ModuleStatusKind.pending &&
       ventilationStatus.kind == _ModuleStatusKind.pending &&
       humidificationStatus.kind == _ModuleStatusKind.pending &&
       aperturasStatus.kind == _ModuleStatusKind.pending &&
@@ -2281,6 +2725,53 @@ _ModuleStatus _resolveAlarmasStatus({
     return const _ModuleStatus.pending();
   }
   return const _ModuleStatus.ok();
+}
+
+_ModuleStatus _resolveFiltrosStatus(
+  MuntersModel munters1,
+  MuntersModel munters2,
+  DashboardRangeSettings rangeSettings,
+) {
+  final List<_ModuleStatus> statuses = <_ModuleStatus>[
+    _resolveFiltrosStatusForUnit(munters1, rangeSettings),
+    _resolveFiltrosStatusForUnit(munters2, rangeSettings),
+  ];
+  if (statuses.any(_isModuleStatusAlarm)) {
+    return const _ModuleStatus.alert();
+  }
+  if (statuses.any((status) => status.kind == _ModuleStatusKind.ok)) {
+    return const _ModuleStatus.ok();
+  }
+  return const _ModuleStatus.pending();
+}
+
+_ModuleStatus _resolveFiltrosStatusForUnit(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  if (_shouldBlockOperationalData(unit)) {
+    return const _ModuleStatus.pending();
+  }
+  final double? differentialPressure = unit.presionDiferencial;
+  if (differentialPressure == null) {
+    return const _ModuleStatus.pending();
+  }
+  if (differentialPressure > rangeSettings.filterPressureMax) {
+    return const _ModuleStatus.alert();
+  }
+  return const _ModuleStatus.ok();
+}
+
+Color _resolveFiltrosIconColorForUnit(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  return switch (_resolveFiltrosStatusForUnit(unit, rangeSettings).kind) {
+    _ModuleStatusKind.alert ||
+    _ModuleStatusKind.error => const Color(0xFFEF4444),
+    _ModuleStatusKind.ok => const Color(0xFF22C55E),
+    _ => const Color(0xFF94A3B8),
+  };
 }
 
 _ModuleStatus _resolveHumidificationStatusForUnit(
@@ -2438,7 +2929,7 @@ List<String> _calefaccionNoticesForUnit(
   }
   final List<String> notices = <String>[];
   if (_hasHeatingHumidificationConflict(unit)) {
-    notices.add('Humidificacion ON');
+    notices.add('Enfriamiento ON');
   }
   if (_isTempBelowMinimumAndHeatingOff(unit, rangeSettings)) {
     notices.add('Temp. en min.');
@@ -2564,6 +3055,8 @@ class _ComparisonRow extends StatelessWidget {
   final Widget munters1;
   final Widget munters2;
   final bool alignToTop;
+  static const double _defaultItemFontSize = 12;
+  static const double _actionColumnWidth = 26;
 
   @override
   Widget build(BuildContext context) {
@@ -2591,7 +3084,7 @@ class _ComparisonRow extends StatelessWidget {
                         label,
                         style: const TextStyle(
                           color: Color(0xFFCBD5E1),
-                          fontSize: 11,
+                          fontSize: _defaultItemFontSize,
                         ),
                       ),
                     ),
@@ -2605,9 +3098,7 @@ class _ComparisonRow extends StatelessWidget {
               else
                 Expanded(
                   flex: 4,
-                  child: alignToTop
-                      ? munters1
-                      : Center(child: munters1),
+                  child: alignToTop ? munters1 : Center(child: munters1),
                 ),
               if (!scope.showMunters2)
                 const SizedBox.shrink()
@@ -2616,10 +3107,10 @@ class _ComparisonRow extends StatelessWidget {
               else
                 Expanded(
                   flex: 4,
-                  child: alignToTop
-                      ? munters2
-                      : Center(child: munters2),
+                  child: alignToTop ? munters2 : Center(child: munters2),
                 ),
+              if (scope.showMunters1 || scope.showMunters2)
+                const SizedBox(width: _actionColumnWidth),
             ],
           ),
         ],
@@ -2627,6 +3118,389 @@ class _ComparisonRow extends StatelessWidget {
     );
   }
 }
+
+class _EnvironmentTemperatureBlock extends StatelessWidget {
+  const _EnvironmentTemperatureBlock({
+    required this.munters1,
+    required this.munters2,
+    required this.rangeSettings,
+    required this.munters1Blocked,
+    required this.munters2Blocked,
+  });
+
+  final MuntersModel munters1;
+  final MuntersModel munters2;
+  final DashboardRangeSettings rangeSettings;
+  final bool munters1Blocked;
+  final bool munters2Blocked;
+
+  static const List<String> _labels = <String>[
+    'Temp. exterior',
+    'T°C. ING sala',
+    'T°C SAL sala',
+  ];
+  static const double _actionColumnWidth = 26;
+
+  @override
+  Widget build(BuildContext context) {
+    final _ComparisonColumnsScope scope = _ComparisonColumnsScope.of(context);
+
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF223046))),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Expanded(flex: 3, child: _EnvironmentTemperatureLabels()),
+            if (!scope.showMunters1)
+              const SizedBox.shrink()
+            else if (scope.munters1Collapsed)
+              const SizedBox(width: 52)
+            else
+              Expanded(
+                flex: 4,
+                child: Center(
+                  child: _EnvironmentTemperatureColumn(
+                    exterior: munters1.tempExterior,
+                    ingreso: munters1.tempIngresoSala,
+                    egreso: munters1.tempInterior,
+                    min: rangeSettings.temperatureMin,
+                    max: rangeSettings.temperatureMax,
+                    blocked: munters1Blocked,
+                  ),
+                ),
+              ),
+            if (!scope.showMunters2)
+              const SizedBox.shrink()
+            else if (scope.munters2Collapsed)
+              const SizedBox(width: 52)
+            else
+              Expanded(
+                flex: 4,
+                child: Center(
+                  child: _EnvironmentTemperatureColumn(
+                    exterior: munters2.tempExterior,
+                    ingreso: munters2.tempIngresoSala,
+                    egreso: munters2.tempInterior,
+                    min: rangeSettings.temperatureMin,
+                    max: rangeSettings.temperatureMax,
+                    blocked: munters2Blocked,
+                  ),
+                ),
+              ),
+            if (scope.showMunters1 || scope.showMunters2)
+              const SizedBox(width: _actionColumnWidth),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EnvironmentTemperatureLabels extends StatelessWidget {
+  const _EnvironmentTemperatureLabels();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (final String label in _EnvironmentTemperatureBlock._labels)
+          SizedBox(
+            height: _EnvironmentTemperatureColumn._valueRowHeight,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _EnvironmentTemperatureColumn extends StatelessWidget {
+  const _EnvironmentTemperatureColumn({
+    required this.exterior,
+    required this.ingreso,
+    required this.egreso,
+    required this.min,
+    required this.max,
+    required this.blocked,
+  });
+
+  final double? exterior;
+  final double? ingreso;
+  final double? egreso;
+  final double min;
+  final double max;
+  final bool blocked;
+
+  static const double _contentLeft = 0;
+  static const double _gaugeWidth = 104;
+  static const double _markerWidth = 8;
+  static const double _valueRowHeight = 48;
+  static const double _gaugeCenterYInRow = 23;
+  static const double _blockHeight = 174;
+
+  @override
+  Widget build(BuildContext context) {
+    final double? delta = ingreso != null && egreso != null
+        ? egreso! - ingreso!
+        : null;
+    final bool showIngresoEgresoConnector =
+        !blocked && ingreso != null && egreso != null && max > min;
+
+    return SizedBox(
+      width: _gaugeWidth,
+      height: _blockHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          if (showIngresoEgresoConnector)
+            Positioned.fill(
+              child: CustomPaint(
+                painter: _TemperatureConnectorPainter(
+                  start: Offset(
+                    _temperatureMarkerCenterX(ingreso!, min, max),
+                    _valueRowHeight + _gaugeCenterYInRow,
+                  ),
+                  end: Offset(
+                    _temperatureMarkerCenterX(egreso!, min, max),
+                    (_valueRowHeight * 2) + _gaugeCenterYInRow,
+                  ),
+                  label: '∆T: ${_formatDeltaLabel(delta!.abs())}',
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.only(left: _contentLeft),
+            child: Column(
+              children: [
+                _TemperatureValue(
+                  value: exterior,
+                  min: min,
+                  max: max,
+                  blocked: blocked,
+                ),
+                _TemperatureValue(
+                  value: ingreso,
+                  min: min,
+                  max: max,
+                  blocked: blocked,
+                ),
+                _TemperatureValue(
+                  value: egreso,
+                  min: min,
+                  max: max,
+                  blocked: blocked,
+                ),
+              ],
+            ),
+          ),
+          // Positioned(
+          //   left: 2,
+          //   top: 44,
+          //   child: _TemperatureDeltaGauge(value: delta, blocked: blocked),
+          // ),
+        ],
+      ),
+    );
+  }
+
+  static double _temperatureMarkerCenterX(
+    double value,
+    double min,
+    double max,
+  ) {
+    final double clamped = ((value - min) / (max - min)).clamp(0.0, 1.0);
+    final double markerLeft = clamped * (_gaugeWidth - _markerWidth);
+    return _contentLeft + markerLeft + (_markerWidth / 2);
+  }
+
+  static String _formatDeltaLabel(double value) {
+    return value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
+  }
+}
+
+class _TemperatureConnectorPainter extends CustomPainter {
+  const _TemperatureConnectorPainter({
+    required this.start,
+    required this.end,
+    required this.label,
+  });
+
+  final Offset start;
+  final Offset end;
+  final String label;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = const Color(0xB8CBD5E1)
+      ..strokeWidth = 1.4
+      ..strokeCap = StrokeCap.round;
+
+    canvas.drawLine(start, end, paint);
+
+    final TextPainter textPainter = TextPainter(
+      text: TextSpan(
+        text: label,
+        style: const TextStyle(
+          color: Color(0xFF94A3B8),
+          fontSize: 10,
+          fontWeight: FontWeight.w400,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    final Offset midpoint = Offset(
+      (start.dx + end.dx) / 2,
+      (start.dy + end.dy) / 2,
+    );
+    textPainter.paint(canvas, midpoint + const Offset(7, -10));
+  }
+
+  @override
+  bool shouldRepaint(_TemperatureConnectorPainter oldDelegate) {
+    return oldDelegate.start != start ||
+        oldDelegate.end != end ||
+        oldDelegate.label != label;
+  }
+}
+
+// class _TemperatureDeltaGauge extends StatelessWidget {
+//   const _TemperatureDeltaGauge({required this.value, required this.blocked});
+//
+//   final double? value;
+//   final bool blocked;
+//
+//   static const double _min = 0;
+//   static const double _max = 5;
+//   static const double _height = 104;
+//   static const double _width = 6;
+//   static const double _markerHeight = 14;
+//   static const double _markerWidth = 22;
+//   static const double _barLeft = 18;
+//   static const double _labelLeft = 5;
+//   static const double _markerLeft = 12;
+//
+//   @override
+//   Widget build(BuildContext context) {
+//     if (blocked || value == null) {
+//       return const SizedBox(width: 48, height: 142);
+//     }
+//
+//     final double clamped = value!.clamp(_min, _max);
+//     final double ratio = (clamped - _min) / (_max - _min);
+//     final double markerTop = (_height - _markerHeight) * (1 - ratio);
+//
+//     return SizedBox(
+//       width: 48,
+//       height: 142,
+//       child: Stack(
+//         clipBehavior: Clip.none,
+//         children: [
+//           const Positioned(
+//             left: _labelLeft - 8,
+//             top: 52,
+//             child: RotatedBox(
+//               quarterTurns: 3,
+//               child: Text(
+//                 '∆ Temp.',
+//                 style: TextStyle(
+//                   color: Color(0xFF94A3B8),
+//                   fontSize: 10,
+//                   fontWeight: FontWeight.w400,
+//                 ),
+//               ),
+//             ),
+//           ),
+//           const Positioned(
+//             top: 14,
+//             left: _labelLeft,
+//             width: 14,
+//             child: Text(
+//               '5',
+//               textAlign: TextAlign.left,
+//               style: TextStyle(
+//                 color: Color(0xFF94A3B8),
+//                 fontSize: 10,
+//                 fontWeight: FontWeight.w400,
+//               ),
+//             ),
+//           ),
+//           const Positioned(
+//             top: 108,
+//             left: _labelLeft,
+//             width: 14,
+//             child: Text(
+//               '0',
+//               textAlign: TextAlign.left,
+//               style: TextStyle(
+//                 color: Color(0xFF94A3B8),
+//                 fontSize: 10,
+//                 fontWeight: FontWeight.w400,
+//               ),
+//             ),
+//           ),
+//           Positioned(
+//             top: 14,
+//             left: _barLeft,
+//             child: ClipRRect(
+//               borderRadius: BorderRadius.circular(99),
+//               child: Container(
+//                 width: _width,
+//                 height: _height,
+//                 decoration: const BoxDecoration(
+//                   gradient: LinearGradient(
+//                     begin: Alignment.bottomCenter,
+//                     end: Alignment.topCenter,
+//                     colors: [Color(0x00EF4444), Color(0xFFEF4444)],
+//                   ),
+//                   border: Border.fromBorderSide(
+//                     BorderSide(
+//                       color: Color.fromARGB(133, 255, 255, 255),
+//                       width: 0.6,
+//                     ), //color original propuesto: 0x5594A3B8
+//                   ),
+//                 ),
+//               ),
+//             ),
+//           ),
+//           Positioned(
+//             top: 14 + markerTop,
+//             left: _markerLeft,
+//             child: Container(
+//               width: _markerWidth,
+//               height: _markerHeight,
+//               alignment: Alignment.center,
+//               decoration: BoxDecoration(
+//                 color: const Color(0xFFE2E8F0),
+//                 borderRadius: BorderRadius.circular(99),
+//                 border: Border.all(color: const Color(0xFF0F172A)),
+//               ),
+//               child: Text(
+//                 clamped.toStringAsFixed(clamped % 1 == 0 ? 0 : 1),
+//                 style: const TextStyle(
+//                   color: Color(0xFF0F172A),
+//                   fontSize: 10,
+//                   fontWeight: FontWeight.w400,
+//                   height: 1,
+//                 ),
+//               ),
+//             ),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
 class _EventModulesValue extends StatelessWidget {
   const _EventModulesValue({
@@ -2719,7 +3593,6 @@ class _StateValue extends StatelessWidget {
     required this.active,
     required this.activeLabel,
     required this.inactiveLabel,
-    this.blocked = false,
     this.activeColor = const Color(0xFF22C55E),
     this.inactiveColor = const Color(0xFFE5E7EB),
     this.fontWeight = FontWeight.w600,
@@ -2728,16 +3601,12 @@ class _StateValue extends StatelessWidget {
   final bool? active;
   final String activeLabel;
   final String inactiveLabel;
-  final bool blocked;
   final Color activeColor;
   final Color inactiveColor;
   final FontWeight fontWeight;
 
   @override
   Widget build(BuildContext context) {
-    if (blocked) {
-      return const _TextValue('-', fontWeight: FontWeight.w400);
-    }
     final bool missingValue = active == null;
     return Text(
       missingValue ? 'Sin datos' : (active! ? activeLabel : inactiveLabel),
@@ -2835,6 +3704,7 @@ class _ComparisonHistoryValue extends StatelessWidget {
       tenantId: tenantId,
       siteId: siteId,
       plcId: plcId,
+      horizontalMargin: 8,
     );
   }
 }
@@ -2938,15 +3808,12 @@ class _EquipmentStateValue extends StatelessWidget {
     final Color stateColor = switch (currentDiagnostics?.stateCode) {
       PlcUnitDiagnostics.plcNotConfigured => const Color(0xFFFACC15),
       PlcUnitDiagnostics.plcUnreachable => const Color(0xFFEF4444),
-      PlcUnitDiagnostics.plcReachableNoValidData =>
-        const Color(0xFFF59E0B),
+      PlcUnitDiagnostics.plcReachableNoValidData => const Color(0xFFF59E0B),
       PlcUnitDiagnostics.plcStopConfirmed => const Color(0xFFF59E0B),
       PlcUnitDiagnostics.plcHealthy => const Color(0xFF22C55E),
       PlcUnitDiagnostics.plcRunConfirmed => const Color(0xFF22C55E),
-      PlcUnitDiagnostics.plcStateUnknown =>
-        const Color(0xFFCBD5E1),
-      PlcUnitDiagnostics.plcReachableStateUnknown =>
-        const Color(0xFFCBD5E1),
+      PlcUnitDiagnostics.plcStateUnknown => const Color(0xFFCBD5E1),
+      PlcUnitDiagnostics.plcReachableStateUnknown => const Color(0xFFCBD5E1),
       PlcUnitDiagnostics.backendDown => const Color(0xFFCBD5E1),
       _ => const Color(0xFF94A3B8),
     };
@@ -3240,7 +4107,7 @@ class _TemperatureValue extends StatelessWidget {
     final double currentValue = value!;
 
     return SizedBox(
-      width: 150,
+      width: _EnvironmentTemperatureColumn._gaugeWidth,
       child: _LinearGauge(
         value: currentValue,
         min: min,
@@ -3248,6 +4115,7 @@ class _TemperatureValue extends StatelessWidget {
         valueLabel: '${currentValue.toStringAsFixed(1)} °C',
         colors: const [Color(0xFF2563EB), Color(0xFFDC2626)],
         showAlert: _isOutOfRange(currentValue, min, max),
+        gaugeWidth: _EnvironmentTemperatureColumn._gaugeWidth,
       ),
     );
   }
@@ -3321,11 +4189,41 @@ class _EnvironmentHeaderHumidityIcon extends StatelessWidget {
   }
 }
 
-class _HumidityFillIcon extends StatelessWidget {
-  const _HumidityFillIcon({
-    required this.fill,
-    this.size = 22,
+class _EnvironmentHeaderExtra extends StatelessWidget {
+  const _EnvironmentHeaderExtra({
+    required this.temperature,
+    required this.visual,
   });
+
+  final double? temperature;
+  final _HumidityHeaderVisual visual;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = temperature == null
+        ? '--'
+        : _formatValueWithUnit(temperature, '°C');
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            color: Color(0xFFCBD5E1),
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(width: 4),
+        _EnvironmentHeaderHumidityIcon(visual: visual),
+      ],
+    );
+  }
+}
+
+class _HumidityFillIcon extends StatelessWidget {
+  const _HumidityFillIcon({required this.fill, this.size = 22});
 
   final double fill;
   final double size;
@@ -3359,11 +4257,7 @@ class _HumidityFillIcon extends StatelessWidget {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Icon(
-            Icons.water_drop_outlined,
-            color: _outlineColor,
-            size: size,
-          ),
+          Icon(Icons.water_drop_outlined, color: _outlineColor, size: size),
           Align(
             alignment: Alignment.bottomCenter,
             child: ClipRect(
@@ -3373,11 +4267,7 @@ class _HumidityFillIcon extends StatelessWidget {
                 child: Align(
                   alignment: Alignment.bottomCenter,
                   heightFactor: 1,
-                  child: Icon(
-                    Icons.water_drop,
-                    color: _fillColor,
-                    size: size,
-                  ),
+                  child: Icon(Icons.water_drop, color: _fillColor, size: size),
                 ),
               ),
             ),
@@ -3460,7 +4350,7 @@ String _formatValueWithUnit(double? value, String unit) {
     return 'Sin datos';
   }
 
-  final int fractionDigits = unit == '°C' && value % 1 != 0 ? 1 : 0;
+  final int fractionDigits = unit == '°C' ? 1 : (value % 1 != 0 ? 1 : 0);
   return '${value.toStringAsFixed(fractionDigits)} $unit';
 }
 
@@ -3481,6 +4371,7 @@ class _LinearGauge extends StatelessWidget {
     required this.valueLabel,
     required this.colors,
     required this.showAlert,
+    this.gaugeWidth = 126,
   });
 
   final double value;
@@ -3489,11 +4380,11 @@ class _LinearGauge extends StatelessWidget {
   final String valueLabel;
   final List<Color> colors;
   final bool showAlert;
+  final double gaugeWidth;
 
   @override
   Widget build(BuildContext context) {
     final double clamped = ((value - min) / (max - min)).clamp(0.0, 1.0);
-    const double gaugeWidth = 126;
     const double markerWidth = 8;
     const double labelWidth = 74;
     final double markerLeft = clamped * (gaugeWidth - markerWidth);
@@ -3506,13 +4397,13 @@ class _LinearGauge extends StatelessWidget {
     );
 
     return SizedBox(
-      height: 52,
+      height: 48,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: gaugeWidth,
-            height: 18,
+            height: 14,
             child: Stack(
               children: [
                 Positioned(

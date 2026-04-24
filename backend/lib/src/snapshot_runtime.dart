@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:agro_data_control_backend/src/door_openings_tracker.dart';
+import 'package:agro_data_control_backend/src/firestore_door_openings_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_temperature_history_repository.dart';
 import 'package:agro_data_control_backend/src/modbus_tcp_client.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
@@ -19,11 +21,27 @@ class SnapshotRuntime {
       _state = SnapshotRuntimeState.initial(
         config: config,
         startedAt: DateTime.now().toUtc(),
+        doorEventsJson: const <String, Object?>{},
       ) {
-    final TemperatureHistoryConfig historyConfig = config.temperatureHistory;
-    _temperatureHistoryService = TemperatureHistoryService(
-      config: historyConfig,
-      repository: FirestoreTemperatureHistoryRepository(config: historyConfig),
+    _temperatureHistoryServices = config.temperatureHistories
+        .map(
+          (TemperatureHistoryConfig historyConfig) => TemperatureHistoryService(
+            config: historyConfig,
+            repository: FirestoreTemperatureHistoryRepository(
+              config: historyConfig,
+            ),
+          ),
+        )
+        .toList();
+    final DoorOpeningsConfig doorConfig = config.doorOpenings;
+    _doorOpeningsTracker = DoorOpeningsTracker(
+      config: doorConfig,
+      repository: FirestoreDoorOpeningsRepository(config: doorConfig),
+    );
+    _state = SnapshotRuntimeState.initial(
+      config: config,
+      startedAt: _startedAt,
+      doorEventsJson: _doorOpeningsTracker.snapshotSummaryJson(),
     );
   }
 
@@ -31,12 +49,12 @@ class SnapshotRuntime {
   final DateTime _startedAt;
 
   SnapshotRuntimeState _state;
-  final Map<String, DateTime> _unitLastSuccessfulReadAt =
-      <String, DateTime>{};
+  final Map<String, DateTime> _unitLastSuccessfulReadAt = <String, DateTime>{};
   Future<void>? _loopFuture;
   bool _disposed = false;
   final Completer<void> _stopCompleter = Completer<void>();
-  late final TemperatureHistoryService _temperatureHistoryService;
+  late final List<TemperatureHistoryService> _temperatureHistoryServices;
+  late final DoorOpeningsTracker _doorOpeningsTracker;
 
   bool get isHealthy => _state.backendOnline;
 
@@ -57,7 +75,10 @@ class SnapshotRuntime {
     if (loopFuture != null) {
       await loopFuture;
     }
-    await _temperatureHistoryService.dispose();
+    for (final TemperatureHistoryService service in _temperatureHistoryServices) {
+      await service.dispose();
+    }
+    await _doorOpeningsTracker.dispose();
   }
 
   Map<String, Object?> snapshotJson() => _state.snapshotJson;
@@ -89,6 +110,35 @@ class SnapshotRuntime {
     _logPlc('runtime stopped');
   }
 
+  Future<int?> _measureRouterLatency() async {
+    final String? host = config.routerHost;
+    if (host == null || host.trim().isEmpty) {
+      return null;
+    }
+    try {
+      final ProcessResult result = await Process.run(
+        'ping',
+        ['-c', '1', '-W', '1', host],
+      ).timeout(const Duration(seconds: 3));
+      if (result.exitCode != 0) {
+        _logPlc('router ping failed host=$host exitCode=${result.exitCode}');
+        return null;
+      }
+      final RegExp timeRegex = RegExp(r'time[=<](\d+(?:\.\d+)?)\s*ms');
+      final Match? match = timeRegex.firstMatch(result.stdout as String);
+      if (match == null) {
+        _logPlc('router ping no time found host=$host');
+        return null;
+      }
+      final int ms = double.parse(match.group(1)!).round();
+      _logPlc('router ping host=$host latencyMs=$ms');
+      return ms;
+    } catch (error) {
+      _logPlc('router ping failed host=$host error=$error');
+      return null;
+    }
+  }
+
   Future<void> _refreshOnce() async {
     final DateTime pollStartedAt = DateTime.now().toUtc();
     final Stopwatch stopwatch = Stopwatch()..start();
@@ -97,14 +147,24 @@ class SnapshotRuntime {
     _logPlc('poll started timeoutMs=${config.timeoutMs}');
 
     try {
+      final int? routerLatencyMs = await _measureRouterLatency();
       final Map<String, Object?> unitsJson = <String, Object?>{};
       for (final MapEntry<String, UnitConfig> entry in config.units.entries) {
         final Map<String, Object?> unitJson = await _refreshUnit(
           entry.key,
           entry.value,
+          routerLatencyMs: routerLatencyMs,
         );
         unitsJson[entry.key] = unitJson;
       }
+      await _doorOpeningsTracker.initializeIfNeeded(
+        unitsJson: unitsJson,
+        observedAtUtc: pollStartedAt,
+      );
+      _doorOpeningsTracker.ingestSnapshot(
+        unitsJson: unitsJson,
+        observedAtUtc: pollStartedAt,
+      );
 
       stopwatch.stop();
       _state = SnapshotRuntimeState.success(
@@ -114,14 +174,17 @@ class SnapshotRuntime {
         lastUpdatedAt: pollStartedAt,
         lastPollDurationMs: stopwatch.elapsedMilliseconds,
         unitsJson: unitsJson,
+        doorEventsJson: _doorOpeningsTracker.snapshotSummaryJson(),
       );
       _logSnapshotPayload(_state.snapshotJson);
       _logSnapshot('backendOnline=true');
       _logPlc('poll success elapsedMs=${stopwatch.elapsedMilliseconds}');
-      _temperatureHistoryService.handleSnapshot(
-        unitsJson: unitsJson,
-        observedAtUtc: pollStartedAt,
-      );
+      for (final TemperatureHistoryService service in _temperatureHistoryServices) {
+        service.handleSnapshot(
+          unitsJson: unitsJson,
+          observedAtUtc: pollStartedAt,
+        );
+      }
     } on TimeoutException catch (error, stackTrace) {
       stopwatch.stop();
       _logSnapshot('backendOnline=false');
@@ -132,6 +195,7 @@ class SnapshotRuntime {
         startedAt: _startedAt,
         error: 'PLC timeout: $error',
         pollDurationMs: stopwatch.elapsedMilliseconds,
+        doorEventsJson: _extractDoorEvents(_state.snapshotJson),
       );
       _logSnapshotPayload(_state.snapshotJson);
     } catch (error, stackTrace) {
@@ -144,6 +208,7 @@ class SnapshotRuntime {
         startedAt: _startedAt,
         error: error.toString(),
         pollDurationMs: stopwatch.elapsedMilliseconds,
+        doorEventsJson: _extractDoorEvents(_state.snapshotJson),
       );
       _logSnapshotPayload(_state.snapshotJson);
     }
@@ -151,8 +216,9 @@ class SnapshotRuntime {
 
   Future<Map<String, Object?>> _refreshUnit(
     String unitKey,
-    UnitConfig unit,
-  ) async {
+    UnitConfig unit, {
+    int? routerLatencyMs,
+  }) async {
     final DateTime now = DateTime.now().toUtc();
     final Duration timeout = Duration(milliseconds: config.timeoutMs);
     final String? host = unit.plcHost;
@@ -196,6 +262,7 @@ class SnapshotRuntime {
         plcOnline: false,
         reason: reason,
       );
+      offline['routerLatencyMs'] = routerLatencyMs;
       return offline;
     }
 
@@ -224,6 +291,7 @@ class SnapshotRuntime {
         unit,
         readAt: now,
         plcLatencyMs: plcLatencyMs,
+        routerLatencyMs: routerLatencyMs,
       );
       _logUnitStatus(
         unit.name,
@@ -268,6 +336,7 @@ class SnapshotRuntime {
         'timeout operation=unit_poll unit=$unitKey host=$host error=$error',
       );
       _logPlc('error operation=unit_poll unit=$unitKey stack=$stackTrace');
+      offline['routerLatencyMs'] = routerLatencyMs;
       return offline;
     } catch (error, stackTrace) {
       final Map<String, Object?> offline =
@@ -302,6 +371,7 @@ class SnapshotRuntime {
         'error operation=unit_poll unit=$unitKey host=$host error=$error',
       );
       _logPlc('error operation=unit_poll unit=$unitKey stack=$stackTrace');
+      offline['routerLatencyMs'] = routerLatencyMs;
       return offline;
     } finally {
       await client.close(reason: 'unit_poll_finished');
@@ -314,6 +384,7 @@ class SnapshotRuntime {
     UnitConfig unit, {
     required DateTime readAt,
     required int plcLatencyMs,
+    int? routerLatencyMs,
   }) async {
     final Map<String, Object?> result = <String, Object?>{
       'name': unit.name,
@@ -363,13 +434,15 @@ class SnapshotRuntime {
       _unitLastSuccessfulReadAt[unitKey] = readAt;
     }
 
-    final bool plcOnline = diagnostics.stateCode == 'PLC_RUN_CONFIRMED' ||
+    final bool plcOnline =
+        diagnostics.stateCode == 'PLC_RUN_CONFIRMED' ||
         diagnostics.stateCode == 'PLC_HEALTHY';
     final bool plcRunning = plcOnline;
     final String estadoPLC = plcOnline ? 'RUN' : 'STOP';
 
     result['plcReachable'] = true;
     result['plcLatencyMs'] = plcLatencyMs;
+    result['routerLatencyMs'] = routerLatencyMs;
     result['plcRunning'] = plcRunning;
     result['dataFresh'] = plcRunning;
     result['plcOnline'] = plcOnline;
@@ -573,7 +646,8 @@ class SnapshotRuntime {
     int totalKeySignals = 0;
     for (final List<String> group in _diagnosticKeySignalGroups) {
       final String? configuredSignal = group.cast<String?>().firstWhere(
-        (String? signalName) => signalName != null && unit.signals.containsKey(signalName),
+        (String? signalName) =>
+            signalName != null && unit.signals.containsKey(signalName),
         orElse: () => null,
       );
       if (configuredSignal == null) {
@@ -644,7 +718,8 @@ class SnapshotRuntime {
         lastSuccessfulReadAt: lastSuccessfulReadAt,
         stateCode: 'PLC_STOP_CONFIRMED',
         stateLabel: 'PLC Stop',
-        stateReason: 'PLC alcanzable pero sin datos válidos. Probable modo STOP.',
+        stateReason:
+            'PLC alcanzable pero sin datos válidos. Probable modo STOP.',
       );
     }
 
@@ -736,7 +811,6 @@ class _UnitDiagnostics {
   }
 }
 
-
 class SnapshotRuntimeState {
   SnapshotRuntimeState({
     required this.snapshotJson,
@@ -753,6 +827,7 @@ class SnapshotRuntimeState {
   factory SnapshotRuntimeState.initial({
     required PlcInstallationConfig config,
     required DateTime startedAt,
+    required Map<String, Object?> doorEventsJson,
   }) {
     return SnapshotRuntimeState(
       snapshotJson: _buildSnapshotPayload(
@@ -769,6 +844,7 @@ class SnapshotRuntimeState {
           for (final MapEntry<String, UnitConfig> entry in config.units.entries)
             entry.key: offlineUnit(entry.value),
         },
+        doorEventsJson: doorEventsJson,
       ),
       healthJson: _buildHealthPayload(
         config: config,
@@ -823,6 +899,7 @@ class SnapshotRuntimeState {
     required DateTime startedAt,
     required String error,
     required int pollDurationMs,
+    required Map<String, Object?> doorEventsJson,
   }) {
     final int nextFailures = consecutiveFailures + 1;
     return SnapshotRuntimeState(
@@ -840,6 +917,7 @@ class SnapshotRuntimeState {
           for (final MapEntry<String, UnitConfig> entry in config.units.entries)
             entry.key: offlineUnit(entry.value),
         },
+        doorEventsJson: doorEventsJson,
       ),
       healthJson: _buildHealthPayload(
         config: config,
@@ -869,6 +947,7 @@ class SnapshotRuntimeState {
     required DateTime lastUpdatedAt,
     required int lastPollDurationMs,
     required Map<String, Object?> unitsJson,
+    required Map<String, Object?> doorEventsJson,
   }) {
     return SnapshotRuntimeState(
       snapshotJson: _buildSnapshotPayload(
@@ -882,6 +961,7 @@ class SnapshotRuntimeState {
         refreshInProgress: false,
         hasFreshSnapshot: true,
         unitsJson: unitsJson,
+        doorEventsJson: doorEventsJson,
       ),
       healthJson: _buildHealthPayload(
         config: config,
@@ -915,6 +995,7 @@ class SnapshotRuntimeState {
     required bool refreshInProgress,
     required bool hasFreshSnapshot,
     required Map<String, Object?> unitsJson,
+    required Map<String, Object?> doorEventsJson,
   }) {
     return Map<String, Object?>.unmodifiable(<String, Object?>{
       'backendName': config.backendName,
@@ -936,6 +1017,7 @@ class SnapshotRuntimeState {
         'refreshInProgress': refreshInProgress,
         'hasFreshSnapshot': hasFreshSnapshot,
       },
+      'doorEvents': doorEventsJson,
       ...unitsJson,
     });
   }
@@ -1040,6 +1122,7 @@ class SnapshotRuntimeState {
     },
     'plcReachable': plcReachable,
     'plcLatencyMs': null,
+    'routerLatencyMs': null,
     'plcRunning': plcRunning,
     'dataFresh': plcRunning,
     'plcOnline': false,
@@ -1118,6 +1201,18 @@ void _logSnapshotPayload(Map<String, Object?> payload) {
   stdout.writeln(
     '[munters2] configured=${munters2Map['configured']} plcReachable=${munters2Map['plcReachable']} plcRunning=${munters2Map['plcRunning']} plcOnline=${munters2Map['plcOnline']} estadoEquipo=${munters2Map['estadoEquipo']}',
   );
+  final Object? doorEventsRaw = payload['doorEvents'];
+  if (doorEventsRaw is Map<String, Object?>) {
+    doorEventsRaw.forEach((String doorId, Object? value) {
+      if (value is Map<String, Object?>) {
+        stdout.writeln(
+          '[doorEvents.$doorId] isOpen=${value['isOpen']} currentOpenedAt=${value['currentOpenedAt']} lastChangedAt=${value['lastChangedAt']}',
+        );
+      }
+    });
+  } else {
+    stdout.writeln('[doorEvents] not present or invalid type=${doorEventsRaw?.runtimeType}');
+  }
 }
 
 void _logSignalMapSummary(PlcInstallationConfig config) {
@@ -1141,7 +1236,10 @@ void _logSignalMapSummary(PlcInstallationConfig config) {
   }
 }
 
-void _logValidationBooleanSignals(String unitName, Map<String, Object?> payload) {
+void _logValidationBooleanSignals(
+  String unitName,
+  Map<String, Object?> payload,
+) {
   if (!payload.containsKey('nivelAgua') &&
       !payload.containsKey('puertaSala') &&
       !payload.containsKey('puertaMunter')) {
@@ -1153,4 +1251,15 @@ void _logValidationBooleanSignals(String unitName, Map<String, Object?> payload)
     'puertaSala=${payload['puertaSala']} '
     'puertaMunter=${payload['puertaMunter']}',
   );
+}
+
+Map<String, Object?> _extractDoorEvents(Map<String, Object?> snapshotJson) {
+  final Object? raw = snapshotJson['doorEvents'];
+  if (raw is Map<String, Object?>) {
+    return raw;
+  }
+  if (raw is Map) {
+    return Map<String, Object?>.from(raw as Map<Object?, Object?>);
+  }
+  return const <String, Object?>{};
 }

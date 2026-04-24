@@ -11,7 +11,9 @@ class PlcInstallationConfig {
     required this.httpHost,
     required this.httpPort,
     required this.units,
-    required this.temperatureHistory,
+    required this.temperatureHistories,
+    required this.doorOpenings,
+    this.routerHost,
   });
 
   factory PlcInstallationConfig.fromJson(Map<String, dynamic> json) {
@@ -26,6 +28,12 @@ class PlcInstallationConfig {
     final String defaultSourceUnitKey = _resolveDefaultTemperatureSourceUnitKey(
       units,
     );
+    final String fallbackTenantId =
+        _sanitizeSegment(clientName) ?? 'default-tenant';
+    final String fallbackSiteId =
+        _sanitizeSegment(json['siteName'] as String?) ?? 'default-site';
+    final String fallbackPlcId =
+        _sanitizeSegment(defaultSourceUnitKey) ?? 'default-plc';
 
     return PlcInstallationConfig(
       backendName: json['backendName'] as String? ?? 'current',
@@ -39,14 +47,19 @@ class PlcInstallationConfig {
       httpHost: json['httpHost'] as String? ?? '0.0.0.0',
       httpPort: (json['httpPort'] as num?)?.toInt() ?? 8080,
       units: units,
-      temperatureHistory: TemperatureHistoryConfig.fromJson(
-        json['temperatureHistory'] as Map<String, dynamic>?,
-        fallbackTenantId: _sanitizeSegment(clientName) ?? 'default-tenant',
-        fallbackSiteId:
-            _sanitizeSegment(json['siteName'] as String?) ?? 'default-site',
-        fallbackPlcId: _sanitizeSegment(defaultSourceUnitKey) ?? 'default-plc',
+      temperatureHistories: _parseTemperatureHistories(
+        json,
+        fallbackTenantId: fallbackTenantId,
+        fallbackSiteId: fallbackSiteId,
+        fallbackPlcId: fallbackPlcId,
         fallbackSourceUnitKey: defaultSourceUnitKey,
       ),
+      doorOpenings: DoorOpeningsConfig.fromJson(
+        json['doorOpenings'] as Map<String, dynamic>?,
+        fallbackTenantId: fallbackTenantId,
+        fallbackSiteId: fallbackSiteId,
+      ),
+      routerHost: json['routerHost'] as String?,
     );
   }
 
@@ -61,7 +74,9 @@ class PlcInstallationConfig {
   final String httpHost;
   final int httpPort;
   final Map<String, UnitConfig> units;
-  final TemperatureHistoryConfig temperatureHistory;
+  final List<TemperatureHistoryConfig> temperatureHistories;
+  final DoorOpeningsConfig doorOpenings;
+  final String? routerHost;
 }
 
 class TemperatureHistoryConfig {
@@ -113,6 +128,81 @@ class TemperatureHistoryConfig {
   final String firestoreDatabaseId;
   /// Ruta al archivo JSON del Service Account de Google.
   final String firestoreServiceAccountPath;
+}
+
+class DoorOpeningsConfig {
+  DoorOpeningsConfig({
+    required this.enabled,
+    required this.tenantId,
+    required this.siteId,
+    required this.doors,
+    required this.firestoreProjectId,
+    required this.firestoreDatabaseId,
+    required this.firestoreServiceAccountPath,
+  });
+
+  factory DoorOpeningsConfig.fromJson(
+    Map<String, dynamic>? json, {
+    required String fallbackTenantId,
+    required String fallbackSiteId,
+  }) {
+    final List<dynamic> doorsRaw =
+        json?['doors'] as List<dynamic>? ?? <dynamic>[];
+    return DoorOpeningsConfig(
+      enabled: json?['enabled'] as bool? ?? false,
+      tenantId:
+          _sanitizeSegment(
+            (json?['tenantId'] ?? json?['clientId']) as String?,
+          ) ??
+          fallbackTenantId,
+      siteId:
+          _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      doors: doorsRaw
+          .map(
+            (Object? d) => DoorConfig.fromJson(d as Map<String, dynamic>),
+          )
+          .toList(),
+      firestoreProjectId: json?['firestoreProjectId'] as String?,
+      firestoreDatabaseId:
+          json?['firestoreDatabaseId'] as String? ?? '(default)',
+      firestoreServiceAccountPath:
+          json?['firestoreServiceAccountPath'] as String? ?? '',
+    );
+  }
+
+  final bool enabled;
+  final String tenantId;
+  final String siteId;
+  final List<DoorConfig> doors;
+  final String? firestoreProjectId;
+  final String firestoreDatabaseId;
+
+  /// Ruta al archivo JSON del Service Account de Google.
+  final String firestoreServiceAccountPath;
+}
+
+class DoorConfig {
+  DoorConfig({
+    required this.doorId,
+    required this.unitKey,
+    required this.signalKey,
+    required this.label,
+  });
+
+  factory DoorConfig.fromJson(Map<String, dynamic> json) {
+    final String doorId = json['doorId'] as String? ?? '';
+    return DoorConfig(
+      doorId: doorId,
+      unitKey: json['unitKey'] as String? ?? '',
+      signalKey: json['signalKey'] as String? ?? '',
+      label: json['label'] as String? ?? doorId,
+    );
+  }
+
+  final String doorId;
+  final String unitKey;
+  final String signalKey;
+  final String label;
 }
 
 class UnitConfig {
@@ -223,6 +313,38 @@ class SignalConfig {
       _ => WordOrder.bigEndian,
     };
   }
+}
+
+List<TemperatureHistoryConfig> _parseTemperatureHistories(
+  Map<String, dynamic> json, {
+  required String fallbackTenantId,
+  required String fallbackSiteId,
+  required String fallbackPlcId,
+  required String fallbackSourceUnitKey,
+}) {
+  final Object? list = json['temperatureHistories'];
+  if (list is List && list.isNotEmpty) {
+    return list
+        .map(
+          (Object? e) => TemperatureHistoryConfig.fromJson(
+            e as Map<String, dynamic>?,
+            fallbackTenantId: fallbackTenantId,
+            fallbackSiteId: fallbackSiteId,
+            fallbackPlcId: fallbackPlcId,
+            fallbackSourceUnitKey: fallbackSourceUnitKey,
+          ),
+        )
+        .toList();
+  }
+  return <TemperatureHistoryConfig>[
+    TemperatureHistoryConfig.fromJson(
+      json['temperatureHistory'] as Map<String, dynamic>?,
+      fallbackTenantId: fallbackTenantId,
+      fallbackSiteId: fallbackSiteId,
+      fallbackPlcId: fallbackPlcId,
+      fallbackSourceUnitKey: fallbackSourceUnitKey,
+    ),
+  ];
 }
 
 String _resolveDefaultTemperatureSourceUnitKey(Map<String, UnitConfig> units) {

@@ -3,35 +3,97 @@
   "clientName": "The Gene Pig",
   "siteName": "Genetica 1",
   "plcHost": "192.168.10.51",
+  "routerHost": "192.168.10.1",
   "plcPort": 502,
   "unitId": 1,
   "pollingIntervalMs": 5000,
   "timeoutMs": 1500,
   "httpHost": "0.0.0.0",
   "httpPort": 8080,
-  "temperatureHistory": {
+  "temperatureHistories": [
+    {
+      "enabled": true,
+      "temperatureSource": "munters1.tempInterior",
+      "tenantId": "the-gene-pig",
+      "siteId": "genetica-1",
+      "plcId": "munters1",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+    },
+    {
+      "enabled": true,
+      "temperatureSource": "munters2.tempInterior",
+      "tenantId": "the-gene-pig",
+      "siteId": "genetica-1",
+      "plcId": "munters2",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+    }
+  ],
+  "doorOpenings": {
     "enabled": true,
-    "temperatureSource": "munters2.tempInterior",
     "tenantId": "the-gene-pig",
     "siteId": "genetica-1",
-    "plcId": "munters2",
     "firestoreProjectId": "agro-data-control",
     "firestoreDatabaseId": "(default)",
-    "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+    "firestoreServiceAccountPath": "/root/backend/config/service-account.json",
+    "doors": [
+      {
+        "doorId": "sala",
+        "unitKey": "munters1",
+        "signalKey": "puertaSala",
+        "label": "Puerta Sala"
+      },
+      {
+        "doorId": "munter",
+        "unitKey": "munters1",
+        "signalKey": "puertaMunter",
+        "label": "Puerta Munter"
+      }
+    ]
   },
   "units": {
     "munters1": {
       "name": "Munters 1",
-      "plcHost": "",
-      "signals": {}
+      "plcHost": "192.168.10.50",
+      "signals": {
+        "tempInterior": { "area": "holdingRegister", "address": 45, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "tempIngresoSala": { "area": "holdingRegister", "address": 112, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "humInterior": { "area": "holdingRegister", "address": 53, "dataType": "float32", "signed": true },
+        "tempExterior": { "area": "holdingRegister", "address": 61, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "humExterior": { "area": "holdingRegister", "address": 69, "dataType": "float32", "signed": true },
+        "presionDiferencial": { "area": "holdingRegister", "address": 77, "dataType": "float32", "signed": true },
+        "tensionSalidaVentiladores": { "area": "holdingRegister", "address": 85, "dataType": "float32" },
+        "bombaHumidificador": { "area": "coil", "address": 192, "dataType": "bool" },
+        "resistencia1": { "area": "coil", "address": 200, "dataType": "bool" },
+        "resistencia2": { "area": "coil", "address": 208, "dataType": "bool" },
+        "nivelAgua": { "area": "coil", "address": 216, "dataType": "bool" },
+        "nivelAguaAlarma": { "area": "coil", "address": 216, "dataType": "bool" },
+        "fallaTermicaBomba": { "area": "coil", "address": 240, "dataType": "bool" },
+        "fanQ5": { "area": "coil", "address": 8, "dataType": "bool" },
+        "fanQ6": { "area": "coil", "address": 16, "dataType": "bool" },
+        "fanQ7": { "area": "coil", "address": 24, "dataType": "bool" },
+        "fanQ8": { "area": "coil", "address": 32, "dataType": "bool" },
+        "fanQ9": { "area": "coil", "address": 40, "dataType": "bool" },
+        "fanQ10": { "area": "coil", "address": 48, "dataType": "bool" },
+        "alarmaGeneral": { "area": "coil", "address": 64, "dataType": "bool" },
+        "fallaRed": { "area": "discreteInput", "address": 1, "dataType": "bool" },
+        "puertaSala": { "area": "coil", "address": 224, "dataType": "bool" },
+        "salaAbierta": { "area": "coil", "address": 224, "dataType": "bool" },
+        "puertaMunter": { "area": "coil", "address": 232, "dataType": "bool" },
+        "munterAbierto": { "area": "coil", "address": 232, "dataType": "bool" }
+      }
     },
     "munters2": {
       "name": "Munters 2",
       "plcHost": "192.168.10.51",
       "signals": {
-        "tempInterior": { "area": "holdingRegister", "address": 45, "dataType": "float32", "signed": true },
+        "tempInterior": { "area": "holdingRegister", "address": 45, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "tempIngresoSala": { "area": "holdingRegister", "address": 112, "dataType": "float32", "signed": true, "scale": 0.1 },
         "humInterior": { "area": "holdingRegister", "address": 53, "dataType": "float32", "signed": true },
-        "tempExterior": { "area": "holdingRegister", "address": 61, "dataType": "float32", "signed": true },
+        "tempExterior": { "area": "holdingRegister", "address": 61, "dataType": "float32", "signed": true, "scale": 0.1 },
         "humExterior": { "area": "holdingRegister", "address": 69, "dataType": "float32", "signed": true },
         "presionDiferencial": { "area": "holdingRegister", "address": 77, "dataType": "float32", "signed": true },
         "tensionSalidaVentiladores": { "area": "holdingRegister", "address": 85, "dataType": "float32" },

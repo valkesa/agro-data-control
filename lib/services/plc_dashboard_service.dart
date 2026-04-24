@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 import '../app_config.dart';
+import '../models/dashboard_door_event.dart';
 import '../models/dashboard_snapshot.dart';
 import '../models/munters_model.dart';
 import '../models/plc_unit_diagnostics.dart';
@@ -142,6 +143,7 @@ class PlcDashboardService {
           ['status', 'lastUpdatedAt'],
         ]),
       ),
+      doorEvents: _parseDoorEvents(decoded),
       units: [
         _parseUnit(
           name: 'Munters 1',
@@ -185,6 +187,29 @@ class PlcDashboardService {
         ),
       ],
     );
+  }
+
+  Map<String, DashboardDoorEvent> _parseDoorEvents(
+    Map<String, dynamic> decoded,
+  ) {
+    final Object? rawDoorEvents = decoded['doorEvents'];
+    if (rawDoorEvents is! Map) {
+      return const <String, DashboardDoorEvent>{};
+    }
+    final Map<String, DashboardDoorEvent> parsed =
+        <String, DashboardDoorEvent>{};
+    for (final MapEntry<Object?, Object?> entry in rawDoorEvents.entries) {
+      final String doorId = entry.key?.toString() ?? '';
+      final Object? value = entry.value;
+      if (doorId.isEmpty || value is! Map) {
+        continue;
+      }
+      parsed[doorId] = DashboardDoorEvent.fromJson(
+        doorId,
+        Map<String, dynamic>.from(value as Map<Object?, Object?>),
+      );
+    }
+    return Map<String, DashboardDoorEvent>.unmodifiable(parsed);
   }
 
   void _debugSnapshotPayload(Map<String, dynamic> decoded) {
@@ -297,6 +322,11 @@ class PlcDashboardService {
           ['plcLatencyMs'],
         ]),
       ),
+      routerLatencyMs: _parseInt(
+        _read(unitRaw, fallbackRaw, const [
+          ['routerLatencyMs'],
+        ]),
+      ),
       lastUpdatedAt: resolvedLastUpdatedAt,
       lastHeartbeatValue: _read(unitRaw, fallbackRaw, const [
         ['lastHeartbeatValue'],
@@ -327,6 +357,24 @@ class PlcDashboardService {
           ['registers', '45'],
           ['hr', '45'],
           ['hr45'],
+        ]),
+      ),
+      tempIngresoSala: _parseSignedHoldingRegister(
+        _read(unitRaw, fallbackRaw, const [
+          ['tempIngresoSala'],
+          ['temperaturaIngresoSala'],
+          ['tempSalaIngreso'],
+          ['clima', 'tempIngresoSala'],
+          ['vm224'],
+          ['VM224'],
+          ['vw224'],
+          ['VW224'],
+          ['holdingRegisters', '112'],
+          ['holdingRegisters', 'HR112'],
+          ['registers', 'HR112'],
+          ['registers', '112'],
+          ['hr', '112'],
+          ['hr112'],
         ]),
       ),
       humInterior: _parseSignedHoldingRegister(
@@ -712,13 +760,15 @@ class PlcDashboardService {
 
     if (stateCode != null || stateLabel != null || stateReason != null) {
       return PlcUnitDiagnostics(
-        backendAlive: _parseBool(
+        backendAlive:
+            _parseBool(
               _read(unitRaw, fallbackRaw, const [
                 ['diagnostics', 'backendAlive'],
               ]),
             ) ??
             backendOnline,
-        plcConnectOk: _parseBool(
+        plcConnectOk:
+            _parseBool(
               _read(unitRaw, fallbackRaw, const [
                 ['diagnostics', 'plcConnectOk'],
               ]),
@@ -797,13 +847,16 @@ class PlcDashboardService {
             (plcOnline == true || dataFresh == true || plcRunning == true)
             ? lastUpdatedAt
             : null,
-        stateCode: (plcOnline == true || dataFresh == true || plcRunning == true)
+        stateCode:
+            (plcOnline == true || dataFresh == true || plcRunning == true)
             ? PlcUnitDiagnostics.plcReachableStateUnknown
             : PlcUnitDiagnostics.plcReachableNoValidData,
-        stateLabel: (plcOnline == true || dataFresh == true || plcRunning == true)
+        stateLabel:
+            (plcOnline == true || dataFresh == true || plcRunning == true)
             ? 'Estado PLC desconocido'
             : 'PLC alcanzable sin datos válidos',
-        stateReason: (plcOnline == true || dataFresh == true || plcRunning == true)
+        stateReason:
+            (plcOnline == true || dataFresh == true || plcRunning == true)
             ? 'Sin señal confiable de RUN/STOP.'
             : 'Probable STOP.',
       );
@@ -811,10 +864,7 @@ class PlcDashboardService {
     return null;
   }
 
-  String _legacyStateLabel(
-    PlcRawPayload? unitRaw,
-    PlcRawPayload? fallbackRaw,
-  ) {
+  String _legacyStateLabel(PlcRawPayload? unitRaw, PlcRawPayload? fallbackRaw) {
     final String? legacyState = _parseString(
       _read(unitRaw, fallbackRaw, const [
         ['estadoPLC'],
@@ -866,6 +916,9 @@ class PlcDashboardService {
   }
 
   double? _parseSignedHoldingRegister(Object? value) {
+    if (value is double) {
+      return value;
+    }
     final int? parsed = _parseInt(value);
     if (parsed == null) {
       return null;

@@ -103,8 +103,14 @@ class _MuntersPageState extends State<MuntersPage> {
         child: Column(
           children: [
             _ValueRow(
-              label: 'Temp. interior',
+              label: 'T°C SAL sala',
               value: _formatDecimal(data.tempInterior, 1),
+              unit: '°C',
+            ),
+            const SizedBox(height: 4),
+            _ValueRow(
+              label: 'T°C. ING sala',
+              value: _formatDecimal(data.tempIngresoSala, 1),
               unit: '°C',
             ),
             const SizedBox(height: 4),
@@ -262,10 +268,7 @@ class _MuntersPageState extends State<MuntersPage> {
         showSnapshotPulse: widget.showSnapshotPulse,
         child: Column(
           children: [
-            _StateRow(
-              label: 'Estado equipo',
-              diagnostics: data.diagnostics,
-            ),
+            _StateRow(label: 'Estado equipo', diagnostics: data.diagnostics),
             const SizedBox(height: 4),
             _ValueRow(
               label: 'Cantidad apagadas',
@@ -279,8 +282,15 @@ class _MuntersPageState extends State<MuntersPage> {
               child: Column(
                 children: [
                   _ValueRow(
-                    label: 'Latency',
+                    label: 'Latency PLC',
                     value: _formatInt(data.plcLatencyMs),
+                    unit: 'ms',
+                    valueFontWeight: FontWeight.w400,
+                  ),
+                  const SizedBox(height: 4),
+                  _ValueRow(
+                    label: 'Latency ER605',
+                    value: _formatInt(data.routerLatencyMs),
                     unit: 'ms',
                     valueFontWeight: FontWeight.w400,
                   ),
@@ -673,10 +683,7 @@ class _StatusRow extends StatelessWidget {
 }
 
 class _StateRow extends StatelessWidget {
-  const _StateRow({
-    required this.label,
-    required this.diagnostics,
-  });
+  const _StateRow({required this.label, required this.diagnostics});
 
   final String label;
   final PlcUnitDiagnostics? diagnostics;
@@ -684,14 +691,12 @@ class _StateRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final PlcUnitDiagnostics? currentDiagnostics = diagnostics;
-    final String resolvedState =
-        currentDiagnostics?.stateLabel ?? 'Sin datos';
+    final String resolvedState = currentDiagnostics?.stateLabel ?? 'Sin datos';
     final String? resolvedReason = currentDiagnostics?.stateReason;
     final Color color = switch (currentDiagnostics?.stateCode) {
       PlcUnitDiagnostics.plcNotConfigured => const Color(0xFFFACC15),
       PlcUnitDiagnostics.plcUnreachable => const Color(0xFFEF4444),
-      PlcUnitDiagnostics.plcReachableNoValidData =>
-        const Color(0xFFF59E0B),
+      PlcUnitDiagnostics.plcReachableNoValidData => const Color(0xFFF59E0B),
       PlcUnitDiagnostics.plcHealthy => const Color(0xFF22C55E),
       PlcUnitDiagnostics.backendDown => const Color(0xFFCBD5E1),
       _ => const Color(0xFF94A3B8),

@@ -19,6 +19,9 @@ class TemperatureHourlyPoint implements TemperatureHistoryPointBase {
     required this.minTemp,
     required this.maxTemp,
     required this.samplesCount,
+    this.avgExteriorTemp,
+    this.minExteriorTemp,
+    this.maxExteriorTemp,
   });
 
   factory TemperatureHourlyPoint.fromFirestore(
@@ -44,6 +47,9 @@ class TemperatureHourlyPoint implements TemperatureHistoryPointBase {
       maxTemp:
           _readDouble(data['maxTemp']) ?? _readDouble(data['avgTemp']) ?? 0,
       samplesCount: _readInt(data['samplesCount']) ?? 0,
+      avgExteriorTemp: _readDouble(data['avgExteriorTemp']),
+      minExteriorTemp: _readDouble(data['minExteriorTemp']),
+      maxExteriorTemp: _readDouble(data['maxExteriorTemp']),
     );
   }
 
@@ -58,6 +64,9 @@ class TemperatureHourlyPoint implements TemperatureHistoryPointBase {
   @override
   final double maxTemp;
   final int samplesCount;
+  final double? avgExteriorTemp;
+  final double? minExteriorTemp;
+  final double? maxExteriorTemp;
 
   @override
   DateTime get timestamp => timestampHourStart;
@@ -71,6 +80,9 @@ class TemperatureDailyPoint implements TemperatureHistoryPointBase {
     required this.minTemp,
     required this.maxTemp,
     required this.hoursCount,
+    this.avgExteriorTemp,
+    this.minExteriorTemp,
+    this.maxExteriorTemp,
   });
 
   factory TemperatureDailyPoint.fromFirestore(
@@ -91,6 +103,9 @@ class TemperatureDailyPoint implements TemperatureHistoryPointBase {
       maxTemp:
           _readDouble(data['maxTemp']) ?? _readDouble(data['avgTemp']) ?? 0,
       hoursCount: _readInt(data['hoursCount']) ?? 0,
+      avgExteriorTemp: _readDouble(data['avgExteriorTemp']),
+      minExteriorTemp: _readDouble(data['minExteriorTemp']),
+      maxExteriorTemp: _readDouble(data['maxExteriorTemp']),
     );
   }
 
@@ -103,6 +118,9 @@ class TemperatureDailyPoint implements TemperatureHistoryPointBase {
   @override
   final double maxTemp;
   final int hoursCount;
+  final double? avgExteriorTemp;
+  final double? minExteriorTemp;
+  final double? maxExteriorTemp;
 
   @override
   DateTime get timestamp => timestampDayStart;

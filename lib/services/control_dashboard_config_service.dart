@@ -50,6 +50,33 @@ class ControlDashboardConfigService {
     }
   }
 
+  Stream<ControlDashboardConfigResult> watchConfig({
+    required String tenantId,
+    required String siteId,
+  }) {
+    final String path = FirestorePaths.controlDashboardSettings(
+      tenantId,
+      siteId,
+    );
+    debugPrint('[Firestore] dashboard config watch started path=$path');
+    return FirebaseFirestore.instance.doc(path).snapshots().map((
+      DocumentSnapshot<Map<String, dynamic>> snapshot,
+    ) {
+      if (!snapshot.exists) {
+        return ControlDashboardConfigResult.notFound(path: path);
+      }
+      final Map<String, dynamic> data = snapshot.data() ?? <String, dynamic>{};
+      return ControlDashboardConfigResult.success(
+        path: path,
+        active: data['active'] as bool?,
+        updatedAt: _parseDateTime(data['updatedAt']),
+        updatedByUid: data['updatedByUid']?.toString(),
+        thresholds: ControlDashboardThresholds.fromRaw(data),
+        rawData: data,
+      );
+    });
+  }
+
   Future<ControlDashboardSaveResult> saveThresholds({
     required String tenantId,
     required String siteId,
@@ -75,6 +102,9 @@ class ControlDashboardConfigService {
               'min': thresholds.humidityInteriorMin,
               'opt': thresholds.humidityInteriorOpt,
               'max': thresholds.humidityInteriorMax,
+            },
+            'presionDiferencial': <String, Object?>{
+              'max': thresholds.filterPressureMax,
             },
           },
         },
@@ -153,7 +183,9 @@ class ControlDashboardConfigService {
         'updatedByUid': userUid,
       }, SetOptions(merge: true));
 
-      debugPrint('[Firestore] dashboard unit visibility save success path=$path');
+      debugPrint(
+        '[Firestore] dashboard unit visibility save success path=$path',
+      );
       return const ControlDashboardSaveResult.success();
     } catch (error, stackTrace) {
       debugPrint(
@@ -268,6 +300,15 @@ class ControlDashboardConfigResult {
     rawData,
     const ['ui', 'visibleUnits', 'munters2'],
   );
+
+  bool get hasVisibleUnitsConfig {
+    final Object? ui = rawData['ui'];
+    if (ui is! Map<String, dynamic>) {
+      return false;
+    }
+    final Object? visibleUnits = ui['visibleUnits'];
+    return visibleUnits is Map<String, dynamic>;
+  }
 }
 
 class ControlDashboardThresholds {
@@ -278,6 +319,7 @@ class ControlDashboardThresholds {
     required this.humidityInteriorMin,
     required this.humidityInteriorOpt,
     required this.humidityInteriorMax,
+    required this.filterPressureMax,
   });
 
   const ControlDashboardThresholds.empty()
@@ -286,7 +328,8 @@ class ControlDashboardThresholds {
       tempInteriorMax = null,
       humidityInteriorMin = null,
       humidityInteriorOpt = null,
-      humidityInteriorMax = null;
+      humidityInteriorMax = null,
+      filterPressureMax = null;
 
   factory ControlDashboardThresholds.fromRaw(Map<String, dynamic> rawData) {
     return ControlDashboardThresholds(
@@ -326,6 +369,12 @@ class ControlDashboardThresholds {
         'humidityInterior',
         'max',
       ]),
+      filterPressureMax: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'presionDiferencial',
+        'max',
+      ]),
     );
   }
 
@@ -335,6 +384,7 @@ class ControlDashboardThresholds {
   final double? humidityInteriorMin;
   final double? humidityInteriorOpt;
   final double? humidityInteriorMax;
+  final double? filterPressureMax;
 
   static double? _readDouble(Map<String, dynamic> source, List<String> path) {
     Object? current = source;

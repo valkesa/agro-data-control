@@ -28,30 +28,41 @@ class FirestoreTemperatureHistoryRepository {
   }
 
   Future<void> saveHourly(TemperatureHourlyRecord record) async {
-    await _commitDocument(
-      _hourlyDocumentPath(record.hourKey),
-      <String, Object?>{
-        'timestampHourStart': _timestampField(record.timestampHourStartUtc),
-        'dateKey': _stringField(record.dateKey),
-        'hourKey': _stringField(record.hourKey),
-        'hour': _intField(record.hour),
-        'avgTemp': _doubleField(record.avgTemp),
-        'minTemp': _doubleField(record.minTemp),
-        'maxTemp': _doubleField(record.maxTemp),
-        'samplesCount': _intField(record.samplesCount),
-      },
-    );
+    final Map<String, Object?> fields = <String, Object?>{
+      'timestampHourStart': _timestampField(record.timestampHourStartUtc),
+      'dateKey': _stringField(record.dateKey),
+      'hourKey': _stringField(record.hourKey),
+      'hour': _intField(record.hour),
+      'avgTemp': _doubleField(record.avgTemp),
+      'minTemp': _doubleField(record.minTemp),
+      'maxTemp': _doubleField(record.maxTemp),
+      'samplesCount': _intField(record.samplesCount),
+      if (record.avgExteriorTemp != null)
+        'avgExteriorTemp': _doubleField(record.avgExteriorTemp!),
+      if (record.minExteriorTemp != null)
+        'minExteriorTemp': _doubleField(record.minExteriorTemp!),
+      if (record.maxExteriorTemp != null)
+        'maxExteriorTemp': _doubleField(record.maxExteriorTemp!),
+    };
+    await _commitDocument(_hourlyDocumentPath(record.hourKey), fields);
   }
 
   Future<void> saveDaily(TemperatureDailyRecord record) async {
-    await _commitDocument(_dailyDocumentPath(record.dateKey), <String, Object?>{
+    final Map<String, Object?> fields = <String, Object?>{
       'dateKey': _stringField(record.dateKey),
       'timestampDayStart': _timestampField(record.timestampDayStartUtc),
       'avgTemp': _doubleField(record.avgTemp),
       'minTemp': _doubleField(record.minTemp),
       'maxTemp': _doubleField(record.maxTemp),
       'hoursCount': _intField(record.hoursCount),
-    });
+      if (record.avgExteriorTemp != null)
+        'avgExteriorTemp': _doubleField(record.avgExteriorTemp!),
+      if (record.minExteriorTemp != null)
+        'minExteriorTemp': _doubleField(record.minExteriorTemp!),
+      if (record.maxExteriorTemp != null)
+        'maxExteriorTemp': _doubleField(record.maxExteriorTemp!),
+    };
+    await _commitDocument(_dailyDocumentPath(record.dateKey), fields);
   }
 
   Future<List<TemperatureHourlyRecord>> loadHourlyForDate(
@@ -189,6 +200,9 @@ class FirestoreTemperatureHistoryRepository {
       minTemp: _readDouble(fields, 'minTemp'),
       maxTemp: _readDouble(fields, 'maxTemp'),
       samplesCount: _readInt(fields, 'samplesCount'),
+      avgExteriorTemp: _readDoubleOrNull(fields, 'avgExteriorTemp'),
+      minExteriorTemp: _readDoubleOrNull(fields, 'minExteriorTemp'),
+      maxExteriorTemp: _readDoubleOrNull(fields, 'maxExteriorTemp'),
     );
   }
 
@@ -208,6 +222,9 @@ class TemperatureHourlyRecord {
     required this.minTemp,
     required this.maxTemp,
     required this.samplesCount,
+    this.avgExteriorTemp,
+    this.minExteriorTemp,
+    this.maxExteriorTemp,
   });
 
   final DateTime timestampHourStartUtc;
@@ -218,6 +235,9 @@ class TemperatureHourlyRecord {
   final double minTemp;
   final double maxTemp;
   final int samplesCount;
+  final double? avgExteriorTemp;
+  final double? minExteriorTemp;
+  final double? maxExteriorTemp;
 }
 
 class TemperatureDailyRecord {
@@ -228,6 +248,9 @@ class TemperatureDailyRecord {
     required this.minTemp,
     required this.maxTemp,
     required this.hoursCount,
+    this.avgExteriorTemp,
+    this.minExteriorTemp,
+    this.maxExteriorTemp,
   });
 
   final DateTime timestampDayStartUtc;
@@ -236,6 +259,9 @@ class TemperatureDailyRecord {
   final double minTemp;
   final double maxTemp;
   final int hoursCount;
+  final double? avgExteriorTemp;
+  final double? minExteriorTemp;
+  final double? maxExteriorTemp;
 }
 
 class FirestoreTemperatureHistoryException implements Exception {
@@ -287,4 +313,19 @@ double _readDouble(Map<String, dynamic> fields, String key) {
     return raw.toDouble();
   }
   return double.parse(raw.toString());
+}
+
+double? _readDoubleOrNull(Map<String, dynamic> fields, String key) {
+  final Map<String, dynamic>? value = fields[key] as Map<String, dynamic>?;
+  if (value == null) {
+    return null;
+  }
+  final Object? raw = value['doubleValue'] ?? value['integerValue'];
+  if (raw is num) {
+    return raw.toDouble();
+  }
+  if (raw is String) {
+    return double.tryParse(raw);
+  }
+  return null;
 }

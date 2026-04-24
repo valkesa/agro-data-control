@@ -124,8 +124,13 @@ class _EnvironmentSection extends StatelessWidget {
           return Column(
             children: [
               _ValueRow(
-                label: 'Temp. Interior',
+                label: 'T°C SAL sala',
                 value: _formatDecimal(unit.tempInterior, 1),
+                unit: '°C',
+              ),
+              _ValueRow(
+                label: 'T°C. ING sala',
+                value: _formatDecimal(unit.tempIngresoSala, 1),
                 unit: '°C',
               ),
               _ValueRow(
@@ -163,7 +168,7 @@ class _EnvironmentSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: _ValueRow(
-                    label: 'Temp. Interior',
+                    label: 'T°C SAL sala',
                     value: _formatDecimal(unit.tempInterior, 1),
                     unit: '°C',
                   ),
@@ -171,9 +176,9 @@ class _EnvironmentSection extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: _ValueRow(
-                    label: 'Hum. Interior',
-                    value: _formatDecimal(unit.humInterior, 0),
-                    unit: '%',
+                    label: 'T°C. ING sala',
+                    value: _formatDecimal(unit.tempIngresoSala, 1),
+                    unit: '°C',
                   ),
                 ),
               ],
@@ -183,12 +188,24 @@ class _EnvironmentSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: _ValueRow(
+                    label: 'Hum. Interior',
+                    value: _formatDecimal(unit.humInterior, 0),
+                    unit: '%',
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _ValueRow(
                     label: 'Temp. Exterior',
                     value: _formatDecimal(unit.tempExterior, 0),
                     unit: '°C',
                   ),
                 ),
-                const SizedBox(width: 8),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
                 Expanded(
                   child: _ValueRow(
                     label: 'Hum. Exterior',
@@ -196,13 +213,15 @@ class _EnvironmentSection extends StatelessWidget {
                     unit: '%',
                   ),
                 ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _ValueRow(
+                    label: 'Presion diferencial',
+                    value: _formatDecimal(unit.presionDiferencial, 0),
+                    unit: 'Pa',
+                  ),
+                ),
               ],
-            ),
-            const SizedBox(height: 4),
-            _ValueRow(
-              label: 'Presion diferencial',
-              value: _formatDecimal(unit.presionDiferencial, 0),
-              unit: 'Pa',
             ),
             const SizedBox(height: 4),
             _ValueRow(
@@ -244,10 +263,7 @@ class _VentilationSection extends StatelessWidget {
 }
 
 class _HumidificationSection extends StatelessWidget {
-  const _HumidificationSection({
-    required this.unit,
-    this.waterShortageSummary,
-  });
+  const _HumidificationSection({required this.unit, this.waterShortageSummary});
 
   final MuntersModel unit;
   final WaterShortageSummary? waterShortageSummary;

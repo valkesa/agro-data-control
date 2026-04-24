@@ -13,6 +13,7 @@ class MuntersModel {
     this.dataFresh,
     this.plcOnline,
     this.plcLatencyMs,
+    this.routerLatencyMs,
     this.backendStartedAt,
     this.lastUpdatedAt,
     this.previousLastUpdatedAt,
@@ -21,6 +22,7 @@ class MuntersModel {
     this.lastHeartbeatChangeAt,
     this.lastError,
     required this.tempInterior,
+    required this.tempIngresoSala,
     required this.humInterior,
     required this.tempExterior,
     required this.humExterior,
@@ -64,6 +66,7 @@ class MuntersModel {
       dataFresh = null,
       plcOnline = null,
       plcLatencyMs = null,
+      routerLatencyMs = null,
       backendStartedAt = null,
       lastUpdatedAt = null,
       previousLastUpdatedAt = null,
@@ -72,6 +75,7 @@ class MuntersModel {
       lastHeartbeatChangeAt = null,
       lastError = null,
       tempInterior = null,
+      tempIngresoSala = null,
       humInterior = null,
       tempExterior = null,
       humExterior = null,
@@ -114,6 +118,7 @@ class MuntersModel {
   final bool? dataFresh;
   final bool? plcOnline;
   final int? plcLatencyMs;
+  final int? routerLatencyMs;
   final DateTime? backendStartedAt;
   final DateTime? lastUpdatedAt;
   final DateTime? previousLastUpdatedAt;
@@ -122,6 +127,7 @@ class MuntersModel {
   final DateTime? lastHeartbeatChangeAt;
   final String? lastError;
   final double? tempInterior;
+  final double? tempIngresoSala;
   final double? humInterior;
   final double? tempExterior;
   final double? humExterior;

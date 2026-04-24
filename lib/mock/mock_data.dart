@@ -8,6 +8,7 @@ class MockData {
     MuntersModel(
       name: 'Munters 1',
       tempInterior: 23.4,
+      tempIngresoSala: 21.8,
       humInterior: 61.0,
       tempExterior: 29.0,
       humExterior: 48.0,
@@ -39,6 +40,7 @@ class MockData {
     MuntersModel(
       name: 'Munters 2',
       tempInterior: 24.1,
+      tempIngresoSala: 22.7,
       humInterior: 58.0,
       tempExterior: 28.3,
       humExterior: 45.0,

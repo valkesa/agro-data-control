@@ -7,10 +7,7 @@ import 'user_management_service.dart';
 class UserContextService {
   const UserContextService();
 
-  Future<UserContextResult> readUserContext(
-    String uid, {
-    String? email,
-  }) async {
+  Future<UserContextResult> readUserContext(String uid, {String? email}) async {
     final String path = FirestorePaths.userProfile(uid);
     debugPrint('[Firestore] user context read started path=$path');
 
@@ -19,7 +16,9 @@ class UserContextService {
           await FirebaseFirestore.instance.doc(path).get();
 
       if (!snapshot.exists) {
-        debugPrint('[Firestore] user context missing path=$path — creating default profile');
+        debugPrint(
+          '[Firestore] user context missing path=$path — creating default profile',
+        );
         await _createDefaultProfile(uid: uid, email: email);
         return UserContextResult.pendingActivation(email: email);
       }
@@ -29,12 +28,15 @@ class UserContextService {
       final String? tenantId = data['activeTenantId']?.toString();
       final String? siteId = data['defaultSiteId']?.toString();
       final String? role = data['role']?.toString();
-
-      debugPrint(
-        '[Firestore] user context read success uid=$uid tenantId=$tenantId siteId=$siteId active=$active role=$role',
+      final List<String> allowedSiteIds = _parseStringList(
+        data['allowedSiteIds'],
       );
 
-      if (tenantId == null || tenantId.isEmpty) {
+      debugPrint(
+        '[Firestore] user context read success uid=$uid tenantId=$tenantId siteId=$siteId active=$active role=$role allowedSites=${allowedSiteIds.length}',
+      );
+
+      if (role == null || role.isEmpty || role == UserAppRole.pending) {
         return UserContextResult.pendingActivation(
           email: data['email']?.toString() ?? email,
         );
@@ -42,10 +44,11 @@ class UserContextService {
 
       return UserContextResult.success(
         email: data['email']?.toString(),
-        activeTenantId: tenantId,
-        defaultSiteId: (siteId == null || siteId.isEmpty)
-            ? FirestorePaths.defaultSiteId
-            : siteId,
+        activeTenantId: (tenantId == null || tenantId.isEmpty)
+            ? null
+            : tenantId,
+        defaultSiteId: (siteId == null || siteId.isEmpty) ? null : siteId,
+        allowedSiteIds: allowedSiteIds,
         active: active,
         role: role,
         rawData: data,
@@ -66,15 +69,75 @@ class UserContextService {
           .collection('users')
           .doc(uid)
           .set(<String, Object?>{
-        'email': email,
-        'role': UserAppRole.tenantOperator,
-        'active': false,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
+            'email': email,
+            'role': UserAppRole.pending,
+            'active': false,
+            'createdAt': FieldValue.serverTimestamp(),
+          });
       debugPrint('[Firestore] default profile created uid=$uid');
     } catch (error) {
-      debugPrint('[Firestore] error creating default profile uid=$uid error=$error');
+      debugPrint(
+        '[Firestore] error creating default profile uid=$uid error=$error',
+      );
     }
+  }
+
+  Future<void> setActiveSite({
+    required String uid,
+    required String siteId,
+  }) async {
+    final String path = FirestorePaths.userProfile(uid);
+    debugPrint('[Firestore] setActiveSite started path=$path siteId=$siteId');
+    await FirebaseFirestore.instance.doc(path).update(<String, Object?>{
+      'defaultSiteId': siteId,
+    });
+    debugPrint('[Firestore] setActiveSite done uid=$uid siteId=$siteId');
+  }
+
+  Future<void> saveComparisonModuleOrder({
+    required String uid,
+    required List<String> moduleOrder,
+  }) async {
+    final String path = FirestorePaths.userProfile(uid);
+    debugPrint(
+      '[Firestore] comparison module order save started path=$path order=$moduleOrder',
+    );
+
+    await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
+      'ui': <String, Object?>{
+        'comparison': <String, Object?>{'moduleOrder': moduleOrder},
+      },
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> saveUnitVisibilitySettings({
+    required String uid,
+    required bool showMunters1,
+    required bool showMunters2,
+  }) async {
+    final String path = FirestorePaths.userProfile(uid);
+    debugPrint(
+      '[Firestore] unit visibility save started path=$path m1=$showMunters1 m2=$showMunters2',
+    );
+
+    await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
+      'ui': <String, Object?>{
+        'visibleUnits': <String, Object?>{
+          'munters1': showMunters1,
+          'munters2': showMunters2,
+        },
+      },
+    }, SetOptions(merge: true));
+  }
+
+  static List<String> _parseStringList(Object? value) {
+    if (value is List<dynamic>) {
+      return value
+          .map((Object? e) => e?.toString() ?? '')
+          .where((String s) => s.isNotEmpty)
+          .toList(growable: false);
+    }
+    return const <String>[];
   }
 }
 
@@ -83,6 +146,7 @@ class UserContextResult {
     required this.email,
     required this.activeTenantId,
     required this.defaultSiteId,
+    required this.allowedSiteIds,
     required this.active,
     required this.role,
     required this.rawData,
@@ -95,6 +159,7 @@ class UserContextResult {
     : email = null,
       activeTenantId = null,
       defaultSiteId = null,
+      allowedSiteIds = const <String>[],
       active = false,
       role = null,
       rawData = const <String, dynamic>{},
@@ -105,6 +170,7 @@ class UserContextResult {
   const UserContextResult.pendingActivation({this.email})
     : activeTenantId = null,
       defaultSiteId = null,
+      allowedSiteIds = const <String>[],
       active = false,
       role = null,
       rawData = const <String, dynamic>{},
@@ -116,6 +182,7 @@ class UserContextResult {
     : email = null,
       activeTenantId = null,
       defaultSiteId = null,
+      allowedSiteIds = const <String>[],
       active = false,
       role = null,
       rawData = const <String, dynamic>{},
@@ -126,6 +193,7 @@ class UserContextResult {
     required this.email,
     required this.activeTenantId,
     required this.defaultSiteId,
+    required this.allowedSiteIds,
     required this.active,
     required this.role,
     required this.rawData,
@@ -136,6 +204,7 @@ class UserContextResult {
   final String? email;
   final String? activeTenantId;
   final String? defaultSiteId;
+  final List<String> allowedSiteIds;
   final bool active;
   final String? role;
   final Map<String, dynamic> rawData;
@@ -144,4 +213,44 @@ class UserContextResult {
   final bool isPendingActivation;
 
   bool get hasError => errorMessage != null;
+
+  List<String>? readComparisonModuleOrder() {
+    Object? current = rawData['ui'];
+    if (current is! Map<String, dynamic>) {
+      return null;
+    }
+    current = current['comparison'];
+    if (current is! Map<String, dynamic>) {
+      return null;
+    }
+    current = current['moduleOrder'];
+    if (current is! List<dynamic>) {
+      return null;
+    }
+    final List<String> values = current
+        .map((dynamic value) => value.toString())
+        .where((String value) => value.isNotEmpty)
+        .toList(growable: false);
+    return values.isEmpty ? null : values;
+  }
+
+  bool? readShowMunters1() =>
+      _readBool(rawData, const ['ui', 'visibleUnits', 'munters1']);
+
+  bool? readShowMunters2() =>
+      _readBool(rawData, const ['ui', 'visibleUnits', 'munters2']);
+
+  static bool? _readBool(Map<String, dynamic> source, List<String> path) {
+    Object? current = source;
+    for (final String segment in path) {
+      if (current is! Map<String, dynamic>) {
+        return null;
+      }
+      current = current[segment];
+    }
+    if (current is bool) {
+      return current;
+    }
+    return null;
+  }
 }

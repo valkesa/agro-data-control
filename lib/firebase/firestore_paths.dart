@@ -1,9 +1,10 @@
 class FirestorePaths {
   const FirestorePaths._();
 
-  static const String defaultSiteId = 'genetica-1';
-
   static String userProfile(String uid) => 'users/$uid';
+
+  static String siteDoc(String tenantId, String siteId) =>
+      'tenants/$tenantId/sites/$siteId';
 
   static String tenantMemberDoc(String tenantId, String uid) =>
       'tenants/$tenantId/members/$uid';
@@ -21,13 +22,15 @@ class FirestorePaths {
     required String tenantId,
     required String siteId,
     required String plcId,
-  }) => '${temperatureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/hourly';
+  }) =>
+      '${temperatureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/hourly';
 
   static String temperatureDailyHistoryCollection({
     required String tenantId,
     required String siteId,
     required String plcId,
-  }) => '${temperatureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/daily';
+  }) =>
+      '${temperatureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/daily';
 
   static String waterShortageMetricsRoot({
     required String tenantId,
@@ -39,11 +42,31 @@ class FirestorePaths {
     required String tenantId,
     required String siteId,
     required String plcId,
-  }) => '${waterShortageMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/events';
+  }) =>
+      '${waterShortageMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/events';
 
   static String waterShortageMonthlyCollection({
     required String tenantId,
     required String siteId,
     required String plcId,
-  }) => '${waterShortageMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/monthly';
+  }) =>
+      '${waterShortageMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/monthly';
+
+  static String doorStateDoc({
+    required String tenantId,
+    required String siteId,
+    required String doorId,
+  }) => 'tenants/$tenantId/sites/$siteId/doors/$doorId';
+
+  static String doorOpeningsCollection({
+    required String tenantId,
+    required String siteId,
+    required String doorId,
+  }) =>
+      '${doorStateDoc(tenantId: tenantId, siteId: siteId, doorId: doorId)}/openings';
+
+  static String tenantsCollection() => 'tenants';
+
+  static String tenantSitesCollection(String tenantId) =>
+      'tenants/$tenantId/sites';
 }

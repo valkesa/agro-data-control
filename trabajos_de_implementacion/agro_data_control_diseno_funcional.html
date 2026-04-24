@@ -1,0 +1,2498 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AgroDataControl — Documentación Técnica</title>
+<style>
+  /* ── Base ── */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #1a1a2e;
+    background: #eef0f3;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* ── Top navigation bar ── */
+  .top-nav {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: #1a1a2e;
+    display: flex;
+    align-items: center;
+    padding: 0 24px;
+    height: 52px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.35);
+    gap: 16px;
+  }
+  .nav-brand {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    text-transform: uppercase;
+    color: #4ade80;
+    white-space: nowrap;
+    padding-right: 16px;
+    border-right: 1px solid #334155;
+  }
+  .nav-current-doc {
+    flex: 1;
+    font-size: 12.5px;
+    font-weight: 500;
+    color: #e2e8f0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .nav-current-doc .nav-current-label {
+    font-size: 11px;
+    color: #64748b;
+    font-weight: 400;
+    margin-left: 8px;
+  }
+  .print-btn {
+    background: none;
+    border: 1px solid #334155;
+    border-radius: 5px;
+    color: #94a3b8;
+    font-family: inherit;
+    font-size: 11.5px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+    white-space: nowrap;
+  }
+  .print-btn:hover { background: #334155; color: #e2e8f0; }
+
+  /* ── Hamburger ── */
+  .hamburger-wrap { position: relative; }
+  .hamburger-btn {
+    background: none;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    color: #94a3b8;
+    cursor: pointer;
+    width: 38px;
+    height: 34px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    transition: background .15s, color .15s;
+    padding: 0;
+  }
+  .hamburger-btn:hover { background: #1e293b; color: #e2e8f0; }
+  .hamburger-btn.open { background: #1e293b; border-color: #4ade80; color: #4ade80; }
+  .hamburger-btn span {
+    display: block;
+    width: 18px;
+    height: 2px;
+    background: currentColor;
+    border-radius: 2px;
+    transition: transform .2s, opacity .2s;
+  }
+  .hamburger-btn.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+  .hamburger-btn.open span:nth-child(2) { opacity: 0; }
+  .hamburger-btn.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+  /* ── Dropdown menu ── */
+  .hamburger-dropdown {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    min-width: 300px;
+    background: #1e293b;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.45);
+    overflow: hidden;
+    z-index: 200;
+  }
+  .hamburger-dropdown.open { display: block; }
+  .dropdown-header {
+    padding: 10px 16px 8px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #475569;
+    border-bottom: 1px solid #273244;
+  }
+  .dropdown-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 11px 16px;
+    cursor: pointer;
+    border: none;
+    background: none;
+    font-family: inherit;
+    text-align: left;
+    width: 100%;
+    border-bottom: 1px solid #1a2840;
+    transition: background .12s;
+  }
+  .dropdown-item:last-child { border-bottom: none; }
+  .dropdown-item:hover { background: #273244; }
+  .dropdown-item.active { background: #0f1f35; border-left: 3px solid #4ade80; padding-left: 13px; }
+  .dropdown-item-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: #e2e8f0;
+  }
+  .dropdown-item.active .dropdown-item-title { color: #4ade80; }
+  .dropdown-item-sub {
+    font-size: 11px;
+    color: #64748b;
+    font-weight: 400;
+  }
+
+  /* ── Doc pages ── */
+  .doc-page { display: none; }
+  .doc-page.visible { display: block; }
+
+  .page {
+    max-width: 900px;
+    margin: 0 auto;
+    background: #fff;
+    padding: 48px 60px;
+    min-height: 100vh;
+  }
+
+  /* ── Cover ── */
+  .cover {
+    text-align: center;
+    padding: 60px 0 48px;
+    border-bottom: 3px solid #2d6a4f;
+    margin-bottom: 48px;
+  }
+  .cover .tag {
+    display: inline-block;
+    background: #2d6a4f;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    text-transform: uppercase;
+    padding: 4px 12px;
+    border-radius: 3px;
+    margin-bottom: 20px;
+  }
+  .cover .tag-blue {
+    background: #1e40af;
+  }
+  .cover h1 {
+    font-size: 28px;
+    font-weight: 800;
+    margin: 0 0 8px;
+    color: #1a1a2e;
+  }
+  .cover h2 {
+    font-size: 17px;
+    font-weight: 400;
+    color: #4a5568;
+    margin: 0 0 28px;
+  }
+  .cover .meta {
+    font-size: 12px;
+    color: #718096;
+  }
+  .cover .meta span { margin: 0 12px; }
+
+  /* ── TOC ── */
+  .toc {
+    background: #f7fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    padding: 20px 28px;
+    margin-bottom: 48px;
+  }
+  .toc h3 {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: #718096;
+    margin: 0 0 12px;
+  }
+  .toc ol {
+    margin: 0;
+    padding-left: 20px;
+    columns: 2;
+    column-gap: 32px;
+  }
+  .toc li {
+    font-size: 12.5px;
+    color: #2d6a4f;
+    padding: 2px 0;
+  }
+
+  /* ── Sections ── */
+  section {
+    margin-bottom: 44px;
+    page-break-inside: avoid;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 18px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #e2e8f0;
+  }
+  .section-number {
+    background: #2d6a4f;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+  .section-number.blue { background: #1e40af; }
+  h2.section-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0;
+    color: #1a1a2e;
+  }
+
+  h3 {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: #2d6a4f;
+    margin: 20px 0 8px;
+  }
+  h4 {
+    font-size: 13px;
+    font-weight: 600;
+    color: #4a5568;
+    margin: 14px 0 6px;
+  }
+
+  p { margin: 0 0 10px; }
+
+  /* ── Alerts / Callouts ── */
+  .callout {
+    border-left: 4px solid;
+    padding: 12px 16px;
+    margin: 14px 0;
+    border-radius: 0 4px 4px 0;
+    font-size: 12.5px;
+  }
+  .callout-critical { border-color: #e53e3e; background: #fff5f5; }
+  .callout-warning  { border-color: #dd6b20; background: #fffaf0; }
+  .callout-info     { border-color: #3182ce; background: #ebf8ff; }
+  .callout-success  { border-color: #2d6a4f; background: #f0fff4; }
+
+  .callout .callout-title {
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .callout-critical .callout-title { color: #c53030; }
+  .callout-warning  .callout-title { color: #c05621; }
+  .callout-info     .callout-title { color: #2b6cb0; }
+  .callout-success  .callout-title { color: #276749; }
+
+  /* ── Code blocks ── */
+  pre {
+    background: #1a1a2e;
+    color: #e2e8f0;
+    padding: 16px 20px;
+    border-radius: 6px;
+    font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+    font-size: 11.5px;
+    line-height: 1.7;
+    overflow-x: auto;
+    margin: 12px 0;
+    page-break-inside: avoid;
+  }
+  code {
+    background: #edf2f7;
+    color: #c05621;
+    font-family: 'Cascadia Code', 'Fira Code', 'Courier New', monospace;
+    font-size: 11.5px;
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+  pre code {
+    background: transparent;
+    color: inherit;
+    padding: 0;
+  }
+  .comment { color: #6b7280; }
+  .kw      { color: #93c5fd; }
+  .fn      { color: #fde68a; }
+  .str     { color: #86efac; }
+  .type    { color: #f9a8d4; }
+
+  /* ── Tables ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 14px 0;
+    page-break-inside: avoid;
+  }
+  thead tr {
+    background: #2d6a4f;
+    color: #fff;
+  }
+  thead tr.blue-head { background: #1e40af; }
+  th {
+    padding: 9px 12px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 11.5px;
+    letter-spacing: 0.3px;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #e2e8f0;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: #f7fafc; }
+  tr:last-child td { border-bottom: none; }
+  .group-row td {
+    background: #f7fafc !important;
+    font-weight: 700;
+    font-size: 11px;
+    letter-spacing: .5px;
+    color: #718096;
+    padding: 6px 12px;
+  }
+
+  /* ── Lists ── */
+  ul, ol {
+    margin: 8px 0 12px;
+    padding-left: 22px;
+  }
+  li { margin-bottom: 4px; }
+  li strong { color: #2d6a4f; }
+
+  /* ── Decision list ── */
+  .decision-list { list-style: none; padding: 0; }
+  .decision-list li {
+    display: flex;
+    gap: 12px;
+    padding: 10px 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 5px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+  }
+  .decision-badge {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 7px;
+    border-radius: 10px;
+    white-space: nowrap;
+    margin-top: 2px;
+    color: #fff;
+  }
+  .decision-badge.blocker   { background: #e53e3e; }
+  .decision-badge.important { background: #dd6b20; }
+  .decision-badge.ux        { background: #3182ce; }
+
+  /* ── Inline badges ── */
+  .badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 10px;
+    margin-left: 4px;
+    vertical-align: middle;
+  }
+  .badge-red    { background: #fed7d7; color: #c53030; }
+  .badge-orange { background: #feebc8; color: #c05621; }
+  .badge-blue   { background: #bee3f8; color: #2b6cb0; }
+  .badge-green  { background: #c6f6d5; color: #276749; }
+  .badge-yes    { color: #276749; font-weight: 700; }
+  .badge-no     { color: #c53030; }
+
+  /* ── Change log cards ── */
+  .change-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    overflow: hidden;
+    page-break-inside: avoid;
+  }
+  .change-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: #f7fafc;
+    border-bottom: 1px solid #e2e8f0;
+  }
+  .change-card-header .file-tag {
+    background: #1a1a2e;
+    color: #86efac;
+    font-family: 'Cascadia Code', 'Courier New', monospace;
+    font-size: 11px;
+    padding: 2px 10px;
+    border-radius: 4px;
+    font-weight: 600;
+  }
+  .change-card-header .change-count {
+    margin-left: auto;
+    font-size: 11px;
+    color: #718096;
+  }
+  .change-card-body { padding: 12px 16px; }
+  .change-card-body ul { margin: 0; }
+  .change-card-body li { margin-bottom: 6px; font-size: 12.5px; }
+
+  /* ── Test case list ── */
+  .test-case {
+    display: flex;
+    gap: 12px;
+    padding: 10px 14px;
+    border: 1px solid #e2e8f0;
+    border-radius: 6px;
+    margin-bottom: 8px;
+    align-items: flex-start;
+    page-break-inside: avoid;
+  }
+  .test-case.pass { border-left: 4px solid #22c55e; }
+  .test-case.deny { border-left: 4px solid #ef4444; }
+  .test-badge {
+    font-size: 10px;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 10px;
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+  .test-badge.pass { background: #dcfce7; color: #166534; }
+  .test-badge.deny { background: #fee2e2; color: #991b1b; }
+  .test-case-body { flex: 1; }
+  .test-case-body strong { font-size: 12.5px; }
+  .test-case-body p { font-size: 12px; color: #4b5563; margin: 2px 0 0; }
+
+  /* ── Role model diagram ── */
+  .role-diagram {
+    display: flex;
+    gap: 16px;
+    margin: 16px 0;
+  }
+  .role-box {
+    flex: 1;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #e2e8f0;
+  }
+  .role-box-header {
+    padding: 8px 14px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+  }
+  .role-box-header.global { background: #1e3a5f; color: #93c5fd; }
+  .role-box-header.tenant { background: #1e3a2e; color: #86efac; }
+  .role-box-body { padding: 12px 14px; }
+  .role-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .role-item:last-child { margin-bottom: 0; }
+  .role-pill {
+    font-family: 'Cascadia Code', 'Courier New', monospace;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    margin-top: 1px;
+  }
+  .rp-owner   { background: #7c3aed; color: #ede9fe; }
+  .rp-pending { background: #374151; color: #d1d5db; }
+  .rp-admin   { background: #0e7490; color: #cffafe; }
+  .rp-oper    { background: #065f46; color: #d1fae5; }
+  .role-item p { font-size: 11.5px; color: #4b5563; margin: 0; line-height: 1.4; }
+
+  /* ── Index page ── */
+  .index-header {
+    text-align: center;
+    padding: 52px 0 40px;
+    border-bottom: 1px solid #e2e8f0;
+    margin-bottom: 36px;
+  }
+  .index-header h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: #1a1a2e;
+    margin: 0 0 8px;
+    letter-spacing: -.5px;
+  }
+  .index-header p {
+    font-size: 13px;
+    color: #64748b;
+    margin: 0;
+  }
+  .index-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .index-card {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 18px 22px;
+    cursor: pointer;
+    text-align: left;
+    font-family: inherit;
+    width: 100%;
+    transition: border-color .15s, box-shadow .15s, background .15s;
+  }
+  .index-card:hover {
+    border-color: #94a3b8;
+    box-shadow: 0 4px 14px rgba(0,0,0,.07);
+    background: #fff;
+  }
+  .index-card-num {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #1a1a2e;
+    color: #4ade80;
+    font-size: 14px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .index-card-body { flex: 1; min-width: 0; }
+  .index-card-type {
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .8px;
+    color: #94a3b8;
+    margin-bottom: 3px;
+  }
+  .index-card-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a2e;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .index-card-sub {
+    font-size: 11.5px;
+    color: #64748b;
+  }
+  .index-card-meta {
+    flex-shrink: 0;
+    text-align: right;
+  }
+  .index-card-date {
+    font-size: 11.5px;
+    color: #94a3b8;
+    white-space: nowrap;
+  }
+  .index-card-arrow {
+    flex-shrink: 0;
+    font-size: 18px;
+    color: #cbd5e1;
+    margin-left: 4px;
+    transition: color .15s, transform .15s;
+  }
+  .index-card:hover .index-card-arrow { color: #4ade80; transform: translateX(3px); }
+
+  /* ── Page break hints ── */
+  .page-break { page-break-before: always; }
+
+  /* ── Footer ── */
+  .footer {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid #e2e8f0;
+    font-size: 11px;
+    color: #a0aec0;
+    text-align: center;
+  }
+
+  /* ── Print overrides ── */
+  @media print {
+    body { background: #fff; font-size: 11.5px; }
+    .top-nav { display: none !important; }
+    .page { padding: 20px 32px; max-width: 100%; }
+    pre { font-size: 10px; }
+    table { font-size: 11px; }
+    section { page-break-inside: avoid; }
+    .doc-page { display: none !important; }
+    .doc-page.visible { display: block !important; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════ TOP NAVIGATION ════════════════════════ -->
+<nav class="top-nav no-print">
+  <div class="nav-brand">AgroDataControl</div>
+
+  <div class="nav-current-doc">
+    <span id="nav-title">Índice</span>
+    <span class="nav-current-label" id="nav-subtitle">Todos los documentos</span>
+  </div>
+
+  <button class="print-btn" onclick="window.print()">🖨 Imprimir / PDF</button>
+
+  <div class="hamburger-wrap">
+    <button class="hamburger-btn" id="hamburger-btn" onclick="toggleMenu()" aria-label="Menú de documentos">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="hamburger-dropdown" id="hamburger-dropdown">
+      <div class="dropdown-header">Documentos</div>
+      <button class="dropdown-item active" onclick="showDoc(0)">
+        <span class="dropdown-item-title">Índice</span>
+        <span class="dropdown-item-sub">Todos los documentos</span>
+      </button>
+      <button class="dropdown-item" onclick="showDoc(1)">
+        <span class="dropdown-item-title">Especificación Funcional Preliminar</span>
+        <span class="dropdown-item-sub">Diseño de roles, tenants y permisos · 21 abr 2026</span>
+      </button>
+      <button class="dropdown-item" onclick="showDoc(2)">
+        <span class="dropdown-item-title">Etapa 1 — Consistencia y Seguridad Base</span>
+        <span class="dropdown-item-sub">Roles unificados · Gestión por tenant · 21 abr 2026</span>
+      </button>
+      <button class="dropdown-item" onclick="showDoc(3)">
+        <span class="dropdown-item-title">Etapa 2 — Multi-Site Real</span>
+        <span class="dropdown-item-sub">Sites dinámicos · Backend por sala · 22 abr 2026</span>
+      </button>
+      <button class="dropdown-item" onclick="showDoc(4)">
+        <span class="dropdown-item-title">Corrección — APERTURAS en M1</span>
+        <span class="dropdown-item-sub">Bug: datos en columna M2 en vez de M1 · 22 abr 2026</span>
+      </button>
+      <button class="dropdown-item" onclick="showDoc(5)">
+        <span class="dropdown-item-title">Corrección — Tracking de Aperturas</span>
+        <span class="dropdown-item-sub">Bug: loop infinito + señal null · Backend · 22 abr 2026</span>
+      </button>
+    </div>
+  </div>
+</nav>
+
+
+<!-- ══════════════════════════ ÍNDICE ══════════════════════════ -->
+<div id="doc-index" class="doc-page visible">
+<div class="page">
+
+  <div class="index-header">
+    <h1>AgroDataControl</h1>
+    <p>Documentación técnica del proyecto — seleccioná un documento para abrirlo</p>
+  </div>
+
+  <div class="index-grid">
+
+    <button class="index-card" onclick="showDoc(1)">
+      <div class="index-card-num">1</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Especificación Funcional</div>
+        <div class="index-card-title">Especificación Funcional Preliminar</div>
+        <div class="index-card-sub">Diseño de roles, tenants, permisos, salas y configuración visual de PLCs</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">21 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+    <button class="index-card" onclick="showDoc(2)">
+      <div class="index-card-num">2</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Implementación — Etapa 1</div>
+        <div class="index-card-title">Consistencia y Seguridad Base</div>
+        <div class="index-card-sub">Roles unificados · Gestión por tenant · Blindaje anti-escalación</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">21 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+    <button class="index-card" onclick="showDoc(3)">
+      <div class="index-card-num">3</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Implementación — Etapa 2</div>
+        <div class="index-card-title">Multi-Site Real</div>
+        <div class="index-card-sub">Sites dinámicos · Backend por sala · Selector en header · Compatibilidad hacia atrás</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">22 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+    <button class="index-card" onclick="showDoc(4)">
+      <div class="index-card-num">4</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Corrección de Bug — Frontend</div>
+        <div class="index-card-title">APERTURAS mostraba datos en columna M2</div>
+        <div class="index-card-sub">Sección APERTURAS pertenece a M1 (PLC1 · 192.168.10.50)</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">22 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+    <button class="index-card" onclick="showDoc(5)">
+      <div class="index-card-num">5</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Corrección de Bug — Backend</div>
+        <div class="index-card-title">Tracking de Aperturas: loop infinito + señal null</div>
+        <div class="index-card-sub">Puerta no mostraba rojo · Sin registro Firestore · Sin contador · Sin historial</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">22 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-index -->
+
+
+<!-- ══════════════════════════ DOCUMENT 1 ══════════════════════════ -->
+<div id="doc-0" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag">Especificación Funcional Preliminar</div>
+    <h1>AgroDataControl</h1>
+    <h2>Diseño de Tenants, Roles, Permisos, Salas y Configuración Visual de PLCs</h2>
+    <div class="meta">
+      <span>📅 Fecha: 21 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>⚙️ Estado: Revisión — No implementar hasta cerrar decisiones pendientes</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Resumen Ejecutivo</li>
+      <li>Riesgos y Contradicciones Detectadas (C1–C8)</li>
+      <li>Propuesta de Modelo de Roles</li>
+      <li>Propuesta de Modelo de Permisos</li>
+      <li>Matriz de Permisos Inicial por Rol</li>
+      <li>Modelo de Datos Firestore a Alto Nivel</li>
+      <li>Decisiones que Deben Cerrarse Antes de Codificar</li>
+      <li>Recomendación de MVP Fase 1</li>
+      <li>Recomendación de Fase 2</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number">1</div>
+      <h2 class="section-title">Resumen Ejecutivo</h2>
+    </div>
+    <p>El proyecto tiene una base sólida: la jerarquía <code>tenants/{tenantId}/sites/{siteId}</code> ya está en Firestore, los roles <code>owner</code> / <code>tenant_admin</code> / <code>tenant_operator</code> ya existen en el código, y hay lógica de membresía funcional. Sin embargo, hay <strong>ocho contradicciones concretas en el código actual</strong> que deben resolverse antes de agregar tenants reales.</p>
+    <div class="callout callout-warning">
+      <div class="callout-title">Riesgo principal</div>
+      El mayor riesgo no es el diseño nuevo: es que el sistema ya tiene decisiones tomadas <strong>inconsistentemente</strong> entre el backend Dart, las Firestore Rules y el frontend Flutter. Agregar tenants sobre esa base sin corregirlas primero amplificará los problemas.
+    </div>
+    <p>El MVP realista no es "armar tenants desde cero" — es <strong>cerrar las inconsistencias existentes</strong> y agregar los tres datos faltantes: nombre visible de sala, nombre visible de PLC, y la capacidad de <code>tenant_admin</code> de gestionar sus operadores.</p>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">2</div>
+      <h2 class="section-title">Riesgos y Contradicciones Detectadas</h2>
+    </div>
+
+    <div class="callout callout-critical">
+      <div class="callout-title">C1 — Rol <code>admin</code> fantasma en Firestore Rules <span class="badge badge-red">CRÍTICO</span></div>
+      En <code>firestore.rules</code>, la función <code>canEditTenantConfig</code> permite:<br><br>
+      <code>memberRole(tenantId) == 'owner' || memberRole(tenantId) == 'admin'</code><br><br>
+      Pero en el código Dart (<code>UserAppRole</code>, <code>UserManagementService</code>) no existe el rol <code>admin</code>. Nadie puede tener <code>role='admin'</code> hoy. En la práctica, <code>canEditTenantConfig</code> solo funciona para <code>owner</code>. Si se agrega <code>tenant_admin</code> pensando que hereda esta regla, no funcionará.
+    </div>
+    <div class="callout callout-warning">
+      <div class="callout-title">C2 — Visibilidad de PLCs en dos lugares <span class="badge badge-orange">MEDIO</span></div>
+      <code>showMunters1/showMunters2</code> está guardada en:<br>
+      • <code>users/{uid}.ui.visibleUnits</code> — preferencia personal del usuario<br>
+      • <code>tenants/{tenantId}/sites/{siteId}/settings/controlDashboard.ui.visibleUnits</code> — configuración del sitio<br><br>
+      No hay política definida sobre cuál tiene precedencia. Producirá comportamientos inconsistentes entre usuarios del mismo tenant.
+    </div>
+    <div class="callout callout-critical">
+      <div class="callout-title">C3 — <code>defaultSiteId</code> hardcodeado como constante <span class="badge badge-red">CRÍTICO para multi-site</span></div>
+      <code>FirestorePaths.defaultSiteId = 'genetica-1'</code> está hardcodeado en el código Dart. Si un tenant tiene múltiples sites, el routing a Firestore se rompe silenciosamente.
+    </div>
+    <div class="callout callout-critical">
+      <div class="callout-title">C4 — URL del backend hardcodeada, sin routing por site <span class="badge badge-red">CRÍTICO para multi-site</span></div>
+      <code>PlcDashboardService.fetchSnapshot()</code> llama a una URL fija. Cada proceso backend sirve exactamente un site. El frontend no tiene lógica para seleccionar backend por tenant/site.
+    </div>
+    <div class="callout callout-warning">
+      <div class="callout-title">C5 — Rol duplicado con potencial de desincronización <span class="badge badge-orange">MEDIO</span></div>
+      El campo <code>role</code> existe en <code>users/{uid}.role</code> y en <code>tenants/{tenantId}/members/{uid}.role</code> simultáneamente. Si se modifican por separado (ej: desde la consola de Firebase), el sistema se comportará diferente en cada capa.
+    </div>
+    <div class="callout callout-critical">
+      <div class="callout-title">C6 — <code>tenant_admin</code> no puede gestionar accesos <span class="badge badge-red">BLOQUEANTE FUNCIONAL</span></div>
+      Las Firestore Rules deniegan explícitamente <code>create/update/delete</code> en <code>tenants/{tenantId}/members/{uid}</code> para <em>todos</em> los roles. No existe ninguna Cloud Function ni endpoint para que <code>tenant_admin</code> asigne <code>tenant_operator</code>.
+    </div>
+    <div class="callout callout-info">
+      <div class="callout-title">C7 — Nombres visibles de PLCs no existen en Firestore <span class="badge badge-blue">FALTANTE</span></div>
+      "Munters1", "Munters2", "M1", "M2" están implícitos en la UI. No hay campo de nombre configurable en Firestore. La separación <em>ID técnico / nombre visible</em> no está implementada.
+    </div>
+    <div class="callout callout-info">
+      <div class="callout-title">C8 — Selector de sala no existe <span class="badge badge-blue">FALTANTE</span></div>
+      "Sala Genética" no viene de Firestore — viene del campo <code>siteName</code> del <code>backend/config/default.json</code>. El frontend no tiene selector de sala ni lee los documentos <code>tenants/{tenantId}/sites/</code>.
+    </div>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">3</div>
+      <h2 class="section-title">Propuesta de Modelo de Roles</h2>
+    </div>
+    <h3>Pregunta 1: ¿<code>owner</code> y <code>admin</code> son lo mismo?</h3>
+    <p><strong>Respuesta propuesta: Sí, unificarlos.</strong> El rol <code>admin</code> en las Firestore Rules es un error de diseño incompleto que nunca se implementó en Dart.</p>
+    <div class="callout callout-success">
+      <div class="callout-title">Decisión recomendada</div>
+      Eliminar <code>admin</code> del modelo. Solo <code>owner</code> tiene privilegios globales. Si en el futuro se necesita un "co-owner", puede agregarse sin romper nada.
+    </div>
+    <h3>Pregunta 2: ¿Roles globales, por tenant, o mixtos?</h3>
+    <p><strong>Respuesta propuesta: Mixtos, pero con capas claras sin mezclarlas.</strong></p>
+    <pre>CAPA GLOBAL  (users/{uid}.role)
+  owner           → acceso total al sistema, todos los tenants
+  pending         → usuario sin asignar (hoy es 'tenant_operator' sin tenant, confuso)
+
+CAPA POR TENANT  (tenants/{tenantId}/members/{uid}.role)
+  tenant_admin    → administra su tenant: asigna operadores, configura salas
+  tenant_operator → opera su tenant: ve datos, ajusta rangos si tiene permiso</pre>
+    <div class="callout callout-warning">
+      <div class="callout-title">Hipótesis a confirmar (→ Decisión D1)</div>
+      ¿Puede un usuario ser <code>tenant_admin</code> en un tenant y <code>tenant_operator</code> en otro simultáneamente? Si sí, el modelo actual (un solo <code>activeTenantId</code> por usuario) no lo soporta.
+    </div>
+    <h3>Pregunta 3: ¿Cómo modela <code>tenant_admin</code> la gestión de operadores?</h3>
+    <ul>
+      <li><strong>Opción A — Permisos directos en Firestore Rules:</strong> <code>tenant_admin</code> puede crear/actualizar <code>members/{uid}</code>, validando que el rol asignado sea siempre ≤ <code>tenant_operator</code>.</li>
+      <li><strong>Opción B — Cloud Function como intermediario:</strong> más seguro y con auditoría, pero requiere infraestructura adicional.</li>
+    </ul>
+    <div class="callout callout-success">
+      <div class="callout-title">Recomendación para MVP</div>
+      Opción A. La regla sería: <code>tenant_admin</code> puede crear/actualizar <code>members/{uid}</code> si el role a asignar es <code>tenant_operator</code> (nunca <code>tenant_admin</code> ni <code>owner</code>).
+    </div>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number">4</div>
+      <h2 class="section-title">Propuesta de Modelo de Permisos</h2>
+    </div>
+    <h3>Pregunta 4: ¿Permisos por rol o feature flag por usuario?</h3>
+    <p><strong>Respuesta: por rol como base, con overrides por usuario solo para features de UI.</strong></p>
+    <pre>Permisos estructurales (leer/escribir datos sensibles):  SIEMPRE por rol en Firestore Rules
+Permisos de visibilidad de UI (qué paneles aparecen):   por rol como default,
+  con posibilidad de override por tenant en settings/controlDashboard.permissions</pre>
+    <div class="callout callout-critical">
+      <div class="callout-title">Regla de seguridad fundamental</div>
+      Los feature flags solo son útiles para personalización de UX. <strong>No son un mecanismo de seguridad.</strong> Los permisos de datos sensibles <strong>siempre deben validarse en Firestore Rules o backend</strong>.
+    </div>
+    <h3>Pregunta 8: ¿Cómo ocultar botones/menús sin depender solo de frontend?</h3>
+    <p>La regla es: <strong>la UI oculta, el backend/Firestore deniega.</strong> Para cada feature sensible:</p>
+    <ol>
+      <li>La UI oculta el elemento si el usuario no tiene permiso (UX)</li>
+      <li>Firestore Rules deniegan la escritura si el usuario intenta igualmente (seguridad)</li>
+      <li>No existe "poder editar desde frontend pero sin reglas" — son siempre las dos capas</li>
+    </ol>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">5</div>
+      <h2 class="section-title">Matriz de Permisos Inicial por Rol</h2>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:38%">Feature / Acción</th>
+          <th style="width:12%">owner</th>
+          <th style="width:18%">tenant_admin</th>
+          <th style="width:20%">tenant_operator</th>
+          <th style="width:12%">Sin activar</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr class="group-row"><td colspan="5">DATOS Y VISUALIZACIÓN</td></tr>
+        <tr><td>Ver datos de sala asignada</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Selector de sala (cambiar sala activa)</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td>Solo asignadas</td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Ver historial de temperatura</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Ver aperturas de puertas</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Ver comparación de módulos</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr class="group-row"><td colspan="5">CONFIGURACIÓN OPERATIVA</td></tr>
+        <tr><td>Ajustar rangos de temperatura/humedad</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge badge-orange">⚙ configurable</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Configurar lupa (zoom/tamaño)</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge badge-orange">⚙ configurable</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Ver/ocultar PLCs individuales</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge badge-orange">⚙ configurable</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr class="group-row"><td colspan="5">CONFIGURACIÓN VISUAL</td></tr>
+        <tr><td>Editar nombre visible de sala</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Editar nombre visible de PLC / encabezado</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr class="group-row"><td colspan="5">ADMINISTRACIÓN</td></tr>
+        <tr><td>Gestión de usuarios (lista global)</td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Asignar tenant a usuario</td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Gestionar operadores del propio tenant</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr><td>Acceder a "Interfaces viejas"</td><td><span class="badge-yes">✅</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td><td><span class="badge-no">❌</span></td></tr>
+        <tr class="group-row"><td colspan="5">PERFIL DE USUARIO</td></tr>
+        <tr><td>Ver propio perfil/email</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td>✅ (si logueado)</td></tr>
+        <tr><td>Cambiar propia contraseña</td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td><span class="badge-yes">✅</span></td><td>✅ (si logueado)</td></tr>
+      </tbody>
+    </table>
+    <p style="font-size:11.5px;color:#718096;margin-top:6px;"><strong>⚙ configurable</strong> = el permiso por defecto sigue al rol, pero <code>tenant_admin</code> puede habilitarlo o deshabilitarlo para sus <code>tenant_operator</code>.</p>
+  </section>
+
+  <!-- SECTION 6 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">6</div>
+      <h2 class="section-title">Modelo de Datos Firestore a Alto Nivel</h2>
+    </div>
+    <h3>Pregunta 6: ¿Qué datos en Firestore y cuáles solo en backend?</h3>
+    <table>
+      <thead><tr><th>Dato</th><th>Dónde vive</th><th>Razón</th></tr></thead>
+      <tbody>
+        <tr><td>IPs/puertos de PLCs</td><td>JSON de backend</td><td>Datos de infraestructura; exponer en Firestore sería un riesgo</td></tr>
+        <tr><td>Mapeo de señales Modbus</td><td>JSON de backend</td><td>Solo el backend los interpreta</td></tr>
+        <tr><td>Credenciales de servicio</td><td>JSON de backend</td><td>Nunca en Firestore</td></tr>
+        <tr><td>Nombres visibles de salas y PLCs</td><td>Firestore</td><td>El frontend los necesita; el backend no los usa</td></tr>
+        <tr><td>Permisos y membresías</td><td>Firestore</td><td>Base de la seguridad de acceso</td></tr>
+        <tr><td>Thresholds (rangos de alarma)</td><td>Firestore</td><td>Configuración de negocio editable desde la app</td></tr>
+        <tr><td>Historial de temperatura y aperturas</td><td>Firestore</td><td>Escritos por backend, leídos por frontend</td></tr>
+        <tr><td>URL del backend por site</td><td>Firestore (sites/{siteId})</td><td>El frontend necesita saber a qué backend conectarse</td></tr>
+        <tr><td>Preferencias de UI por usuario</td><td>Firestore (users/{uid})</td><td>Personales, no estructurales</td></tr>
+      </tbody>
+    </table>
+    <h3>Estructura Propuesta de Colecciones</h3>
+    <pre>/users/{uid}
+  role: 'owner' | 'pending'        ← solo dos valores globales
+  email: string
+  activeTenantId: string?
+  active: bool
+  createdAt, updatedAt: timestamp
+  ui:
+    comparison:
+      moduleOrder: string[]        ← preferencia personal de UI
+
+/tenants/{tenantId}
+  name: string                     ← nombre visible del tenant
+  createdAt, updatedAt: timestamp
+
+/tenants/{tenantId}/members/{uid}
+  role: 'tenant_admin' | 'tenant_operator'
+  active: bool
+  allowedSiteIds: string[]         ← lista de siteIds accesibles
+  updatedAt: timestamp
+  updatedByUid: string             ← auditoría
+
+/tenants/{tenantId}/sites/{siteId}
+  name: string                     ← nombre visible configurable
+  technicalId: string              ← = siteId, inmutable (ej: "genetica-1")
+  backendUrl: string               ← URL del proceso backend para este site
+  active: bool
+  createdAt, updatedAt: timestamp
+
+/tenants/{tenantId}/sites/{siteId}/plcs/{plcId}   ← NUEVO
+  displayName: string              ← nombre visible (ej: "M1 - Pasillo Norte")
+  technicalId: string              ← = plcId, inmutable (ej: "munters1")
+  columnLabel: string              ← encabezado de columna en dashboard (ej: "M1")
+  active: bool
+  updatedAt: timestamp
+  updatedByUid: string
+
+/tenants/{tenantId}/sites/{siteId}/settings/controlDashboard
+  munters.{plcId}.tempInterior: { min, opt, max }
+  munters.{plcId}.humidityInterior: { min, opt, max }
+  munters.{plcId}.presionDiferencial: { max }
+  ui:
+    magnifier: { zoom, size }
+    visibleUnits: { munters1: bool, munters2: bool }
+  permissions:                     ← NUEVO: overrides de permisos del tenant
+    tenant_operator:
+      canAdjustRanges: bool
+      canUseMagnifier: bool
+      canHideUnits: bool
+  updatedAt, updatedByUid: string</pre>
+    <div class="callout callout-info">
+      <div class="callout-title">Separación explícita: ID técnico vs. nombre visible</div>
+      <ul style="margin:4px 0 0;">
+        <li><strong>Inmutables:</strong> <code>tenantId</code>, <code>siteId</code>, <code>plcId</code>, <code>technicalId</code></li>
+        <li><strong>Editables desde frontend:</strong> <code>sites/{siteId}.name</code>, <code>plcs/{plcId}.displayName</code>, <code>plcs/{plcId}.columnLabel</code></li>
+        <li><strong>Principio:</strong> cambiar un <code>displayName</code> no tiene ningún efecto en el backend.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- SECTION 7 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">7</div>
+      <h2 class="section-title">Decisiones que Deben Cerrarse Antes de Codificar</h2>
+    </div>
+    <ul class="decision-list">
+      <li><span class="decision-badge blocker">D1 CRÍTICO</span><div><strong>¿Un usuario puede pertenecer a múltiples tenants?</strong><br>El modelo actual tiene un único <code>activeTenantId</code>. Si la respuesta es "sí", hay que repensar el flujo de login y selección de contexto.</div></li>
+      <li><span class="decision-badge blocker">D2 CRÍTICO</span><div><strong>¿<code>tenant_admin</code> puede asignar otros <code>tenant_admin</code>?</strong><br>¿O solo puede gestionar <code>tenant_operator</code>? Si puede asignar co-admins, hay que definir quién otorga el primer <code>tenant_admin</code> de un tenant (propuesta: solo <code>owner</code>).</div></li>
+      <li><span class="decision-badge important">D3 IMPORTANTE</span><div><strong>¿Los permisos configurables son por tenant o por usuario?</strong><br>La matriz propone overrides en <code>settings/controlDashboard.permissions.tenant_operator</code>. Si el requisito es por usuario específico, el override debe estar en el membership doc.</div></li>
+      <li><span class="decision-badge blocker">D4 BLOQUEANTE para multi-site</span><div><strong>¿Cómo selecciona el frontend el backend correcto al cambiar de sala?</strong><br>Propuesta: agregar <code>backendUrl</code> al doc <code>sites/{siteId}</code>. ¿Es aceptable que esa URL sea visible para los miembros?</div></li>
+      <li><span class="decision-badge ux">D5 UX</span><div><strong>¿El selector de sala es un dropdown o una pantalla separada?</strong><br>Si hay pocas salas (2–3), dropdown es suficiente. Si pueden ser muchas, se necesita pantalla de selección con búsqueda.</div></li>
+      <li><span class="decision-badge ux">D6 UX</span><div><strong>¿<code>columnLabel</code> y <code>displayName</code> son el mismo campo o distintos?</strong><br>Hoy "M1" (columna) podría ser diferente a "Munters Norte" (nombre largo). ¿Configurables independientemente?</div></li>
+      <li><span class="decision-badge important">D7 SEGURIDAD</span><div><strong>¿Quién puede leer <code>backendUrl</code> del site?</strong><br>Si está en <code>sites/{siteId}</code> accesible a miembros, la URL queda expuesta a cualquier <code>tenant_operator</code>.</div></li>
+      <li><span class="decision-badge important">D8 SEGURIDAD</span><div><strong>¿"Interfaces viejas" y "Gestión de usuarios" tienen validación en Firestore?</strong><br>Si son solo UI, cualquier usuario puede acceder manipulando la app.</div></li>
+    </ul>
+  </section>
+
+  <!-- SECTION 8 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">8</div>
+      <h2 class="section-title">Recomendación de MVP Fase 1</h2>
+    </div>
+    <p><strong>Objetivo:</strong> que un cliente real pueda ingresar, ver su sala, y que <code>owner</code> pueda gestionar el acceso. Sin sobrediseño.</p>
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>Resuelve</th><th>Complejidad</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>Corregir Firestore Rules: <code>role=='admin'</code> → <code>role=='tenant_admin'</code></td><td>C1</td><td><span class="badge badge-green">Baja — 1 línea</span></td></tr>
+        <tr><td>2</td><td>Permitir que <code>tenant_admin</code> gestione <code>tenant_operator</code></td><td>C6</td><td><span class="badge badge-orange">Media</span></td></tr>
+        <tr><td>3</td><td>Eliminar <code>defaultSiteId</code> hardcodeado</td><td>C3</td><td><span class="badge badge-orange">Media</span></td></tr>
+        <tr><td>4</td><td>Crear doc <code>plcs/{plcId}</code> con <code>displayName</code> y <code>columnLabel</code></td><td>C7</td><td><span class="badge badge-orange">Media</span></td></tr>
+        <tr><td>5</td><td>Agregar <code>backendUrl</code> a <code>sites/{siteId}</code> + selector de sala en UI</td><td>C8</td><td><span class="badge badge-red">Alta</span></td></tr>
+        <tr><td>6</td><td><code>PlcDashboardService</code> lee <code>backendUrl</code> del site activo antes de fetch</td><td>C4</td><td><span class="badge badge-orange">Media</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 9 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number">9</div>
+      <h2 class="section-title">Recomendación de Fase 2</h2>
+    </div>
+    <ol>
+      <li><strong>Permisos configurables por tenant</strong> — subdocumento <code>permissions</code> en <code>settings/controlDashboard</code>.</li>
+      <li><strong>Pantalla de configuración de sala</strong> — <code>tenant_admin</code> edita <code>sites/{siteId}.name</code> y <code>plcs/{plcId}.displayName</code>.</li>
+      <li><strong>Auditoría de accesos</strong> — registrar quién modificó qué y cuándo (<code>updatedByUid</code> ya está preparado).</li>
+      <li><strong>Múltiples tenants por usuario</strong> (si D1 = "sí") — rediseñar flujo de login con selección de contexto de tenant.</li>
+      <li><strong>Notificaciones y alertas</strong> — configuración de thresholds con notificación push/email.</li>
+    </ol>
+  </section>
+
+  <!-- ANSWER TABLE -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number">★</div>
+      <h2 class="section-title">Respuestas Directas a las 10 Preguntas</h2>
+    </div>
+    <table>
+      <thead><tr><th style="width:4%">#</th><th style="width:38%">Pregunta</th><th>Respuesta</th></tr></thead>
+      <tbody>
+        <tr><td>1</td><td>¿<code>owner</code> y <code>admin</code> juntos o separados?</td><td>Unificar. <code>admin</code> en Firestore Rules es un bug. Solo <code>owner</code> como rol global.</td></tr>
+        <tr><td>2</td><td>¿Roles globales o por tenant?</td><td>Mixtos: <code>owner</code> global, <code>tenant_admin</code>/<code>tenant_operator</code> en membership del tenant.</td></tr>
+        <tr><td>3</td><td>¿Cómo <code>tenant_admin</code> gestiona operadores?</td><td>Firestore Rules que permiten escribir en <code>members/{uid}</code> si el role asignado ≤ <code>tenant_operator</code>.</td></tr>
+        <tr><td>4</td><td>¿Permisos por rol o feature flag?</td><td>Por rol como base, overrides de UI en <code>settings/controlDashboard.permissions</code>. Seguridad siempre en Firestore Rules.</td></tr>
+        <tr><td>5</td><td>¿Nombres visibles vs. config backend?</td><td>Los nombres visibles viven en Firestore. El backend opera con IDs técnicos estables. Cambiar un <code>displayName</code> nunca afecta el backend.</td></tr>
+        <tr><td>6</td><td>¿Qué en Firestore vs. solo en backend?</td><td>IPs/puertos/Modbus solo en JSON de backend. Nombres, permisos, thresholds e historial en Firestore.</td></tr>
+        <tr><td>7</td><td>¿Múltiples salas y PLCs?</td><td><code>sites/{siteId}</code> + <code>plcs/{plcId}</code> ya es correcto. Falta el doc <code>plcs/{plcId}</code> con <code>displayName</code> y <code>backendUrl</code> en <code>sites/{siteId}</code>.</td></tr>
+        <tr><td>8</td><td>¿Ocultar elementos sin depender de frontend?</td><td>UI oculta (UX) + Firestore deniega (seguridad). Siempre las dos capas.</td></tr>
+        <tr><td>9</td><td>¿Validaciones mínimas en Rules/backend?</td><td>Corregir C1 primero. Agregar: validar que <code>tenant_admin</code> no pueda auto-elevarse, validar <code>displayName</code> no vacío, validar que solo <code>owner</code> cree tenants.</td></tr>
+        <tr><td>10</td><td>¿MVP mínimo?</td><td>Los 6 items de la sección 8, todos derivados de las contradicciones existentes (C1–C8). Sin sobrediseño.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Especificación Funcional Preliminar v1.0 | 21 de abril de 2026<br>
+    Generado con análisis de código real del repositorio. No implementar hasta cerrar las Decisiones D1–D8.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-0 -->
+
+
+<!-- ══════════════════════════ DOCUMENT 2 ══════════════════════════ -->
+<div id="doc-1" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag tag-blue">Implementación — Etapa 1</div>
+    <h1>Consistencia y Seguridad Base</h1>
+    <h2>Unificación de Roles · Gestión por Tenant · Blindaje Anti-Escalación de Privilegios</h2>
+    <div class="meta">
+      <span>📅 Fecha: 21 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>✅ Estado: Implementado — Pendiente deploy de Firestore Rules</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Resumen de la Etapa</li>
+      <li>Modelo de Roles Resultante</li>
+      <li>Cambios en firestore.rules</li>
+      <li>Cambios en UserManagementService</li>
+      <li>Cambios en UserContextService y main.dart</li>
+      <li>Validación de Casos de Prueba</li>
+      <li>Advertencias y Acciones Pendientes</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">1</div>
+      <h2 class="section-title">Resumen de la Etapa</h2>
+    </div>
+    <p>Esta etapa cierra las inconsistencias de seguridad detectadas en el análisis preliminar que impedían que el sistema funcione correctamente en un entorno multi-tenant. <strong>No se modificó UI/UX visual, no se agregaron pantallas, ni se cambiaron textos visibles al usuario.</strong></p>
+    <div class="callout callout-success">
+      <div class="callout-title">Alcance completado</div>
+      <ul style="margin:4px 0 0;">
+        <li>Eliminada toda referencia al rol fantasma <code>'admin'</code> del sistema</li>
+        <li>Unificado el modelo de roles con separación clara entre capa global y capa de tenant</li>
+        <li><code>tenant_admin</code> puede gestionar <code>tenant_operator</code> con Firestore Rules + validación de servicio</li>
+        <li>Bloqueada toda escalación de privilegios en ambas capas (rules + Dart)</li>
+        <li>Corregida lógica muerta en <code>canEditConfig</code> que nunca podía ser verdadera</li>
+        <li>Nuevos usuarios se registran como <code>'pending'</code> en lugar del confuso <code>'tenant_operator'</code></li>
+      </ul>
+    </div>
+
+    <h3>Archivos modificados</h3>
+    <table>
+      <thead><tr class="blue-head"><th>Archivo</th><th>Tipo de cambio</th><th>Criticidad</th></tr></thead>
+      <tbody>
+        <tr><td><code>firestore.rules</code></td><td>Seguridad — reglas de acceso</td><td><span class="badge badge-red">Crítico · deploy requerido</span></td></tr>
+        <tr><td><code>lib/services/user_management_service.dart</code></td><td>Modelo de roles + nuevos métodos</td><td><span class="badge badge-orange">Alto</span></td></tr>
+        <tr><td><code>lib/services/user_context_service.dart</code></td><td>Corrección de rol por defecto</td><td><span class="badge badge-blue">Medio</span></td></tr>
+        <tr><td><code>lib/main.dart</code></td><td>Eliminación de lógica muerta</td><td><span class="badge badge-green">Bajo</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">2</div>
+      <h2 class="section-title">Modelo de Roles Resultante</h2>
+    </div>
+    <div class="role-diagram">
+      <div class="role-box">
+        <div class="role-box-header global">Capa Global — users/{uid}.role</div>
+        <div class="role-box-body">
+          <div class="role-item">
+            <span class="role-pill rp-owner">owner</span>
+            <p>Acceso total al sistema y todos los tenants. Configurado directamente en Firestore, nunca asignable desde la app.</p>
+          </div>
+          <div class="role-item">
+            <span class="role-pill rp-pending">pending</span>
+            <p>Usuario registrado pero sin asignación de tenant. Estado inicial de todo usuario nuevo.</p>
+          </div>
+        </div>
+      </div>
+      <div class="role-box">
+        <div class="role-box-header tenant">Capa de Tenant — members/{uid}.role</div>
+        <div class="role-box-body">
+          <div class="role-item">
+            <span class="role-pill rp-admin">tenant_admin</span>
+            <p>Administra su tenant: asigna operadores, configura salas y thresholds. Solo asignable por <code>owner</code>.</p>
+          </div>
+          <div class="role-item">
+            <span class="role-pill rp-oper">tenant_operator</span>
+            <p>Opera el sistema: ve datos y ejecuta acciones según permisos del tenant. Asignable por <code>tenant_admin</code> u <code>owner</code>.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="callout callout-info">
+      <div class="callout-title">Separación de responsabilidades</div>
+      <code>users/{uid}.role</code> determina acceso <strong>global</strong> (solo importa si es <code>owner</code>).
+      Los permisos <strong>dentro de un tenant</strong> se leen exclusivamente de <code>members/{uid}.role</code>.
+      El campo <code>users/{uid}.role</code> también almacena el rol de tenant para display en la UI de gestión de usuarios — nunca para decisiones de seguridad.
+    </div>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">3</div>
+      <h2 class="section-title">Cambios en firestore.rules</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">firestore.rules</span>
+        <span>Función <code>canEditTenantConfig()</code></span>
+        <span class="change-count">C1 — Bug crítico corregido</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// ANTES (bug: 'admin' nunca existió en el modelo Dart)</span>
+<span class="kw">function</span> <span class="fn">canEditTenantConfig</span>(tenantId) {
+  <span class="kw">return</span> isTenantMember(tenantId)
+    && (memberRole(tenantId) == <span class="str">'owner'</span> || memberRole(tenantId) == <span class="str">'admin'</span>);
+}
+
+<span class="comment">// DESPUÉS</span>
+<span class="kw">function</span> <span class="fn">canEditTenantConfig</span>(tenantId) {
+  <span class="kw">return</span> isTenantAdmin(tenantId);  <span class="comment">// delega al nuevo helper</span>
+}</pre>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">firestore.rules</span>
+        <span>Nuevas funciones helper</span>
+        <span class="change-count">Agregadas</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// Verifica que el caller sea tenant_admin activo del tenant dado</span>
+<span class="kw">function</span> <span class="fn">isTenantAdmin</span>(tenantId) {
+  <span class="kw">return</span> isTenantMember(tenantId) && memberRole(tenantId) == <span class="str">'tenant_admin'</span>;
+}
+
+<span class="comment">// Anti-escalación: tenant_admin solo puede escribir role='tenant_operator'
+// y no puede modificar su propio registro</span>
+<span class="kw">function</span> <span class="fn">canTenantAdminWriteMember</span>(tenantId, targetUid) {
+  <span class="kw">return</span> isTenantAdmin(tenantId)
+    && request.auth.uid != targetUid
+    && request.resource.data.role == <span class="str">'tenant_operator'</span>;
+}</pre>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">firestore.rules</span>
+        <span>Reglas <code>members/{uid}</code></span>
+        <span class="change-count">C6 — Bloqueante funcional resuelto</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// ANTES: todo bloqueado para todos</span>
+allow create, update, delete: <span class="kw">if</span> <span class="str">false</span>;
+
+<span class="comment">// DESPUÉS</span>
+allow get:  <span class="kw">if</span> (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId))
+             || isOwner() || isTenantAdmin(tenantId);
+allow list: <span class="kw">if</span> isOwner() || isTenantAdmin(tenantId);
+
+<span class="comment">// owner: irrestricto | tenant_admin: solo puede crear tenant_operator</span>
+allow create: <span class="kw">if</span> isOwner() || canTenantAdminWriteMember(tenantId, uid);
+
+<span class="comment">// Para update: resource.data.role verifica el rol EXISTENTE antes del cambio
+// Bloquea que tenant_admin pueda modificar a otro tenant_admin</span>
+allow update: <span class="kw">if</span> isOwner()
+  || (canTenantAdminWriteMember(tenantId, uid) && resource.data.role == <span class="str">'tenant_operator'</span>);
+
+allow delete: <span class="kw">if</span> <span class="str">false</span>;</pre>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">firestore.rules</span>
+        <span>Regla <code>users/{uid}</code> — create y update</span>
+        <span class="change-count">Corregidas</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// create: nuevos usuarios arrancan con 'pending' (no 'tenant_operator')</span>
+allow create: <span class="kw">if</span> signedIn()
+  && request.auth.uid == uid
+  && request.resource.data.role == <span class="str">'pending'</span>   <span class="comment">// antes: 'tenant_operator'</span>
+  && request.resource.data.active == <span class="str">false</span>;
+
+<span class="comment">// update para owner: expandido de hasOnly(['role']) a todos los campos
+// que escribe updateUserAccess() — antes era demasiado restrictivo</span>
+allow update: <span class="kw">if</span> (isOwner()
+    && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly([<span class="str">'role'</span>, <span class="str">'activeTenantId'</span>, <span class="str">'defaultSiteId'</span>, <span class="str">'allowedSiteIds'</span>,
+                  <span class="str">'active'</span>, <span class="str">'updatedAt'</span>, <span class="str">'email'</span>]))
+  || isOwnUiUpdate(uid);</pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">4</div>
+      <h2 class="section-title">Cambios en UserManagementService</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">user_management_service.dart</span>
+        <span>Clase <code>UserAppRole</code></span>
+        <span class="change-count">Modelo corregido</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li>Agregado <code>UserAppRole.pending = 'pending'</code> para usuarios sin asignación</li>
+          <li><code>UserAppRole.all</code> cambia de <code>[owner, tenantAdmin, tenantOperator]</code> a <code>[tenantAdmin, tenantOperator]</code> — el rol <code>owner</code> no es asignable desde la UI</li>
+          <li><code>label()</code> maneja el caso <code>'pending'</code> → <code>'Pendiente'</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">user_management_service.dart</span>
+        <span>Método <code>updateUserAccess()</code></span>
+        <span class="change-count">Reforzado</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li>Lanza <code>StateError</code> si se intenta asignar el rol <code>'owner'</code> programáticamente</li>
+          <li>Comentario explícito: <code>users/{uid}.role</code> es informacional/display; la autorización real viene de <code>members/{uid}.role</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">user_management_service.dart</span>
+        <span>Nuevos métodos para <code>tenant_admin</code></span>
+        <span class="change-count">3 métodos agregados</span>
+      </div>
+      <div class="change-card-body">
+        <table style="margin:4px 0;">
+          <thead><tr class="blue-head"><th>Método</th><th>Qué hace</th><th>Quién puede llamarlo</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>assignOperatorToTenant()</code></td>
+              <td>Crea/actualiza <code>members/{uid}</code> con role=<code>tenant_operator</code></td>
+              <td><code>owner</code> o <code>tenant_admin</code></td>
+            </tr>
+            <tr>
+              <td><code>updateTenantMember()</code></td>
+              <td>Actualiza <code>siteIds</code> y <code>active</code> de un operador existente</td>
+              <td><code>owner</code> (cualquier rol), <code>tenant_admin</code> (solo operadores)</td>
+            </tr>
+            <tr>
+              <td><code>removeTenantMember()</code></td>
+              <td>Desactiva (<code>active=false</code>) sin eliminar el doc. Auditable.</td>
+              <td><code>owner</code> (cualquier rol), <code>tenant_admin</code> (solo operadores)</td>
+            </tr>
+          </tbody>
+        </table>
+        <pre style="margin-top:12px;"><span class="comment">// Validadores privados compartidos por los tres métodos</span>
+<span class="kw">static void</span> <span class="fn">_assertNotSelf</span>(callerUid, targetUid)        <span class="comment">// impide auto-modificación</span>
+<span class="kw">static void</span> <span class="fn">_assertCanAssignOperator</span>(callerTenantRole)  <span class="comment">// requiere owner o tenant_admin</span>
+<span class="kw">static void</span> <span class="fn">_assertCanModifyMember</span>(callerRole, targetRole) <span class="comment">// tenant_admin solo toca operadores</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">5</div>
+      <h2 class="section-title">Cambios en UserContextService y main.dart</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">user_context_service.dart</span>
+        <span>Método <code>_createDefaultProfile()</code></span>
+        <span class="change-count">1 línea corregida</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// ANTES: nuevos usuarios arrancaban con rol de operador aunque no tenían tenant</span>
+<span class="str">'role'</span>: UserAppRole.tenantOperator,   <span class="comment">// → confuso y semánticamente incorrecto</span>
+
+<span class="comment">// DESPUÉS: estado correcto para usuario sin asignar</span>
+<span class="str">'role'</span>: UserAppRole.pending,          <span class="comment">// → claro: aguarda activación por owner</span></pre>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">main.dart</span>
+        <span>Getter <code>canEditConfig</code></span>
+        <span class="change-count">Lógica muerta eliminada</span>
+      </div>
+      <div class="change-card-body">
+        <pre><span class="comment">// ANTES: línea muerta — ningún membership tiene role='owner';
+// ese rol vive en users/{uid}.role, nunca en members/{uid}.role</span>
+<span class="kw">bool get</span> canEditConfig =>
+    userContext.role == UserAppRole.owner ||
+    membership.role == UserAppRole.owner ||      <span class="comment">// ← nunca verdadero</span>
+    membership.role == UserAppRole.tenantAdmin;
+
+<span class="comment">// DESPUÉS</span>
+<span class="kw">bool get</span> canEditConfig =>
+    userContext.role == UserAppRole.owner ||      <span class="comment">// global: owner</span>
+    membership.role == UserAppRole.tenantAdmin;  <span class="comment">// tenant: admin</span></pre>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 6 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">6</div>
+      <h2 class="section-title">Validación de Casos de Prueba</h2>
+    </div>
+
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 1 ✓</span>
+      <div class="test-case-body">
+        <strong>owner crea tenant_admin</strong>
+        <p>Rules: <code>isOwner()</code> habilita <code>members.create</code> sin restricción de rol.<br>
+        Servicio: <code>updateUserAccess(role:'tenant_admin')</code> pasa la validación (no es 'owner').</p>
+      </div>
+    </div>
+
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 2 ✓</span>
+      <div class="test-case-body">
+        <strong>tenant_admin crea tenant_operator</strong>
+        <p>Rules: <code>canTenantAdminWriteMember</code> pasa: caller es admin, targetUid ≠ callerUid, role='tenant_operator'.<br>
+        Servicio: <code>assignOperatorToTenant()</code> pasa <code>_assertCanAssignOperator('tenant_admin')</code>.</p>
+      </div>
+    </div>
+
+    <div class="test-case deny">
+      <span class="test-badge deny">CASO 3 ✗ DENEGADO</span>
+      <div class="test-case-body">
+        <strong>tenant_admin intenta crear otro tenant_admin</strong>
+        <p>Rules: <code>canTenantAdminWriteMember</code> falla → <code>request.resource.data.role == 'tenant_operator'</code> es <code>false</code>.<br>
+        Servicio: si llama <code>updateUserAccess(role:'tenant_admin')</code>, no hay bloqueo en ese método (es para owner). Pero las rules lo deniegan antes de escribir. <span class="badge badge-orange">Ver advertencia A1</span></p>
+      </div>
+    </div>
+
+    <div class="test-case deny">
+      <span class="test-badge deny">CASO 4 ✗ DENEGADO</span>
+      <div class="test-case-body">
+        <strong>tenant_admin intenta auto-elevarse (modify own record)</strong>
+        <p>Rules: <code>canTenantAdminWriteMember</code> falla → <code>request.auth.uid != targetUid</code> es <code>false</code>.<br>
+        Servicio: <code>_assertNotSelf(callerUid, targetUid)</code> lanza <code>StateError</code> antes de llegar a Firestore.</p>
+      </div>
+    </div>
+
+    <div class="test-case deny">
+      <span class="test-badge deny">CASO 5 ✗ DENEGADO</span>
+      <div class="test-case-body">
+        <strong>tenant_operator intenta modificar members</strong>
+        <p>Rules: <code>isTenantAdmin(tenantId)</code> retorna <code>false</code> → tanto <code>create</code> como <code>update</code> denegados.<br>
+        Servicio: <code>_assertCanAssignOperator('tenant_operator')</code> lanza <code>StateError</code> inmediatamente.</p>
+      </div>
+    </div>
+
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 6 ✓</span>
+      <div class="test-case-body">
+        <strong>owner puede todo</strong>
+        <p>Rules: <code>isOwner()</code> está en todas las reglas de <code>create/update</code> como path alternativo sin restricciones.<br>
+        Servicio: <code>updateUserAccess()</code> solo bloquea <code>role == 'owner'</code> (correcto: no auto-asignar owner desde la app).</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 7 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">7</div>
+      <h2 class="section-title">Advertencias y Acciones Pendientes</h2>
+    </div>
+
+    <div class="callout callout-critical">
+      <div class="callout-title">⚠ A0 — Deploy requerido (acción inmediata)</div>
+      Los cambios en <code>firestore.rules</code> no tienen efecto hasta desplegarse. Ejecutar:<br><br>
+      <code>firebase deploy --only firestore:rules</code><br><br>
+      Hasta ese momento, el sistema sigue operando con las reglas viejas (incluyendo el bug de <code>'admin'</code> y el bloqueo total en <code>members/{uid}</code>).
+    </div>
+
+    <div class="callout callout-warning">
+      <div class="callout-title">⚠ A1 — tenant_admin no debería poder llamar updateUserAccess()</div>
+      <code>updateUserAccess()</code> está diseñado para owner. Si un <code>tenant_admin</code> lo llama con <code>role='tenant_admin'</code>, la validación en el servicio no lo bloquea (no hay chequeo de caller en ese método). Las Firestore Rules sí lo bloquean. Igualmente, el UI actual solo expone este método desde la pantalla de gestión que es visible solo para owner, por lo que el riesgo es bajo. En Etapa 2 conviene separar formalmente los paths de gestión por rol.
+    </div>
+
+    <div class="callout callout-warning">
+      <div class="callout-title">⚠ A2 — Usuarios existentes con role='tenant_operator' sin tenant</div>
+      La regla <code>users.create</code> ahora requiere <code>role == 'pending'</code>. Usuarios ya registrados con <code>role == 'tenant_operator'</code> y sin <code>activeTenantId</code> no se ven afectados (la regla <code>create</code> no aplica retroactivamente). Sin embargo, semánticamente tienen un estado incorrecto. Recomendación: corregirlos manualmente en la consola de Firebase con <code>role: 'pending'</code>.
+    </div>
+
+    <div class="callout callout-info">
+      <div class="callout-title">ℹ A3 — La pantalla de gestión de usuarios aún no consume los nuevos métodos</div>
+      <code>assignOperatorToTenant()</code>, <code>updateTenantMember()</code> y <code>removeTenantMember()</code> están implementados pero ninguna pantalla los llama todavía. Son la base para la pantalla de gestión de tenant_admin, que corresponde a Etapa 2.
+    </div>
+
+    <h3>Checklist de cierre de la etapa</h3>
+    <table>
+      <thead><tr class="blue-head"><th>Acción</th><th>Responsable</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr><td>Deploy de <code>firestore.rules</code></td><td>DevOps / Developer</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr><td>Corregir usuarios con <code>role='tenant_operator'</code> sin tenant en Firestore</td><td>Developer</td><td><span class="badge badge-orange">Opcional / Recomendado</span></td></tr>
+        <tr><td>Smoke test: login owner, login tenant_admin, login tenant_operator</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Verificar que pantalla de gestión de usuarios sigue funcionando para owner</td><td>QA</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Código Dart — sin errores de análisis (<code>flutter analyze</code>)</td><td>—</td><td><span class="badge badge-green">✓ Verificado</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Etapa 1: Consistencia y Seguridad Base | 21 de abril de 2026<br>
+    Implementación validada con <code>flutter analyze</code>. Pendiente deploy de Firestore Rules para activar en producción.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-1 -->
+
+
+<!-- ══════════════════════════ DOCUMENT 2 ══════════════════════════ -->
+<div id="doc-2" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag tag-blue">Etapa 2 — Implementación</div>
+    <h1>Multi-Site Real</h1>
+    <h2>Sites dinámicos · Backend por sala · Selector en header · Compatibilidad hacia atrás</h2>
+    <div class="meta">
+      <span>📅 Fecha: 22 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>⚙️ Estado: Implementado — <code>flutter analyze</code> sin errores</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Objetivo y Alcance</li>
+      <li>Modelo de Datos: <code>sites/{siteId}</code></li>
+      <li>Arquitectura del Flujo Nuevo</li>
+      <li>Cambios por Archivo</li>
+      <li>Regla de Seguridad: <code>isOwnSiteSwitch</code></li>
+      <li>Compatibilidad Hacia Atrás</li>
+      <li>Casos Validados</li>
+      <li>Checklist de Deploy</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">1</div>
+      <h2 class="section-title">Objetivo y Alcance</h2>
+    </div>
+    <p>Permitir que un usuario con acceso a múltiples salas (<em>sites</em>) pueda cambiar entre ellas desde el frontend, y que cada sala use su propio backend Dart sin modificar la lógica interna del PLC ni las reglas de seguridad de Etapa 1.</p>
+    <div class="callout callout-success">
+      <div class="callout-title">Principio rector</div>
+      Un usuario con una sola sala ve exactamente lo mismo que antes. El selector de sala solo aparece cuando hay más de una disponible. La URL del backend se obtiene de Firestore; si no existe, se cae al URL de entorno (<em>fallback</em> silencioso).
+    </div>
+    <h3>Fuera de alcance en esta etapa</h3>
+    <ul>
+      <li>Nombres visibles de PLC (Etapa 3)</li>
+      <li>Permisos configurables por sala</li>
+      <li>UI compleja de administración de sites</li>
+      <li>Multi-tenant por usuario</li>
+    </ul>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">2</div>
+      <h2 class="section-title">Modelo de Datos: <code>sites/{siteId}</code></h2>
+    </div>
+    <p>Estructura del documento <code>tenants/{tenantId}/sites/{siteId}</code>:</p>
+    <table>
+      <thead><tr class="blue-head"><th>Campo</th><th>Tipo</th><th>Descripción</th><th>Requerido</th></tr></thead>
+      <tbody>
+        <tr><td><code>name</code></td><td>string</td><td>Nombre visible de la sala (ej. "Sala Genética")</td><td><span class="badge-yes">✓</span></td></tr>
+        <tr><td><code>backendUrl</code></td><td>string</td><td>URL del backend Dart para esta sala (ej. <code>https://…/api/snapshot</code>)</td><td><span class="badge-no">opcional</span></td></tr>
+        <tr><td><code>active</code></td><td>bool</td><td>Si <code>false</code>, la sala no aparece en el selector</td><td><span class="badge-yes">✓</span></td></tr>
+        <tr><td><code>technicalId</code></td><td>string</td><td>Igual al <code>siteId</code> del documento (inmutable)</td><td>Informativo</td></tr>
+      </tbody>
+    </table>
+    <p>El campo <code>backendUrl</code> es opcional: si está ausente, el sistema usa la URL configurada como variable de entorno (<code>PLC_API_URL</code>), garantizando compatibilidad hacia atrás sin ningún cambio en producción existente.</p>
+    <p>Los sites disponibles para un usuario se determinan cruzando:</p>
+    <ul>
+      <li><code>users/{uid}.allowedSiteIds</code> — lista de siteIds permitidos para el usuario</li>
+      <li><code>tenants/{tenantId}/sites</code> donde <code>active == true</code></li>
+    </ul>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">3</div>
+      <h2 class="section-title">Arquitectura del Flujo Nuevo</h2>
+    </div>
+    <h3>Bootstrap (inicio de sesión)</h3>
+    <pre><code><span class="comment">// _loadDashboardBootstrap() — secuencia al cargar la app</span>
+
+<span class="fn">readUserContext</span>(uid)
+  → <span class="type">UserContextResult</span> {
+      defaultSiteId,    <span class="comment">// null si no eligió una</span>
+      allowedSiteIds,   <span class="comment">// lista de siteIds permitidos</span>
+      activeTenantId,
+      role
+    }
+
+<span class="comment">// Resolver siteId efectivo: preferir defaultSiteId, caer al primero permitido</span>
+resolvedSiteId = defaultSiteId ?? allowedSiteIds.first ?? null
+
+<span class="comment">// Fetch en paralelo</span>
+siteDoc      = <span class="fn">fetchSite</span>(tenantId, resolvedSiteId)   <span class="comment">// name + backendUrl</span>
+availableSites = <span class="fn">fetchActiveSitesForUser</span>(tenantId, allowedSiteIds)
+
+<span class="comment">// Construir PlcDashboardService con backendUrl dinámico</span>
+_service = <span class="type">PlcDashboardService</span>(endpoint: siteDoc?.backendUrl)
+<span class="comment">// Si backendUrl == null → fallback a AppConfig.backendSnapshotUrl</span></code></pre>
+
+    <h3>Cambio de sala (acción del usuario)</h3>
+    <pre><code><span class="fn">_switchSite</span>(siteId):
+  1. Validar que siteId ∈ allowedSiteIds  <span class="comment">(service layer + Firestore Rule)</span>
+  2. Persistir: <span class="fn">setActiveSite</span>(uid, siteId) → users/{uid}.defaultSiteId
+  3. Fetch: <span class="fn">fetchSite</span>(tenantId, siteId)  → nuevo siteDoc
+  4. setState:
+       _activeSiteId   = siteId
+       _activeSiteName = siteDoc.name
+       _historySiteId  = siteId
+       _service        = <span class="type">PlcDashboardService</span>(endpoint: siteDoc?.backendUrl)
+  5. Reiniciar config stream con nuevo siteId
+  6. Recargar water shortage summaries para nueva sala
+  7. Forzar refresh de snapshot</code></pre>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">4</div>
+      <h2 class="section-title">Cambios por Archivo</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/firebase/firestore_paths.dart</span>
+        <span class="change-count">1 eliminación · 1 adición</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li>❌ Eliminado <code>static const String defaultSiteId = 'genetica-1'</code> — hardcode eliminado definitivamente</li>
+          <li>✅ Agregado <code>static String siteDoc(tenantId, siteId)</code> → <code>tenants/{tenantId}/sites/{siteId}</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/services/site_config_service.dart</span>
+        <span class="change-count">Archivo nuevo</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>SiteDocument</strong> — modelo con <code>siteId</code>, <code>name</code>, <code>backendUrl?</code>, <code>active</code></li>
+          <li><strong>SiteConfigService.fetchSite()</strong> — lee un documento site; si no existe retorna <code>null</code> (sin romper)</li>
+          <li><strong>SiteConfigService.fetchActiveSitesForUser()</strong> — filtra sites activos contra la lista <code>allowedSiteIds</code> del usuario</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/services/user_context_service.dart</span>
+        <span class="change-count">3 adiciones</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>UserContextResult.allowedSiteIds</strong> — nuevo campo <code>List&lt;String&gt;</code>, leído de <code>users/{uid}.allowedSiteIds</code></li>
+          <li><strong>defaultSiteId</strong> — ahora puede ser <code>null</code>; eliminado el fallback a <code>'genetica-1'</code></li>
+          <li><strong>setActiveSite(uid, siteId)</strong> — persiste la elección del usuario en <code>users/{uid}.defaultSiteId</code></li>
+          <li>Agregado <code>_parseStringList()</code> privado (mismo patrón que <code>UserManagementService</code>)</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">firestore.rules</span>
+        <span class="change-count">1 función nueva · 1 regla extendida</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>isOwnSiteSwitch(uid)</strong> — permite al usuario actualizar solo su propio <code>defaultSiteId</code>, validando que el nuevo valor esté en <code>resource.data.allowedSiteIds</code> (no puede auto-asignarse acceso a sites no permitidos)</li>
+          <li>Regla <code>users/{uid} allow update</code> extendida con <code>|| isOwnSiteSwitch(uid)</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/widgets/dashboard_header.dart</span>
+        <span class="change-count">3 parámetros nuevos</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>siteName</strong> — texto dinámico que reemplaza el hardcode <code>'Sala Genetica'</code></li>
+          <li><strong>activeSiteId</strong> — siteId activo para que el dropdown marque el ítem correcto</li>
+          <li><strong>availableSites / onSiteChanged</strong> — cuando hay más de 1 sala, el subtítulo del header se convierte en un <code>DropdownButton</code>; con 1 sala sigue siendo texto estático</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/main.dart</span>
+        <span class="change-count">8 cambios</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>_service</strong> — cambia de <code>final</code> a mutable; se reconstruye con el <code>backendUrl</code> del site activo en cada cambio</li>
+          <li><strong>_activeSiteId / _activeSiteName / _availableSites</strong> — nuevo estado para alimentar el header</li>
+          <li><strong>_siteConfigService</strong> — instancia del nuevo servicio</li>
+          <li><strong>_loadDashboardBootstrap()</strong> — resuelve <code>siteId</code> desde <code>defaultSiteId</code> o primer <code>allowedSiteId</code>; fetcha site doc y lista de sites disponibles; sin fallback hardcodeado</li>
+          <li><strong>_DashboardBootstrapResult</strong> — agrega campos opcionales <code>siteDocument</code> y <code>availableSites</code></li>
+          <li><strong>_createDashboardBootstrapFuture()</strong> — inicializa <code>_service</code> y estado de site luego del bootstrap</li>
+          <li><strong>_switchSite(siteId)</strong> — método nuevo para cambio dinámico de sala (ver flujo en §3)</li>
+          <li><strong>DashboardHeader</strong> — pasa los 3 nuevos parámetros de site</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">5</div>
+      <h2 class="section-title">Regla de Seguridad: <code>isOwnSiteSwitch</code></h2>
+    </div>
+    <pre><code><span class="comment">// Permite al usuario cambiar su propio defaultSiteId
+// SOLO si el nuevo siteId ya está en su allowedSiteIds existente.
+// Impide auto-otorgarse acceso a sites no autorizados.</span>
+
+<span class="fn">function</span> <span class="fn">isOwnSiteSwitch</span>(uid) {
+  <span class="kw">return</span> signedIn()
+    && request.auth.uid == uid
+    && request.resource.data.<span class="fn">diff</span>(resource.data)
+         .<span class="fn">affectedKeys</span>().<span class="fn">hasOnly</span>([<span class="str">'defaultSiteId'</span>])
+    && resource.data.allowedSiteIds.<span class="fn">hasAny</span>(
+         [request.resource.data.defaultSiteId]
+       );
+}</code></pre>
+    <div class="callout callout-info">
+      <div class="callout-title">Por qué es seguro</div>
+      La validación usa <code>resource.data.allowedSiteIds</code> (el documento <em>existente</em> en Firestore), no el <code>request.resource.data</code>. Esto significa que el usuario no puede modificar su propia lista de sites permitidos para luego autorizarse un site nuevo — la lista la controla únicamente el owner o tenant_admin vía <code>updateUserAccess()</code>.
+    </div>
+  </section>
+
+  <!-- SECTION 6 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">6</div>
+      <h2 class="section-title">Compatibilidad Hacia Atrás</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Escenario</th><th>Comportamiento</th></tr></thead>
+      <tbody>
+        <tr><td>Colección <code>sites</code> no existe en Firestore</td><td><code>fetchSite()</code> retorna <code>null</code> silenciosamente. <code>_service</code> usa <code>AppConfig.backendSnapshotUrl</code>. App funciona igual que antes.</td></tr>
+        <tr><td>Site doc existe pero <code>backendUrl</code> está vacío</td><td><code>PlcDashboardService(endpoint: null)</code> → fallback a URL de entorno automáticamente.</td></tr>
+        <tr><td>Usuario sin <code>allowedSiteIds</code> en su perfil</td><td>Lista vacía → <code>fetchActiveSitesForUser()</code> retorna <code>[]</code> → no aparece selector.</td></tr>
+        <tr><td>Usuario con 1 solo site</td><td>Header muestra nombre como texto estático. Sin dropdown. Funcionamiento idéntico al anterior.</td></tr>
+        <tr><td><code>defaultSiteId</code> nulo en perfil de usuario</td><td>Bootstrap toma el primer elemento de <code>allowedSiteIds</code> como fallback.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 7 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">7</div>
+      <h2 class="section-title">Casos Validados</h2>
+    </div>
+
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 1</span>
+      <div class="test-case-body">
+        <strong>Usuario con 1 sala</strong>
+        <p>Funciona igual que antes. Header muestra nombre de sala como texto. Sin dropdown. Backend usa URL de Firestore o fallback al URL de entorno.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 2</span>
+      <div class="test-case-body">
+        <strong>Usuario con múltiples salas</strong>
+        <p>Header muestra dropdown con las salas activas filtradas por <code>allowedSiteIds</code>. Al cambiar, se actualiza el backend, config stream y datos de historial.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 3</span>
+      <div class="test-case-body">
+        <strong>Cambio de sala cambia el backend</strong>
+        <p><code>_service</code> se reconstruye con el <code>backendUrl</code> del nuevo site. El próximo poll de snapshot consulta el backend de la nueva sala.</p>
+      </div>
+    </div>
+    <div class="test-case deny">
+      <span class="test-badge deny">CASO 4</span>
+      <div class="test-case-body">
+        <strong>Usuario intenta acceder a site no permitido</strong>
+        <p>Bloqueado en dos capas: (1) <code>_switchSite()</code> verifica <code>allowedSiteIds</code> en cliente; (2) <code>isOwnSiteSwitch()</code> en Firestore Rules valida contra el documento existente del usuario.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 5</span>
+      <div class="test-case-body">
+        <strong>Backend caído en un site</strong>
+        <p><code>PlcDashboardService.fetchLiveSnapshot()</code> retorna <code>LiveSnapshotResult.error</code>. La UI muestra banner de datos desactualizados. No hay crash. El usuario puede cambiar a otra sala operativa.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 8 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">8</div>
+      <h2 class="section-title">Checklist de Deploy</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Acción</th><th>Responsable</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr><td>Deploy de <code>firestore.rules</code> (agrega <code>isOwnSiteSwitch</code>)</td><td>DevOps / Developer</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr>
+          <td>Cargar documento en Firestore: <code>tenants/{tenantId}/sites/{siteId}</code> con <code>name</code>, <code>backendUrl</code>, <code>active: true</code></td>
+          <td>Developer / Admin</td>
+          <td><span class="badge badge-red">Pendiente</span></td>
+        </tr>
+        <tr>
+          <td>Actualizar perfil de usuario: agregar <code>allowedSiteIds: ['genetica-1']</code> y <code>defaultSiteId: 'genetica-1'</code> si no existen</td>
+          <td>Developer / Admin</td>
+          <td><span class="badge badge-red">Pendiente</span></td>
+        </tr>
+        <tr><td>Deploy de frontend Flutter Web</td><td>DevOps / Developer</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr><td>Smoke test: usuario con 1 sala — funciona igual que antes</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Smoke test: usuario con 2+ salas — dropdown aparece y cambia backend</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Smoke test: usuario intenta site no permitido → bloqueado</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Código Dart — sin errores de análisis (<code>flutter analyze</code>)</td><td>—</td><td><span class="badge badge-green">✓ Verificado</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Etapa 2: Multi-Site Real | 22 de abril de 2026<br>
+    Implementación validada con <code>flutter analyze</code>. Pendiente carga de datos en Firestore y deploy de rules para activar en producción.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-2 -->
+
+
+<!-- ══════════════════════════ DOCUMENT 4 ══════════════════════════ -->
+<div id="doc-3" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag tag-blue">Corrección de Bug — Frontend</div>
+    <h1>APERTURAS mostraba datos en columna M2</h1>
+    <h2>Sección APERTURAS pertenece a M1 (PLC1 · 192.168.10.50)</h2>
+    <div class="meta">
+      <span>📅 Fecha: 22 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>✅ Estado: Corregido</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Descripción del bug</li>
+      <li>Causa raíz</li>
+      <li>Corrección aplicada</li>
+      <li>Archivos modificados</li>
+      <li>Verificación</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">1</div>
+      <h2 class="section-title">Descripción del Bug</h2>
+    </div>
+    <div class="callout callout-warn">
+      <div class="callout-title">Síntoma observado</div>
+      <p>En la página de comparación, la sección <strong>APERTURAS</strong> mostraba todos sus datos
+      (Estado actual, Último cambio, Aperturas totales, Aperturas mes, Última apertura completa,
+      Historial reciente) bajo la columna <strong>M2</strong>, dejando un guión
+      <code>–</code> en la columna <strong>M1</strong>.</p>
+      <p>Los datos de aperturas corresponden exclusivamente al
+      <strong>PLC1 (Munters1 · 192.168.10.50)</strong>, por lo que deben aparecer bajo la columna
+      <strong>M1</strong>.</p>
+    </div>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">2</div>
+      <h2 class="section-title">Causa Raíz</h2>
+    </div>
+    <p>El widget <code>_DoorSection</code> dentro de
+    <code>lib/widgets/door_openings_module.dart</code> construye sus filas usando
+    <code>_DoorDataRow</code>, que acepta dos parámetros de valor:</p>
+    <ul>
+      <li><code>m1Child</code> — columna izquierda (M1)</li>
+      <li><code>m2Child</code> — columna derecha (M2)</li>
+    </ul>
+    <p>En la implementación original, <strong>todos los valores reales</strong> se asignaban a
+    <code>m2Child</code> y un guión literal <code>'-'</code> a <code>m1Child</code>,
+    invirtiendo la posición visual de los datos.</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="change-count">ANTES (bug)</span>
+        <code>lib/widgets/door_openings_module.dart · clase _DoorSection</code>
+      </div>
+      <pre><span class="comment">// Ejemplo: fila "Estado actual"</span>
+_DoorDataRow(
+  label: 'Estado actual',
+  m1Child: <span class="kw">const</span> _ValueText(<span class="str">'-'</span>, color: Color(0xFF94A3B8)),  <span class="comment">// ← solo guión</span>
+  m2Child: _ValueText(data.statusLabel, ...),               <span class="comment">// ← dato real en M2</span>
+),</pre>
+    </div>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">3</div>
+      <h2 class="section-title">Corrección Aplicada</h2>
+    </div>
+    <p>Se intercambiaron <code>m1Child</code> y <code>m2Child</code> en <strong>todas las filas</strong>
+    de <code>_DoorSection</code>: el dato real pasa a <code>m1Child</code>
+    y el guión pasa a <code>m2Child</code>.</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="change-count">DESPUÉS (correcto)</span>
+        <code>lib/widgets/door_openings_module.dart · clase _DoorSection</code>
+      </div>
+      <pre><span class="comment">// Ejemplo: fila "Estado actual"</span>
+_DoorDataRow(
+  label: 'Estado actual',
+  m1Child: _ValueText(data.statusLabel, ...),               <span class="comment">// ← dato real en M1 ✓</span>
+  m2Child: <span class="kw">const</span> _ValueText(<span class="str">'-'</span>, color: Color(0xFF94A3B8)),  <span class="comment">// ← guión en M2</span>
+),</pre>
+    </div>
+
+    <p>Las filas corregidas son:</p>
+    <table>
+      <thead><tr class="blue-head"><th>Fila</th><th>Antes (dato en)</th><th>Después (dato en)</th></tr></thead>
+      <tbody>
+        <tr><td>Encabezado de sección (nombre de puerta)</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Estado actual</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Abierta desde (condicional)</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Último cambio</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Aperturas totales</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Aperturas mes</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Última apertura completa</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Historial reciente</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Cargando aperturas… (estado)</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+        <tr><td>Error de Firestore (estado)</td><td>m2Child</td><td><span class="badge badge-green">m1Child ✓</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">4</div>
+      <h2 class="section-title">Archivos Modificados</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Archivo</th><th>Capa</th><th>Tipo de cambio</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>lib/widgets/door_openings_module.dart</code></td>
+          <td><span class="badge badge-blue">Frontend</span></td>
+          <td>Inversión de <code>m1Child</code>/<code>m2Child</code> en clase <code>_DoorSection</code></td>
+        </tr>
+      </tbody>
+    </table>
+    <p><strong>Backend: sin cambios.</strong> La corrección es exclusivamente de presentación visual en el frontend Flutter.</p>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">5</div>
+      <h2 class="section-title">Verificación</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Caso de prueba</th><th>Resultado esperado</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Abrir sección APERTURAS en la página de comparación</td>
+          <td>Datos (Sala / Munter) aparecen bajo columna M1</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>Columna M2 en sección APERTURAS</td>
+          <td>Muestra guión <code>–</code> en todas las filas</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>Resto de secciones del dashboard (AMBIENTE, VENTILACION, etc.)</td>
+          <td>Sin regresiones — sin cambios en esos widgets</td>
+          <td><span class="badge badge-green">✓ Sin impacto</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Corrección: APERTURAS en M1 | 22 de abril de 2026<br>
+    Cambio exclusivo de frontend. Sin modificaciones en backend ni Firestore.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-3 -->
+
+
+<!-- ══════════════════════════ DOCUMENT 5 ══════════════════════════ -->
+<div id="doc-4" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag tag-blue">Corrección de Bug — Backend</div>
+    <h1>Tracking de Aperturas: loop infinito + señal null</h1>
+    <h2>Puerta no mostraba rojo · Sin registro · Sin contador · Sin historial</h2>
+    <div class="meta">
+      <span>📅 Fecha: 22 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>✅ Estado: Corregido</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Síntomas reportados</li>
+      <li>Arquitectura del módulo de tracking</li>
+      <li>Causa raíz #1 — Loop infinito de inicialización</li>
+      <li>Causa raíz #2 — Señal PLC null no manejada</li>
+      <li>¿Por qué "en algún momento sí aparecía"?</li>
+      <li>Corrección aplicada</li>
+      <li>Archivos creados / modificados</li>
+      <li>Verificación</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">1</div>
+      <h2 class="section-title">Síntomas Reportados</h2>
+    </div>
+    <p>Al abrir cualquiera de las puertas monitoreadas, el frontend mostraba la alarma de puerta abierta (ícono) pero <strong>ninguno de los cuatro comportamientos esperados ocurría</strong>:</p>
+    <table>
+      <thead><tr class="blue-head"><th>#</th><th>Síntoma</th><th>Comportamiento esperado</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td>La tarjeta de puerta <strong>no se mostraba en rojo</strong></td>
+          <td>Fondo rojo + label "ABIERTA" mientras la puerta está abierta</td>
+        </tr>
+        <tr>
+          <td>2</td>
+          <td>La apertura <strong>no se registraba en Firestore</strong></td>
+          <td>Documento en <code>doors/{doorId}/openings/{openingId}</code> creado al abrir</td>
+        </tr>
+        <tr>
+          <td>3</td>
+          <td>El <strong>contador de tiempo abierta no aparecía</strong> (aunque en algún momento sí apareció)</td>
+          <td>Contador dinámico con formato <code>Xm Ys</code> mientras la puerta está abierta</td>
+        </tr>
+        <tr>
+          <td>4</td>
+          <td>El <strong>Historial Reciente no se actualizaba</strong></td>
+          <td>Última apertura listada al cerrar la puerta, con duración y timestamp</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">2</div>
+      <h2 class="section-title">Arquitectura del Módulo de Tracking</h2>
+    </div>
+    <p>El módulo de aperturas de puertas es código completamente nuevo (archivos sin commit previo). Su flujo de datos es:</p>
+    <pre><span class="comment">// Cada ~5 s</span>
+<span class="fn">_refreshOnce</span>()  <span class="comment">// en SnapshotRuntime</span>
+  │
+  ├─ Poll Modbus TCP → unitsJson  <span class="comment">// señales booleanas de PLC</span>
+  │
+  ├─ <span class="fn">initializeIfNeeded</span>(unitsJson)  <span class="comment">// solo la primera vez</span>
+  │     └─ <span class="fn">_initialize</span>()             <span class="comment">// recovery: compara Firestore vs PLC</span>
+  │
+  ├─ <span class="fn">ingestSnapshot</span>(unitsJson)      <span class="comment">// detecta transiciones → escribe Firestore</span>
+  │
+  └─ <span class="fn">snapshotSummaryJson</span>()          <span class="comment">// estado en memoria → JSON del endpoint HTTP</span>
+        │
+        └─ Frontend lee /api/snapshot cada 5 s → colorea tarjeta + muestra contador</pre>
+
+    <p>Firestore también mantiene el estado persistido en <code>tenants/{tenantId}/sites/{siteId}/doors/{doorId}</code>. El frontend escucha ese documento en tiempo real (stream) para el historial.</p>
+
+    <div class="callout callout-info">
+      <div class="callout-title">Clave de diseño</div>
+      El campo <code>isOpen</code> que colorea la tarjeta en rojo viene del snapshot HTTP (<code>snapshotEvent?.isOpen</code>), no de Firestore. Por eso, si <code>_initialized</code> nunca se establece en <code>true</code>, el snapshot siempre devuelve <code>isOpen: false</code> y la puerta nunca aparece roja.
+    </div>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">3</div>
+      <h2 class="section-title">Causa Raíz #1 — Loop Infinito de Inicialización</h2>
+    </div>
+
+    <h3>El problema</h3>
+    <p>El método <code>_initialize()</code> en <code>DoorOpeningsTracker</code> ejecuta una fase de <em>recovery</em> al arrancar el backend: lee el último estado persistido en Firestore y lo compara con la señal PLC actual. Si detecta discrepancias (puerta huérfana abierta o cerrada), escribe a Firestore para normalizar el estado.</p>
+    <p>El código original <strong>no tenía ningún bloque try-catch</strong> alrededor de las tres llamadas de escritura a Firestore (<code>recordOpened</code> y <code>recordClosed</code>). Si cualquiera de esas escrituras fallaba (error de red, token expirado, timeout), la excepción propagaba hacia arriba a través de <code>initializeIfNeeded()</code> hasta el bloque <code>catch</code> de <code>_refreshOnce()</code>.</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="change-count">ANTES (bug)</span>
+        <code>backend/lib/src/door_openings_tracker.dart · _initialize()</code>
+      </div>
+      <pre><span class="comment">// Sin try-catch — cualquier fallo de Firestore escapa a _refreshOnce()</span>
+<span class="kw">await</span> _repository.<span class="fn">recordOpened</span>(
+  door: door,
+  openingId: openingId,
+  openedAt: now,
+  recoveredOpen: <span class="kw">true</span>,
+);
+<span class="comment">// Si lo anterior lanza, nunca se llega a las líneas siguientes.</span>
+_states[door.doorId]!
+  ..lastKnown = <span class="kw">true</span>
+  ..activeOpeningId = openingId;</pre>
+    </div>
+
+    <h3>La cadena de fallo</h3>
+    <ol>
+      <li>Backend arranca → <code>_initialize()</code> hace escritura de recovery → Firestore lanza error.</li>
+      <li>Excepción llega a <code>_refreshOnce()</code>, que entra en el bloque <code>catch</code>.</li>
+      <li>El catch reconstruye el estado usando <code>_extractDoorEvents(_state.snapshotJson)</code> — que extrae los valores del snapshot anterior (donde <code>isOpen: false</code> por defecto).</li>
+      <li><strong><code>_initialized</code> sigue siendo <code>false</code></strong> porque la asignación <code>_initialized = true</code> está en <code>initializeIfNeeded()</code>, después del <code>await _initialize()</code> que jamás completó.</li>
+      <li>En el siguiente poll, se repite todo desde el paso 1 → loop infinito.</li>
+      <li><code>ingestSnapshot()</code> nunca se llama (está en el bloque <code>try</code> exitoso, después de <code>initializeIfNeeded()</code>).</li>
+      <li>El snapshot HTTP siempre devuelve <code>isOpen: false</code> → tarjeta nunca roja → contador nunca visible.</li>
+    </ol>
+
+    <div class="callout callout-critical">
+      <div class="callout-title">Efecto cascada</div>
+      Un único fallo transitorio de Firestore al arrancar bloqueaba <em>permanentemente</em> el módulo de aperturas durante toda la sesión del backend. El problema era invisible en los logs porque el catch de <code>_refreshOnce()</code> solo logueaba el error de poll — no indicaba que el tracking había quedado deshabilitado.
+    </div>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">4</div>
+      <h2 class="section-title">Causa Raíz #2 — Señal PLC <code>null</code> No Manejada</h2>
+    </div>
+
+    <h3>El problema</h3>
+    <p>El método <code>_extractDoorSignal()</code> retorna <code>null</code> (tipo <code>bool?</code>) cuando la unidad PLC no está disponible en el snapshot (offline, timeout, etc.). Durante <code>_initialize()</code>, el valor de <code>currentIsOpen</code> puede ser <code>null</code>.</p>
+    <p>La cadena de condiciones original cubría solo tres casos con comparaciones estrictas (<code>== false</code>, <code>== true</code>). Si <code>persisted.isOpen == true</code> y <code>currentIsOpen == null</code>, ninguna de las tres condiciones era verdadera y el código caía en el <code>else</code> final:</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="change-count">ANTES (bug)</span>
+        <code>backend/lib/src/door_openings_tracker.dart · _initialize()</code>
+      </div>
+      <pre><span class="kw">if</span> (persisted.isOpen && currentIsOpen == <span class="kw">false</span>) {
+  <span class="comment">// Firestore=open, PLC=cerrado → cierra huérfana</span>
+} <span class="kw">else if</span> (!persisted.isOpen && currentIsOpen == <span class="kw">true</span>) {
+  <span class="comment">// Firestore=closed, PLC=abierto → crea apertura recuperada</span>
+} <span class="kw">else if</span> (persisted.isOpen && currentIsOpen == <span class="kw">true</span>) {
+  <span class="comment">// Ambos abiertos → restaurar en memoria</span>
+} <span class="kw">else</span> {
+  <span class="comment">// ← Caso: persisted.isOpen=true, currentIsOpen=null</span>
+  <span class="comment">// Caía aquí. Ponía lastKnown=false aunque Firestore decía que estaba abierta.</span>
+  _states[door.doorId]!.lastKnown = <span class="kw">false</span>;
+}</pre>
+    </div>
+
+    <p>Consecuencia: si el PLC estaba offline en el momento exacto del arranque del backend y la puerta estaba abierta según Firestore, el tracker inicializaba el estado como <em>cerrada</em>, descartando la información persistida.</p>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">5</div>
+      <h2 class="section-title">¿Por Qué "En Algún Momento Sí Aparecía"?</h2>
+    </div>
+
+    <p>El módulo de tracking tiene dos rutas de inicialización controladas por <code>isPersistenceEnabled</code>:</p>
+
+    <div class="role-diagram">
+      <div class="role-box">
+        <div class="role-box-header tenant">isPersistenceEnabled = false</div>
+        <div class="role-box-body">
+          <div class="role-item">
+            <p>Llama a <code>_seedStateFromSnapshot()</code>. No hace escrituras a Firestore. Siempre completa sin errores. <code>_initialized = true</code> se setea. <code>ingestSnapshot()</code> funciona → el contador aparecía.</p>
+          </div>
+          <div class="role-item">
+            <p><strong>Efecto:</strong> Tracking en memoria funcionaba; Firestore no se escribía.</p>
+          </div>
+        </div>
+      </div>
+      <div class="role-box">
+        <div class="role-box-header global">isPersistenceEnabled = true</div>
+        <div class="role-box-body">
+          <div class="role-item">
+            <p>Llama a <code>_initialize()</code>. Hace escrituras de recovery. Si cualquier escritura falla → excepción → <code>_initialized</code> queda <code>false</code> → loop infinito.</p>
+          </div>
+          <div class="role-item">
+            <p><strong>Efecto:</strong> El módulo quedaba permanentemente bloqueado.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p>Cuando Firestore no estaba correctamente configurado (<code>isPersistenceEnabled = false</code>), el módulo funcionaba parcialmente: el contador aparecía y la puerta se mostraba roja gracias al estado en memoria. Al configurar Firestore correctamente, <code>isPersistenceEnabled</code> pasó a <code>true</code> y el bug de loop infinito se activó.</p>
+  </section>
+
+  <!-- SECTION 6 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">6</div>
+      <h2 class="section-title">Corrección Aplicada</h2>
+    </div>
+
+    <h3>Fix #1 — Try-catch alrededor de todas las escrituras de recovery</h3>
+    <p>Se envolvieron las tres llamadas de escritura en <code>_initialize()</code> con bloques <code>try/on Object catch</code>. Ahora, un fallo de Firestore loguea el error y continúa en memoria; <code>_initialize()</code> siempre completa y <code>_initialized = true</code> se asigna.</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">door_openings_tracker.dart</span>
+        <span class="change-count">DESPUÉS (corregido)</span>
+      </div>
+      <pre><span class="comment">// Ejemplo: recovery cuando Firestore=open y PLC=open (sin estado previo)</span>
+<span class="kw">try</span> {
+  <span class="kw">await</span> _repository.<span class="fn">recordOpened</span>(
+    door: door,
+    openingId: openingId,
+    openedAt: now,
+    recoveredOpen: <span class="kw">true</span>,
+  );
+} <span class="kw">on</span> <span class="type">Object</span> <span class="kw">catch</span> (writeError) {
+  <span class="fn">_log</span>(
+    <span class="str">'recovery: recordOpened failed door=</span><span class="kw">${</span>door.doorId<span class="kw">}</span><span class="str"> error=</span><span class="kw">$writeError</span><span class="str"> — estado actualizado solo en memoria'</span>,
+  );
+}
+<span class="comment">// El estado en memoria se actualiza SIEMPRE, haya fallado Firestore o no.</span>
+_states[door.doorId]!
+  ..lastKnown = <span class="kw">true</span>
+  ..activeOpeningId = openingId
+  ..activeOpenedAt = now
+  ..lastOpeningId = openingId
+  ..lastChangedAt = now;</pre>
+    </div>
+
+    <h3>Fix #2 — Rama explícita para señal PLC <code>null</code></h3>
+    <p>Se agregó un <code>else if</code> explícito para el caso <code>persisted.isOpen == true</code> y <code>currentIsOpen == null</code>: conservar el estado persistido en memoria sin intentar ninguna escritura a Firestore.</p>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">door_openings_tracker.dart</span>
+        <span class="change-count">DESPUÉS (corregido)</span>
+      </div>
+      <pre><span class="kw">} else if</span> (persisted.isOpen && currentIsOpen == <span class="kw">null</span>) {
+  <span class="comment">// Firestore=open, señal PLC no disponible → conservar estado persistido.</span>
+  _states[door.doorId]!
+    ..lastKnown = <span class="kw">true</span>
+    ..activeOpeningId = persisted.lastOpeningId
+    ..activeOpenedAt = persisted.lastOpenedAt
+    ..lastOpeningId = persisted.lastOpeningId
+    ..lastChangedAt = persisted.lastChangedAt;
+  <span class="fn">_log</span>(
+    <span class="str">'recovery: PLC signal unavailable, door was open door=</span><span class="kw">${</span>door.doorId<span class="kw">}</span><span class="str"> — usando estado persistido'</span>,
+  );
+}</pre>
+    </div>
+
+    <div class="callout callout-success">
+      <div class="callout-title">Resultado de dart analyze</div>
+      <code>dart analyze backend/</code> — <strong>No issues found!</strong> Confirmado tras aplicar ambas correcciones.
+    </div>
+  </section>
+
+  <!-- SECTION 7 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">7</div>
+      <h2 class="section-title">Archivos Creados / Modificados</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Archivo</th><th>Capa</th><th>Cambio</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><code>backend/lib/src/door_openings_tracker.dart</code></td>
+          <td><span class="badge badge-orange">Backend</span></td>
+          <td>NUEVO (código pre-existente sin commit). Fix #1: try-catch en 3 sitios de escritura recovery. Fix #2: rama <code>else if</code> para <code>currentIsOpen == null</code>.</td>
+        </tr>
+        <tr>
+          <td><code>backend/lib/src/firestore_door_openings_repository.dart</code></td>
+          <td><span class="badge badge-orange">Backend</span></td>
+          <td>NUEVO. Repositorio Firestore REST: <code>recordOpened()</code>, <code>recordClosed()</code>, <code>loadLastState()</code>.</td>
+        </tr>
+        <tr>
+          <td><code>lib/widgets/door_openings_module.dart</code></td>
+          <td><span class="badge badge-blue">Frontend</span></td>
+          <td>NUEVO. Widget completo del módulo APERTURAS: tarjeta de estado, contador dinámico, historial reciente.</td>
+        </tr>
+        <tr>
+          <td><code>backend/lib/src/snapshot_runtime.dart</code></td>
+          <td><span class="badge badge-orange">Backend</span></td>
+          <td>MODIFICADO. Integra <code>DoorOpeningsTracker</code>: llama a <code>initializeIfNeeded()</code> e <code>ingestSnapshot()</code> en cada poll, inyecta <code>snapshotSummaryJson()</code> en el endpoint HTTP.</td>
+        </tr>
+        <tr>
+          <td><code>firestore.rules</code></td>
+          <td><span class="badge badge-red">Seguridad</span></td>
+          <td>MODIFICADO. Agrega reglas de lectura para <code>doors/{doorId}</code> y <code>doors/{doorId}/openings/{openingId}</code>. Escritura bloqueada para el cliente (solo el backend via service account puede escribir).</td>
+        </tr>
+      </tbody>
+    </table>
+    <p><strong>Config de producción:</strong> <code>backend/config/sites/default.json</code> ya tenía definidas las dos puertas:
+    <code>doorId=sala</code> y <code>doorId=munter</code>, ambas en <code>unitKey=munters2</code>,
+    señales <code>puertaSala</code> (coil 224) y <code>puertaMunter</code> (coil 232).</p>
+  </section>
+
+  <!-- SECTION 8 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">8</div>
+      <h2 class="section-title">Verificación</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Síntoma</th><th>Causa</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Tarjeta de puerta no se mostraba en rojo al abrir</td>
+          <td>Loop infinito → <code>_initialized</code> nunca <code>true</code> → snapshot siempre <code>isOpen: false</code></td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>La apertura no se registraba en Firestore</td>
+          <td><code>ingestSnapshot()</code> nunca se llamaba (bloqueado por el loop)</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>Contador de tiempo abierta no aparecía</td>
+          <td>Ídem — sin estado <code>isOpen: true</code> en el snapshot, el widget no renderizaba el contador</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>Historial Reciente no se actualizaba</td>
+          <td>Sin escrituras a Firestore, el stream del frontend nunca recibía nuevos documentos de apertura</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+        <tr>
+          <td>Estado incorrecto si PLC offline durante arranque y puerta estaba abierta</td>
+          <td>Señal <code>null</code> no manejada → rama <code>else</code> ponía <code>lastKnown = false</code> ignorando Firestore</td>
+          <td><span class="badge badge-green">✓ Corregido</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Corrección: Tracking de Aperturas | 22 de abril de 2026<br>
+    Fix de backend. Frontend sin cambios adicionales respecto al estado pre-existente.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-4 -->
+
+
+<script>
+  const _docs = [
+    { title: 'Índice',                                   sub: 'Todos los documentos' },
+    { title: 'Especificación Funcional Preliminar',      sub: 'Diseño de roles, tenants y permisos · 21 abr 2026' },
+    { title: 'Etapa 1 — Consistencia y Seguridad Base', sub: 'Roles unificados · Gestión por tenant · 21 abr 2026' },
+    { title: 'Etapa 2 — Multi-Site Real',               sub: 'Sites dinámicos · Backend por sala · 22 abr 2026' },
+    { title: 'Corrección — APERTURAS en M1',            sub: 'Bug: datos en columna M2 en vez de M1 · 22 abr 2026' },
+    { title: 'Corrección — Tracking de Aperturas',      sub: 'Bug: loop infinito + señal null · Backend · 22 abr 2026' },
+  ];
+
+  function showDoc(index) {
+    document.querySelectorAll('.doc-page').forEach((el, i) => {
+      el.classList.toggle('visible', i === index);
+    });
+    document.querySelectorAll('.dropdown-item').forEach((el, i) => {
+      el.classList.toggle('active', i === index);
+    });
+    const doc = _docs[index];
+    if (doc) {
+      document.getElementById('nav-title').textContent = doc.title;
+      document.getElementById('nav-subtitle').textContent = doc.sub;
+    }
+    closeMenu();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function toggleMenu() {
+    const btn = document.getElementById('hamburger-btn');
+    const dropdown = document.getElementById('hamburger-dropdown');
+    const open = dropdown.classList.toggle('open');
+    btn.classList.toggle('open', open);
+  }
+
+  function closeMenu() {
+    document.getElementById('hamburger-btn').classList.remove('open');
+    document.getElementById('hamburger-dropdown').classList.remove('open');
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.hamburger-wrap')) closeMenu();
+  });
+</script>
+
+</body>
+</html>

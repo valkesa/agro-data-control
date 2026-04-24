@@ -10,7 +10,12 @@
       "Bash(bash deploy-backend.sh)",
       "Bash(flutter build:*)",
       "Bash(firebase deploy:*)",
-      "Bash(flutter analyze:*)"
+      "Bash(flutter analyze:*)",
+      "Bash(xargs ls:*)",
+      "Bash(grep -v \"^$\")",
+      "Bash(open /Users/jerry/APPS/valke-apps/agro_data_control/agro_data_control_diseno_funcional.html)",
+      "Bash(open /Users/jerry/APPS/valke-apps/agro_data_control/trabajos_de_implementacion/agro_data_control_diseno_funcional.html)",
+      "Bash(grep -E \"\\\\.\\(dart|json\\)$\")"
     ]
   }
 }

@@ -39,8 +39,14 @@ class MuntersPanel extends StatelessWidget {
             child: Column(
               children: [
                 _MetricRow(
-                  label: 'Temp. interior',
+                  label: 'T°C SAL sala',
                   value: _formatDecimal(unit.tempInterior, 1),
+                  unit: '°C',
+                ),
+                const SizedBox(height: 4),
+                _MetricRow(
+                  label: 'T°C. ING sala',
+                  value: _formatDecimal(unit.tempIngresoSala, 1),
                   unit: '°C',
                 ),
                 const SizedBox(height: 4),
@@ -188,6 +194,8 @@ class _CompactSection extends StatelessWidget {
 class _MetricRow extends StatelessWidget {
   const _MetricRow({required this.label, required this.value, this.unit});
 
+  static const double _defaultItemFontSize = 12;
+
   final String label;
   final String value;
   final String? unit;
@@ -200,7 +208,10 @@ class _MetricRow extends StatelessWidget {
         Expanded(
           child: Text(
             label,
-            style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+            style: const TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: _defaultItemFontSize,
+            ),
           ),
         ),
         Text(
@@ -233,6 +244,8 @@ class _StatusRow extends StatelessWidget {
     required this.inactiveLabel,
   });
 
+  static const double _defaultItemFontSize = 12;
+
   final String label;
   final bool? active;
   final String activeLabel;
@@ -246,7 +259,10 @@ class _StatusRow extends StatelessWidget {
         Expanded(
           child: Text(
             label,
-            style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+            style: const TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: _defaultItemFontSize,
+            ),
           ),
         ),
         StatusDot(active: active, size: 10),
@@ -269,6 +285,8 @@ class _StatusRow extends StatelessWidget {
 class _AlarmRow extends StatelessWidget {
   const _AlarmRow({required this.label, required this.active});
 
+  static const double _defaultItemFontSize = 12;
+
   final String label;
   final bool? active;
 
@@ -285,7 +303,7 @@ class _AlarmRow extends StatelessWidget {
                   : (active!
                         ? const Color(0xFFEF4444)
                         : const Color(0xFF22C55E)),
-              fontSize: 11,
+              fontSize: _defaultItemFontSize,
               fontWeight: active == true ? FontWeight.w700 : FontWeight.w500,
             ),
           ),
@@ -306,6 +324,7 @@ class _FanLine extends StatelessWidget {
   final String label;
   final double? value;
   final List<(String, bool?)> fans;
+  static const double _defaultItemFontSize = 12;
 
   @override
   Widget build(BuildContext context) {
@@ -330,7 +349,7 @@ class _FanLine extends StatelessWidget {
                       label,
                       style: const TextStyle(
                         color: Color(0xFFCBD5E1),
-                        fontSize: 11,
+                        fontSize: _defaultItemFontSize,
                       ),
                     ),
                   ),
@@ -364,7 +383,10 @@ class _FanLine extends StatelessWidget {
               width: 52,
               child: Text(
                 label,
-                style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+                style: const TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: _defaultItemFontSize,
+                ),
               ),
             ),
             Expanded(child: _Bar(value: currentValue)),
@@ -402,6 +424,8 @@ class _FanLine extends StatelessWidget {
 class _FanDot extends StatelessWidget {
   const _FanDot({required this.label, required this.active});
 
+  static const double _defaultItemFontSize = 12;
+
   final String label;
   final bool? active;
 
@@ -412,7 +436,10 @@ class _FanDot extends StatelessWidget {
       children: [
         Text(
           label,
-          style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+          style: const TextStyle(
+            color: Color(0xFFCBD5E1),
+            fontSize: _defaultItemFontSize,
+          ),
         ),
         const SizedBox(width: 3),
         StatusDot(active: active, size: 10),

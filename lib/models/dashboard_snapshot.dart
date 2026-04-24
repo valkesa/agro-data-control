@@ -1,8 +1,10 @@
 import 'munters_model.dart';
+import 'dashboard_door_event.dart';
 
 class DashboardSnapshot {
   const DashboardSnapshot({
     required this.units,
+    required this.doorEvents,
     required this.backendOnline,
     required this.lastUpdatedAt,
     required this.startedAt,
@@ -10,6 +12,7 @@ class DashboardSnapshot {
   });
 
   final List<MuntersModel> units;
+  final Map<String, DashboardDoorEvent> doorEvents;
   final bool backendOnline;
   final DateTime? lastUpdatedAt;
   final DateTime? startedAt;
@@ -32,6 +35,7 @@ class DashboardSnapshot {
         MuntersModel.placeholder(name: 'Munters 1'),
         MuntersModel.placeholder(name: 'Munters 2'),
       ],
+      doorEvents: const <String, DashboardDoorEvent>{},
       backendOnline: backendOnline,
       lastUpdatedAt: null,
       startedAt: null,

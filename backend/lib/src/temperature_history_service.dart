@@ -87,10 +87,12 @@ class TemperatureHistoryService {
       return;
     }
 
-    _currentHour!.addSample(temperature);
+    final double? exterior = extractExteriorTemperature(unitsJson);
+    _currentHour!.addSample(temperature, exterior);
     _log(
       'sample taken source=${config.sourcePath} '
       'slot=${sampleSlot.toIso8601String()} tempInterior=${temperature.toStringAsFixed(2)} '
+      '${exterior != null ? "tempExterior=${exterior.toStringAsFixed(2)} " : ""}'
       'samplesInHour=${_currentHour!.count}',
     );
   }
@@ -115,6 +117,11 @@ class TemperatureHistoryService {
       minTemp: accumulator.minTemp!,
       maxTemp: accumulator.maxTemp!,
       samplesCount: accumulator.count,
+      avgExteriorTemp: accumulator.exteriorCount > 0
+          ? accumulator.exteriorAverage
+          : null,
+      minExteriorTemp: accumulator.minExteriorTemp,
+      maxExteriorTemp: accumulator.maxExteriorTemp,
     );
 
     _log(
@@ -191,6 +198,35 @@ class TemperatureHistoryService {
       return null;
     }
 
+    // Aggregate exterior temperatures from hours that have exterior data.
+    final List<TemperatureHourlyRecord> withExterior = hourlyRecords
+        .where((TemperatureHourlyRecord r) => r.avgExteriorTemp != null)
+        .toList();
+
+    double? avgExteriorTemp;
+    double? minExteriorTemp;
+    double? maxExteriorTemp;
+
+    if (withExterior.isNotEmpty) {
+      double extWeightedSum = 0;
+      int extTotalSamples = 0;
+      double extMin = withExterior.first.minExteriorTemp!;
+      double extMax = withExterior.first.maxExteriorTemp!;
+      for (final TemperatureHourlyRecord record in withExterior) {
+        extWeightedSum += record.avgExteriorTemp! * record.samplesCount;
+        extTotalSamples += record.samplesCount;
+        if (record.minExteriorTemp! < extMin) {
+          extMin = record.minExteriorTemp!;
+        }
+        if (record.maxExteriorTemp! > extMax) {
+          extMax = record.maxExteriorTemp!;
+        }
+      }
+      avgExteriorTemp = extWeightedSum / extTotalSamples;
+      minExteriorTemp = extMin;
+      maxExteriorTemp = extMax;
+    }
+
     return TemperatureDailyRecord(
       timestampDayStartUtc: DateTime(
         hourlyRecords.first.timestampHourStartUtc.toLocal().year,
@@ -202,6 +238,9 @@ class TemperatureHistoryService {
       minTemp: minTemp,
       maxTemp: maxTemp,
       hoursCount: hourlyRecords.length,
+      avgExteriorTemp: avgExteriorTemp,
+      minExteriorTemp: minExteriorTemp,
+      maxExteriorTemp: maxExteriorTemp,
     );
   }
 
@@ -213,6 +252,27 @@ class TemperatureHistoryService {
     }
 
     final Object? raw = unit[source.signalKey];
+    if (raw is num) {
+      final double value = raw.toDouble();
+      return value.isFinite ? value : null;
+    }
+    if (raw is String) {
+      final double? parsed = double.tryParse(raw);
+      if (parsed != null && parsed.isFinite) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  double? extractExteriorTemperature(Map<String, Object?> unitsJson) {
+    final _MetricSourcePath source = _MetricSourcePath.parse(config.sourcePath);
+    final Map<String, Object?>? unit = _asObjectMap(unitsJson[source.unitKey]);
+    if (unit == null) {
+      return null;
+    }
+
+    final Object? raw = unit['tempExterior'];
     if (raw is num) {
       final double value = raw.toDouble();
       return value.isFinite ? value : null;
@@ -250,14 +310,31 @@ class _HourlyAccumulator {
   double? minTemp;
   double? maxTemp;
 
-  void addSample(double value) {
-    sumTemp += value;
+  double sumExteriorTemp = 0;
+  int exteriorCount = 0;
+  double? minExteriorTemp;
+  double? maxExteriorTemp;
+
+  void addSample(double interior, double? exterior) {
+    sumTemp += interior;
     count += 1;
-    minTemp = minTemp == null || value < minTemp! ? value : minTemp;
-    maxTemp = maxTemp == null || value > maxTemp! ? value : maxTemp;
+    minTemp = minTemp == null || interior < minTemp! ? interior : minTemp;
+    maxTemp = maxTemp == null || interior > maxTemp! ? interior : maxTemp;
+
+    if (exterior != null) {
+      sumExteriorTemp += exterior;
+      exteriorCount += 1;
+      minExteriorTemp = minExteriorTemp == null || exterior < minExteriorTemp!
+          ? exterior
+          : minExteriorTemp;
+      maxExteriorTemp = maxExteriorTemp == null || exterior > maxExteriorTemp!
+          ? exterior
+          : maxExteriorTemp;
+    }
   }
 
   double get average => sumTemp / count;
+  double get exteriorAverage => sumExteriorTemp / exteriorCount;
 }
 
 Map<String, Object?>? _asObjectMap(Object? value) {

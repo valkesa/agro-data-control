@@ -41,75 +41,194 @@ service cloud.firestore {
       return membershipData(tenantId).role;
     }
 
+    // Returns true if the current user is an active tenant_admin of the given tenant.
+    function isTenantAdmin(tenantId) {
+      return isTenantMember(tenantId) && memberRole(tenantId) == 'tenant_admin';
+    }
+
+    // A tenant_admin may write a members/{uid} document only when:
+    //   - they are active tenant_admin of this tenant
+    //   - they are not modifying their own record
+    //   - the resulting role is strictly 'tenant_operator' (no escalation)
+    function canTenantAdminWriteMember(tenantId, targetUid) {
+      return isTenantAdmin(tenantId)
+        && request.auth.uid != targetUid
+        && request.resource.data.role == 'tenant_operator';
+    }
+
+    // tenant_admin can edit site-level config; owner always can.
     function canEditTenantConfig(tenantId) {
-      return isTenantMember(tenantId)
-        && (memberRole(tenantId) == 'owner' || memberRole(tenantId) == 'admin');
+      return isTenantAdmin(tenantId);
     }
 
     function isOwner() {
       return hasUserContext() && userData().role == 'owner';
     }
 
+    function isValkeTechnician(tenantId) {
+      return hasUserContext()
+        && userData().role == 'valke_technician'
+        && userData().activeTenantId == tenantId;
+    }
+
+    function canReadTenant(tenantId) {
+      return isTenantMember(tenantId) || isOwner() || isValkeTechnician(tenantId);
+    }
+
+    function allowedComparisonModules() {
+      return [
+        'Estado',
+        'Ambiente',
+        'Filtros',
+        'Ventilacion',
+        'Enfriamiento',
+        'Aperturas',
+        'Calefaccion',
+        'Alarmas'
+      ];
+    }
+
+    function isValidComparisonModuleOrder(order) {
+      return order is list
+        && order.size() == allowedComparisonModules().size()
+        && order.hasAll(allowedComparisonModules())
+        && order.hasOnly(allowedComparisonModules());
+    }
+
+    function isValidVisibleUnits(ui) {
+      return ui is map
+        && ui.keys().hasOnly(['munters1', 'munters2'])
+        && ui.munters1 is bool
+        && ui.munters2 is bool;
+    }
+
+    // A user can switch their own active site, provided the new siteId is
+    // already listed in their allowedSiteIds (prevents access to unlisted sites).
+    function isOwnSiteSwitch(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['defaultSiteId'])
+        && resource.data.allowedSiteIds.hasAny([request.resource.data.defaultSiteId]);
+    }
+
+    function isOwnUiUpdate(uid) {
+      return signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ui'])
+        && request.resource.data.ui is map
+        && request.resource.data.ui.keys().hasOnly(['comparison', 'visibleUnits'])
+        && (
+          !('comparison' in request.resource.data.ui)
+          || (
+            request.resource.data.ui.comparison is map
+            && request.resource.data.ui.comparison.keys().hasOnly(['moduleOrder'])
+            && isValidComparisonModuleOrder(request.resource.data.ui.comparison.moduleOrder)
+          )
+        )
+        && (
+          !('visibleUnits' in request.resource.data.ui)
+          || isValidVisibleUnits(request.resource.data.ui.visibleUnits)
+        );
+    }
+
     match /users/{uid} {
       allow get: if signedIn() && (request.auth.uid == uid || isOwner());
       allow list: if isOwner();
+
+      // New users self-register with role='pending' and active=false.
+      // Owner profiles are set directly in Firestore, never via client create.
       allow create: if signedIn()
         && request.auth.uid == uid
-        && request.resource.data.role == 'tenant_operator'
+        && request.resource.data.role == 'pending'
         && request.resource.data.active == false;
-      allow update: if isOwner()
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['role']);
+
+      // Owner can update profile fields managed by updateUserAccess().
+      // Users can update only their own UI preferences.
+      allow update: if (isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['role', 'activeTenantId', 'defaultSiteId', 'allowedSiteIds',
+                        'active', 'updatedAt', 'email']))
+        || isOwnUiUpdate(uid)
+        || isOwnSiteSwitch(uid);
+
       allow delete: if false;
     }
 
     match /tenants/{tenantId} {
-      allow read: if isTenantMember(tenantId) || isOwner();
+      allow read: if canReadTenant(tenantId);
 
       match /members/{uid} {
-        allow get: if (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId)) || isOwner();
-        allow list: if isOwner();
-        allow create, update, delete: if false;
+        // A tenant_admin can read all members in their own tenant.
+        allow get: if (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId))
+          || isOwner()
+          || isTenantAdmin(tenantId);
+        allow list: if isOwner() || isTenantAdmin(tenantId);
+
+        // Owner: unrestricted writes.
+        // tenant_admin: can only create a new tenant_operator (not tenant_admin, not owner).
+        allow create: if isOwner()
+          || canTenantAdminWriteMember(tenantId, uid);
+
+        // Owner: unrestricted updates.
+        // tenant_admin: can only update a tenant_operator record (resource.data.role
+        //   is the existing role; blocks modifying other admins).
+        allow update: if isOwner()
+          || (canTenantAdminWriteMember(tenantId, uid)
+              && resource.data.role == 'tenant_operator');
+
+        allow delete: if false;
       }
 
       match /sites/{siteId} {
-        allow read: if isTenantMember(tenantId) || isOwner();
+        allow read: if canReadTenant(tenantId);
 
         match /settings/{docId} {
-          allow read: if isTenantMember(tenantId) || isOwner();
-          allow create, update: if docId == 'controlDashboard' && (canEditTenantConfig(tenantId) || isOwner());
+          allow read: if canReadTenant(tenantId);
+          allow create, update: if docId == 'controlDashboard'
+            && (canEditTenantConfig(tenantId) || isOwner());
           allow delete: if false;
+        }
+
+        match /doors/{doorId} {
+          allow read: if canReadTenant(tenantId);
+          allow create, update, delete: if false;
+
+          match /openings/{openingId} {
+            allow read: if canReadTenant(tenantId);
+            allow create, update, delete: if false;
+          }
         }
       }
     }
 
     match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/temperature {
-      allow read: if isTenantMember(tenantId) || isOwner();
+      allow read: if canReadTenant(tenantId);
       allow create, update, delete: if false;
 
       match /hourly/{docId} {
-        allow read: if isTenantMember(tenantId) || isOwner();
+        allow read: if canReadTenant(tenantId);
         allow create, update, delete: if false;
       }
 
       match /daily/{docId} {
-        allow read: if isTenantMember(tenantId) || isOwner();
+        allow read: if canReadTenant(tenantId);
         allow create, update, delete: if false;
       }
     }
 
     match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/waterShortage {
-      allow read: if isTenantMember(tenantId) || isOwner();
+      allow read: if canReadTenant(tenantId);
       allow create, update: if isTenantMember(tenantId) || isOwner();
       allow delete: if false;
 
       match /events/{eventId} {
-        allow read: if isTenantMember(tenantId) || isOwner();
+        allow read: if canReadTenant(tenantId);
         allow create: if isTenantMember(tenantId) || isOwner();
         allow update, delete: if false;
       }
 
       match /monthly/{monthKey} {
-        allow read: if isTenantMember(tenantId) || isOwner();
+        allow read: if canReadTenant(tenantId);
         allow create, update: if isTenantMember(tenantId) || isOwner();
         allow delete: if false;
       }

@@ -9,11 +9,59 @@
   "timeoutMs": 1500,
   "httpHost": "0.0.0.0",
   "httpPort": 8081,
+  "doorOpenings": {
+    "enabled": true,
+    "tenantId": "cliente-demo",
+    "siteId": "sitio-demo",
+    "firestoreProjectId": "agro-data-control",
+    "firestoreDatabaseId": "(default)",
+    "firestoreServiceAccountPath": "/root/backend/config/service-account.json",
+    "doors": [
+      {
+        "doorId": "sala",
+        "unitKey": "munters2",
+        "signalKey": "salaAbierta",
+        "label": "Puerta Sala"
+      },
+      {
+        "doorId": "munter",
+        "unitKey": "munters2",
+        "signalKey": "munterAbierto",
+        "label": "Puerta Munter"
+      }
+    ]
+  },
   "units": {
     "munters1": {
       "name": "Munters 1",
-      "plcHost": "",
-      "signals": {}
+      "plcHost": "192.168.10.50",
+      "freshnessWindowSeconds": 15,
+      "staleAfterSeconds": 15,
+      "staleAfterPolls": 3,
+      "signals": {
+        "tempInterior": { "area": "holdingRegister", "address": 0, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "tempIngresoSala": { "area": "holdingRegister", "address": 112, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "humInterior": { "area": "holdingRegister", "address": 1, "dataType": "float32", "signed": true },
+        "tempExterior": { "area": "holdingRegister", "address": 2, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "humExterior": { "area": "holdingRegister", "address": 3, "dataType": "float32", "signed": true },
+        "presionDiferencial": { "area": "holdingRegister", "address": 4, "dataType": "float32", "signed": true },
+        "fanGroup1": { "area": "holdingRegister", "address": 10, "dataType": "float32", "scale": 0.1 },
+        "fanGroup2": { "area": "holdingRegister", "address": 11, "dataType": "float32", "scale": 0.1 },
+        "tensionSalidaVentiladores": { "area": "holdingRegister", "address": 12, "dataType": "float32" },
+        "bombaHumidificador": { "area": "coil", "address": 0, "dataType": "bool" },
+        "resistencia1": { "area": "coil", "address": 1, "dataType": "bool" },
+        "resistencia2": { "area": "coil", "address": 2, "dataType": "bool" },
+        "fanQ5": { "area": "coil", "address": 4, "dataType": "bool" },
+        "fanQ6": { "area": "coil", "address": 5, "dataType": "bool" },
+        "fanQ7": { "area": "coil", "address": 6, "dataType": "bool" },
+        "fanQ8": { "area": "coil", "address": 7, "dataType": "bool" },
+        "fanQ9": { "area": "coil", "address": 8, "dataType": "bool" },
+        "fanQ10": { "area": "coil", "address": 9, "dataType": "bool" },
+        "alarmaGeneral": { "area": "coil", "address": 11, "dataType": "bool" },
+        "fallaRed": { "area": "discreteInput", "address": 1, "dataType": "bool" },
+        "salaAbierta": { "area": "discreteInput", "address": 8, "dataType": "bool" },
+        "munterAbierto": { "area": "discreteInput", "address": 5, "dataType": "bool" }
+      }
     },
     "munters2": {
       "name": "Munters 2",
@@ -22,9 +70,10 @@
       "staleAfterSeconds": 15,
       "staleAfterPolls": 3,
       "signals": {
-        "tempInterior": { "area": "holdingRegister", "address": 0, "dataType": "float32", "signed": true },
+        "tempInterior": { "area": "holdingRegister", "address": 0, "dataType": "float32", "signed": true, "scale": 0.1 },
+        "tempIngresoSala": { "area": "holdingRegister", "address": 112, "dataType": "float32", "signed": true, "scale": 0.1 },
         "humInterior": { "area": "holdingRegister", "address": 1, "dataType": "float32", "signed": true },
-        "tempExterior": { "area": "holdingRegister", "address": 2, "dataType": "float32", "signed": true },
+        "tempExterior": { "area": "holdingRegister", "address": 2, "dataType": "float32", "signed": true, "scale": 0.1 },
         "humExterior": { "area": "holdingRegister", "address": 3, "dataType": "float32", "signed": true },
         "presionDiferencial": { "area": "holdingRegister", "address": 4, "dataType": "float32", "signed": true },
         "fanGroup1": { "area": "holdingRegister", "address": 10, "dataType": "float32", "scale": 0.1 },
