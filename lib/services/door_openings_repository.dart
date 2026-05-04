@@ -83,7 +83,10 @@ class DoorOpeningsRepository {
     );
     return firestore
         .collection(path)
-        .where('openedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart))
+        .where(
+          'openedAt',
+          isGreaterThanOrEqualTo: Timestamp.fromDate(monthStart),
+        )
         .orderBy('openedAt', descending: true)
         .limit(limit)
         .snapshots()
@@ -98,5 +101,68 @@ class DoorOpeningsRepository {
               )
               .toList(growable: false);
         });
+  }
+
+  Stream<List<DoorOpeningRecord>> watchDoorOpeningsForCleanup({
+    required String tenantId,
+    required String siteId,
+    required String doorId,
+    int limit = 200,
+  }) {
+    final String path = FirestorePaths.doorOpeningsCollection(
+      tenantId: tenantId,
+      siteId: siteId,
+      doorId: doorId,
+    );
+    debugPrint(
+      '[Firestore] door cleanup stream started path=$path limit=$limit',
+    );
+    return firestore
+        .collection(path)
+        .orderBy('openedAt', descending: true)
+        .limit(limit)
+        .snapshots()
+        .map((QuerySnapshot<Map<String, dynamic>> snapshot) {
+          return snapshot.docs
+              .map(
+                (QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+                    DoorOpeningRecord.fromFirestore(
+                      doc.data(),
+                      documentId: doc.id,
+                    ),
+              )
+              .toList(growable: false);
+        });
+  }
+
+  Future<void> deleteDoorOpenings({
+    required String tenantId,
+    required String siteId,
+    required String doorId,
+    required Iterable<String> openingIds,
+  }) async {
+    final List<String> ids = openingIds
+        .map((String id) => id.trim())
+        .where((String id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (ids.isEmpty) {
+      return;
+    }
+
+    final String path = FirestorePaths.doorOpeningsCollection(
+      tenantId: tenantId,
+      siteId: siteId,
+      doorId: doorId,
+    );
+    debugPrint(
+      '[Firestore] door cleanup delete started path=$path count=${ids.length}',
+    );
+    final WriteBatch batch = firestore.batch();
+    for (final String openingId in ids) {
+      batch.delete(firestore.collection(path).doc(openingId));
+    }
+    await batch.commit();
+    debugPrint('[Firestore] door cleanup delete done path=$path');
   }
 }

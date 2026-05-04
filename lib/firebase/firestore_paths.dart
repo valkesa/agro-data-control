@@ -3,6 +3,12 @@ class FirestorePaths {
 
   static String userProfile(String uid) => 'users/$uid';
 
+  static String workspacePresenceCollection(String workspaceId) =>
+      'workspaces/$workspaceId/presence';
+
+  static String workspacePresenceDoc(String workspaceId, String uid) =>
+      '${workspacePresenceCollection(workspaceId)}/$uid';
+
   static String siteDoc(String tenantId, String siteId) =>
       'tenants/$tenantId/sites/$siteId';
 
@@ -69,4 +75,10 @@ class FirestorePaths {
 
   static String tenantSitesCollection(String tenantId) =>
       'tenants/$tenantId/sites';
+
+  static String plcsCollection(String tenantId, String siteId) =>
+      'tenants/$tenantId/sites/$siteId/plcs';
+
+  static String plcConfigDoc(String tenantId, String siteId, String plcId) =>
+      'tenants/$tenantId/sites/$siteId/plcs/$plcId';
 }

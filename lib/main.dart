@@ -8,9 +8,13 @@ import 'package:flutter/services.dart';
 import 'firebase_options.dart';
 import 'firebase/firestore_paths.dart';
 import 'models/dashboard_range_settings.dart';
+import 'models/electric_consumption_settings.dart';
 import 'models/dashboard_snapshot.dart';
+import 'models/door_openings_models.dart';
 import 'models/magnifier_settings.dart';
+import 'models/manual_fan_status_settings.dart';
 import 'models/munters_model.dart';
+import 'models/plc_display_config.dart';
 import 'models/plc_unit_diagnostics.dart';
 import 'models/unit_visibility_settings.dart';
 import 'models/water_shortage_summary.dart';
@@ -20,13 +24,17 @@ import 'pages/munters_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
 import 'services/control_dashboard_config_service.dart';
+import 'services/door_openings_repository.dart';
 import 'services/firebase_email_auth_service.dart';
 import 'services/plc_dashboard_service.dart';
+import 'services/presence_service.dart';
 import 'services/site_config_service.dart';
+import 'services/site_plc_config_service.dart';
 import 'services/tenant_membership_service.dart';
 import 'services/user_context_service.dart';
 import 'services/user_management_service.dart';
 import 'services/water_shortage_repository.dart';
+import 'widgets/active_users_eye.dart';
 import 'widgets/dashboard_header.dart';
 import 'widgets/press_magnifier_region.dart';
 import 'utils/browser_exit_guard.dart';
@@ -160,6 +168,7 @@ class AgroDataShell extends StatefulWidget {
 
 class _AgroDataShellState extends State<AgroDataShell> {
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
+  static const Duration _presenceHeartbeatInterval = Duration(seconds: 30);
   static const Duration _snapshotStaleThreshold = Duration(seconds: 20);
   static const Duration _snapshotPulseDuration = Duration(milliseconds: 400);
 
@@ -168,22 +177,33 @@ class _AgroDataShellState extends State<AgroDataShell> {
       const TenantMembershipService();
   final ControlDashboardConfigService _dashboardConfigService =
       const ControlDashboardConfigService();
+  final PresenceService _presenceService = const PresenceService();
   PlcDashboardService _service = const PlcDashboardService();
   String? _activeSiteId;
   String? _activeSiteName;
+  String? _activeBackendEndpoint;
   List<SiteDocument> _availableSites = const <SiteDocument>[];
+  List<PlcDisplayConfig> _plcConfigs = const <PlcDisplayConfig>[];
   final SiteConfigService _siteConfigService = const SiteConfigService();
+  final SitePlcConfigService _sitePlcConfigService =
+      const SitePlcConfigService();
   final PressMagnifierController _magnifierController =
       PressMagnifierController();
   String _selectedTab = 'comparativo';
   DashboardSnapshot _snapshot = DashboardSnapshot.placeholder();
   Timer? _refreshTimer;
+  Timer? _presenceHeartbeatTimer;
   DashboardRangeSettings _rangeSettings =
       const DashboardRangeSettings.defaults();
+  ElectricConsumptionSettings _electricConsumptionSettings =
+      const ElectricConsumptionSettings.defaults();
   MagnifierSettings _magnifierSettings = const MagnifierSettings.defaults();
   UnitVisibilitySettings _unitVisibilitySettings =
       const UnitVisibilitySettings.defaults();
+  ManualFanStatusSettings _manualFanStatusSettings =
+      const ManualFanStatusSettings.defaults();
   List<String> _comparisonModuleOrder = ComparisonPage.defaultModuleOrder;
+  int _dashboardHomeGeneration = 0;
   late Future<_DashboardBootstrapResult> _dashboardBootstrapFuture;
   StreamSubscription<ControlDashboardConfigResult>? _configSubscription;
   bool _liveRequestInFlight = false;
@@ -195,6 +215,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   String? _historyTenantId;
   String? _historySiteId;
   String? _userRole;
+  String? _presenceWorkspaceId;
   final WaterShortageRepository _waterShortageRepo =
       const WaterShortageRepository();
   final Map<String, bool?> _prevNivelAguaAlarma = {};
@@ -210,6 +231,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
   @override
   void dispose() {
+    unawaited(_stopPresence(markOffline: true));
     _disposeBrowserExitGuard();
     _refreshTimer?.cancel();
     _snapshotPulseTimer?.cancel();
@@ -241,6 +263,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
               );
             });
           }
+          setState(() {
+            _manualFanStatusSettings = config.manualFanStatusSettings;
+          });
         });
   }
 
@@ -248,6 +273,79 @@ class _AgroDataShellState extends State<AgroDataShell> {
     setState(() {
       _selectedTab = tab;
     });
+    _touchPresence();
+  }
+
+  void _goHomeDashboard() {
+    setState(() {
+      _selectedTab = 'comparativo';
+      _dashboardHomeGeneration += 1;
+    });
+    _touchPresence();
+  }
+
+  Future<void> _signOut() async {
+    await _stopPresence(markOffline: true);
+    await widget.authService.signOut();
+  }
+
+  Future<void> _startPresence({
+    required String workspaceId,
+    required String? role,
+  }) async {
+    if (_presenceWorkspaceId == workspaceId) {
+      await _presenceService.heartbeat(
+        workspaceId: workspaceId,
+        user: widget.user,
+        role: role,
+      );
+      return;
+    }
+
+    await _stopPresence(markOffline: true);
+    if (mounted) {
+      setState(() {
+        _presenceWorkspaceId = workspaceId;
+      });
+    } else {
+      _presenceWorkspaceId = workspaceId;
+    }
+    await _presenceService.markOnline(
+      workspaceId: workspaceId,
+      user: widget.user,
+      role: role,
+    );
+    _presenceHeartbeatTimer = Timer.periodic(
+      _presenceHeartbeatInterval,
+      (_) => _touchPresence(),
+    );
+  }
+
+  Future<void> _stopPresence({required bool markOffline, User? user}) async {
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = null;
+    final String? workspaceId = _presenceWorkspaceId;
+    _presenceWorkspaceId = null;
+    if (markOffline && workspaceId != null) {
+      await _presenceService.markOffline(
+        workspaceId: workspaceId,
+        user: user ?? widget.user,
+      );
+    }
+  }
+
+  void _touchPresence() {
+    final String? workspaceId = _presenceWorkspaceId;
+    if (workspaceId == null) {
+      return;
+    }
+    unawaited(
+      _presenceService.heartbeat(
+        workspaceId: workspaceId,
+        user: widget.user,
+        role: _userRole,
+      ),
+    );
   }
 
   Future<void> _updateComparisonModuleOrder(List<String> moduleOrder) async {
@@ -325,6 +423,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   void didUpdateWidget(covariant AgroDataShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.uid != widget.user.uid) {
+      unawaited(_stopPresence(markOffline: true, user: oldWidget.user));
       _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
     }
   }
@@ -332,6 +431,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   Future<_DashboardBootstrapResult> _createDashboardBootstrapFuture() async {
     final _DashboardBootstrapResult result = await _loadDashboardBootstrap();
     if (!result.canReadConfig) {
+      await _stopPresence(markOffline: true);
       return result;
     }
 
@@ -357,6 +457,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
     if (mounted) {
       setState(() {
         _unitVisibilitySettings = result.unitVisibilitySettings;
+        _manualFanStatusSettings = result.manualFanStatusSettings;
       });
     }
     final List<String>? configuredComparisonModuleOrder =
@@ -373,13 +474,22 @@ class _AgroDataShellState extends State<AgroDataShell> {
         _userRole = result.userContext.role;
         _activeSiteId = result.siteId.isNotEmpty ? result.siteId : null;
         _activeSiteName = result.siteDocument?.name;
+        _activeBackendEndpoint = result.siteDocument?.backendUrl;
         _availableSites = result.availableSites;
+        _plcConfigs = result.plcConfigs;
         _service = PlcDashboardService(
           endpoint: result.siteDocument?.backendUrl,
+          plcNames: {
+            for (final PlcDisplayConfig p in result.plcConfigs)
+              p.plcId: p.displayName,
+          },
         );
       });
       final String? tenantId = result.userContext.activeTenantId;
       if (tenantId != null) {
+        unawaited(
+          _startPresence(workspaceId: tenantId, role: result.userContext.role),
+        );
         _startConfigStream(tenantId: tenantId, siteId: result.siteId);
         unawaited(
           _loadWaterShortageSummaries(
@@ -401,10 +511,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final bool bypassesMembership =
         isOwner || userContext.role == UserAppRole.valkeTechnician;
 
-    // Resolve effective siteId: prefer saved defaultSiteId, fall back to first
-    // allowed site. No hardcoded fallback — null means no site assigned yet.
-    final String? resolvedSiteId =
-        (userContext.defaultSiteId?.isNotEmpty == true)
+    // Resolve effective siteId: prefer saved defaultSiteId only when it is
+    // allowed for the user. If no allowedSiteIds exist, access stays blocked.
+    final bool defaultSiteAllowed =
+        userContext.defaultSiteId?.isNotEmpty == true &&
+        (isOwner ||
+            userContext.allowedSiteIds.contains(userContext.defaultSiteId));
+    final String? resolvedSiteId = defaultSiteAllowed
         ? userContext.defaultSiteId
         : (userContext.allowedSiteIds.isNotEmpty
               ? userContext.allowedSiteIds.first
@@ -429,15 +542,22 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final String tenantId = userContext.activeTenantId!;
 
     // Fetch site document and available sites list in parallel.
-    final SiteDocument? siteDoc = await _siteConfigService.fetchSite(
+    final SiteDocument? fetchedSiteDoc = await _siteConfigService.fetchSite(
       tenantId: tenantId,
       siteId: resolvedSiteId,
     );
+    final SiteDocument siteDoc =
+        fetchedSiteDoc ??
+        _siteConfigService.fallbackSingleSite(siteId: resolvedSiteId);
     final List<SiteDocument> availableSites = await _siteConfigService
         .fetchActiveSitesForUser(
           tenantId: tenantId,
           allowedSiteIds: userContext.allowedSiteIds,
         );
+
+    // Load PLC display config (safe fallback: empty list if collection missing).
+    final List<PlcDisplayConfig> plcConfigs = await _sitePlcConfigService
+        .fetchActivePlcs(tenantId: tenantId, siteId: resolvedSiteId);
 
     // Tenant users need a membership record. Global Valke roles do not.
     if (!bypassesMembership) {
@@ -468,6 +588,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
         siteId: resolvedSiteId,
         siteDocument: siteDoc,
         availableSites: availableSites,
+        plcConfigs: plcConfigs,
       );
     }
 
@@ -482,6 +603,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       siteId: resolvedSiteId,
       siteDocument: siteDoc,
       availableSites: availableSites,
+      plcConfigs: plcConfigs,
     );
   }
 
@@ -529,12 +651,24 @@ class _AgroDataShellState extends State<AgroDataShell> {
         case _SettingsMenuAction.unitVisibilitySettings:
           await _openUnitVisibilitySettings();
           continue;
+        case _SettingsMenuAction.manualFanStatusSettings:
+          await _openManualFanStatusSettings();
+          continue;
+        case _SettingsMenuAction.electricConsumptionSettings:
+          await _openElectricConsumptionSettings();
+          continue;
+        case _SettingsMenuAction.visualConfig:
+          await _openVisualConfig();
+          continue;
         case _SettingsMenuAction.manageUsers:
           await showDialog<void>(
             // ignore: use_build_context_synchronously
             context: context,
             builder: (context) => const UserManagementPage(),
           );
+          continue;
+        case _SettingsMenuAction.doorOpeningsCleanup:
+          await _openDoorOpeningsCleanup(bootstrap);
           continue;
         case _SettingsMenuAction.rolesHelp:
           await showDialog<void>(
@@ -816,13 +950,15 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _openUnitVisibilitySettings() async {
-    final UnitVisibilitySettings? updated =
-        await showDialog<UnitVisibilitySettings>(
-          context: context,
-          builder: (context) => _UnitVisibilitySettingsDialog(
-            initialSettings: _unitVisibilitySettings,
-          ),
-        );
+    final UnitVisibilitySettings?
+    updated = await showDialog<UnitVisibilitySettings>(
+      context: context,
+      builder: (context) => _UnitVisibilitySettingsDialog(
+        initialSettings: _unitVisibilitySettings,
+        plc1Label: _plcConfigs.isNotEmpty ? _plcConfigs[0].columnLabel : 'M1',
+        plc2Label: _plcConfigs.length > 1 ? _plcConfigs[1].columnLabel : 'M2',
+      ),
+    );
 
     if (updated == null || !mounted) {
       return;
@@ -849,6 +985,152 @@ class _AgroDataShellState extends State<AgroDataShell> {
     });
   }
 
+  Future<void> _openElectricConsumptionSettings() async {
+    final ElectricConsumptionSettings? updated =
+        await showDialog<ElectricConsumptionSettings>(
+          context: context,
+          builder: (context) => _ElectricConsumptionSettingsDialog(
+            initialSettings: _electricConsumptionSettings,
+          ),
+        );
+    if (updated == null || !mounted) {
+      return;
+    }
+    setState(() {
+      _electricConsumptionSettings = updated;
+    });
+  }
+
+  Future<void> _openManualFanStatusSettings() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) {
+      return;
+    }
+    final bool canEditManualFanStatus =
+        bootstrap.userContext.role == UserAppRole.owner ||
+        bootstrap.userContext.role == UserAppRole.valkeTechnician;
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String siteId = bootstrap.siteId;
+    if (!canEditManualFanStatus ||
+        tenantId == null ||
+        tenantId.isEmpty ||
+        siteId.isEmpty) {
+      return;
+    }
+
+    final ManualFanStatusSettings?
+    updated = await showDialog<ManualFanStatusSettings>(
+      context: context,
+      builder: (context) => _ManualFanStatusSettingsDialog(
+        initialSettings: _manualFanStatusSettings,
+        plc1Label: _plcConfigs.isNotEmpty ? _plcConfigs[0].columnLabel : 'M1',
+        plc2Label: _plcConfigs.length > 1 ? _plcConfigs[1].columnLabel : 'M2',
+      ),
+    );
+    if (updated == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _manualFanStatusSettings = updated;
+    });
+
+    final ControlDashboardSaveResult result = await _dashboardConfigService
+        .saveManualFanStatusSettings(
+          tenantId: tenantId,
+          siteId: siteId,
+          userUid: widget.user.uid,
+          settings: updated,
+        );
+
+    if (!mounted) {
+      return;
+    }
+    if (!result.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No se pudo guardar estado de fanes: ${result.errorMessage}',
+          ),
+        ),
+      );
+      return;
+    }
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Estado de fanes guardado.')));
+  }
+
+  Future<void> _openVisualConfig() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) return;
+    if (bootstrap.userContext.role != UserAppRole.owner) return;
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String siteId = bootstrap.siteId;
+    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) return;
+
+    final bool? saved = await showDialog<bool>(
+      // ignore: use_build_context_synchronously
+      context: context,
+      builder: (context) => _VisualConfigDialog(
+        tenantId: tenantId,
+        siteId: siteId,
+        siteName: _activeSiteName ?? siteId,
+        plcConfigs: _plcConfigs,
+        service: _sitePlcConfigService,
+      ),
+    );
+
+    if (saved != true || !mounted) return;
+
+    // Reload display names after save.
+    final List<PlcDisplayConfig> newConfigs = await _sitePlcConfigService
+        .fetchActivePlcs(tenantId: tenantId, siteId: siteId);
+    final SiteDocument? updatedSite = await _siteConfigService.fetchSite(
+      tenantId: tenantId,
+      siteId: siteId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _plcConfigs = newConfigs;
+      if (updatedSite != null) _activeSiteName = updatedSite.name;
+      _service = PlcDashboardService(
+        endpoint: _activeBackendEndpoint,
+        plcNames: {
+          for (final PlcDisplayConfig p in newConfigs) p.plcId: p.displayName,
+        },
+      );
+    });
+  }
+
+  Future<void> _openDoorOpeningsCleanup(
+    _DashboardBootstrapResult bootstrap,
+  ) async {
+    if (bootstrap.userContext.role != UserAppRole.owner) {
+      return;
+    }
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String siteId = bootstrap.siteId;
+    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay tenant/site activo para borrar aperturas.'),
+        ),
+      );
+      return;
+    }
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _DoorOpeningsCleanupDialog(
+        tenantId: tenantId,
+        siteId: siteId,
+        repository: const DoorOpeningsRepository(),
+      ),
+    );
+  }
+
   Future<void> _switchSite(String siteId) async {
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     final String? tenantId = bootstrap.userContext.activeTenantId;
@@ -871,17 +1153,19 @@ class _AgroDataShellState extends State<AgroDataShell> {
       debugPrint('[site-switch] persist error=$error');
     }
 
-    final SiteDocument? siteDoc = await _siteConfigService.fetchSite(
+    final SiteDocument? fetchedSiteDoc = await _siteConfigService.fetchSite(
       tenantId: tenantId,
       siteId: siteId,
     );
+    final SiteDocument siteDoc =
+        fetchedSiteDoc ?? _siteConfigService.fallbackSingleSite(siteId: siteId);
 
     if (!mounted) return;
     setState(() {
       _activeSiteId = siteId;
-      _activeSiteName = siteDoc?.name;
+      _activeSiteName = siteDoc.name;
       _historySiteId = siteId;
-      _service = PlcDashboardService(endpoint: siteDoc?.backendUrl);
+      _service = PlcDashboardService(endpoint: siteDoc.backendUrl);
     });
 
     _startConfigStream(tenantId: tenantId, siteId: siteId);
@@ -1256,7 +1540,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
           return _AccessBlockedScaffold(
             title: 'No se pudo validar el acceso',
             message: snapshot.error.toString(),
-            onSignOut: widget.authService.signOut,
+            onSignOut: _signOut,
           );
         }
 
@@ -1268,7 +1552,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
             message:
                 bootstrap?.accessDeniedMessage(widget.user) ??
                 'Tu usuario todavia no tiene rol, tenant y site asignados.',
-            onSignOut: widget.authService.signOut,
+            onSignOut: _signOut,
           );
         }
 
@@ -1278,7 +1562,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Widget _buildDashboard(BuildContext context) {
-    final List<MuntersModel> units = _snapshot.units;
+    final List<MuntersModel> units = _applyManualFanStatusToUnits(
+      _snapshot.units,
+    );
     final MuntersModel munters1 = units.first;
     final MuntersModel munters2 = units.length > 1
         ? units[1]
@@ -1286,6 +1572,11 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final MuntersModel selectedUnit = _selectedTab == 'munters2'
         ? munters2
         : munters1;
+    final String screenTitle = _selectedTab == 'comparativo'
+        ? 'Dashboard'
+        : selectedUnit.name;
+    final String? presenceWorkspaceId =
+        _presenceWorkspaceId ?? _historyTenantId;
 
     debugPrint(
       '[frontend-render] root.plcOnline=null status.plcOnline=null munters1.plcOnline=${munters1.plcOnline} munters2.plcOnline=${munters2.plcOnline}',
@@ -1312,19 +1603,27 @@ class _AgroDataShellState extends State<AgroDataShell> {
             children: [
               DashboardHeader(
                 selectedTab: _selectedTab,
+                screenTitle: screenTitle,
                 onSignOut: () async {
                   final bool shouldSignOut = await _confirmSignOut();
                   if (!shouldSignOut || !mounted) {
                     return;
                   }
-                  await widget.authService.signOut();
+                  await _signOut();
                 },
                 onOpenSettings: _openSettings,
-                onSelectComparison: () => _selectTab('comparativo'),
+                onSelectComparison: _goHomeDashboard,
+                onLogoTap: _goHomeDashboard,
+                userEmail: widget.user.email,
                 siteName: _activeSiteName,
                 activeSiteId: _activeSiteId,
                 availableSites: _availableSites,
                 onSiteChanged: _switchSite,
+                activeUsersIndicator:
+                    _userRole == UserAppRole.owner &&
+                        presenceWorkspaceId != null
+                    ? ActiveUsersEye(workspaceId: presenceWorkspaceId)
+                    : null,
               ),
               if (_snapshotStale)
                 _StaleSnapshotBanner(
@@ -1353,6 +1652,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             magnifierSettings: _magnifierSettings,
                             moduleOrder: _comparisonModuleOrder,
                             onModuleOrderChanged: _updateComparisonModuleOrder,
+                            homeGeneration: _dashboardHomeGeneration,
+                            plc1ColumnLabel: _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].columnLabel
+                                : null,
+                            plc2ColumnLabel: _plcConfigs.length > 1
+                                ? _plcConfigs[1].columnLabel
+                                : null,
                           ),
                         );
                       }
@@ -1438,6 +1744,93 @@ class _AgroDataShellState extends State<AgroDataShell> {
       ),
     );
   }
+
+  List<MuntersModel> _applyManualFanStatusToUnits(List<MuntersModel> units) {
+    if (units.isEmpty) {
+      return units;
+    }
+
+    return <MuntersModel>[
+      _applyManualFanStatus(units[0], _manualFanStatusSettings.munters1),
+      if (units.length > 1)
+        _applyManualFanStatus(units[1], _manualFanStatusSettings.munters2),
+      if (units.length > 2) ...units.skip(2),
+    ];
+  }
+
+  MuntersModel _applyManualFanStatus(
+    MuntersModel source,
+    FanUnitStatusSettings settings,
+  ) {
+    final bool? running = _isFanPowerRunning(source.tensionSalidaVentiladores);
+    bool? fanStatus(bool enabled) {
+      if (!enabled) {
+        return false;
+      }
+      return running;
+    }
+
+    return MuntersModel(
+      name: source.name,
+      historyClientId: source.historyClientId,
+      historyPlcId: source.historyPlcId,
+      diagnostics: source.diagnostics,
+      backendOnline: source.backendOnline,
+      configured: source.configured,
+      plcReachable: source.plcReachable,
+      plcRunning: source.plcRunning,
+      dataFresh: source.dataFresh,
+      plcOnline: source.plcOnline,
+      plcLatencyMs: source.plcLatencyMs,
+      routerLatencyMs: source.routerLatencyMs,
+      backendStartedAt: source.backendStartedAt,
+      lastUpdatedAt: source.lastUpdatedAt,
+      previousLastUpdatedAt: source.previousLastUpdatedAt,
+      updateDeltaSeconds: source.updateDeltaSeconds,
+      lastHeartbeatValue: source.lastHeartbeatValue,
+      lastHeartbeatChangeAt: source.lastHeartbeatChangeAt,
+      lastError: source.lastError,
+      tempInterior: source.tempInterior,
+      tempIngresoSala: source.tempIngresoSala,
+      humInterior: source.humInterior,
+      tempExterior: source.tempExterior,
+      humExterior: source.humExterior,
+      nh3: source.nh3,
+      presionDiferencial: source.presionDiferencial,
+      tensionSalidaVentiladores: source.tensionSalidaVentiladores,
+      fanQ5: fanStatus(settings.q5),
+      fanQ6: fanStatus(settings.q6),
+      fanQ7: fanStatus(settings.q7),
+      fanQ8: fanStatus(settings.q8),
+      fanQ9: fanStatus(settings.q9),
+      fanQ10: fanStatus(settings.q10),
+      bombaHumidificador: source.bombaHumidificador,
+      resistencia1: source.resistencia1,
+      resistencia2: source.resistencia2,
+      alarmaGeneral: source.alarmaGeneral,
+      fallaRed: source.fallaRed,
+      nivelAguaAlarma: source.nivelAguaAlarma,
+      fallaTermicaBomba: source.fallaTermicaBomba,
+      eventosSinAgua: source.eventosSinAgua,
+      horasMunter: source.horasMunter,
+      horasFiltroF9: source.horasFiltroF9,
+      horasFiltroG4: source.horasFiltroG4,
+      horasPolifosfato: source.horasPolifosfato,
+      salaAbierta: source.salaAbierta,
+      aperturasSala: source.aperturasSala,
+      munterAbierto: source.munterAbierto,
+      aperturasMunter: source.aperturasMunter,
+      cantidadApagadas: source.cantidadApagadas,
+      estadoEquipo: source.estadoEquipo,
+    );
+  }
+}
+
+bool? _isFanPowerRunning(double? voltage) {
+  if (voltage == null) {
+    return null;
+  }
+  return voltage > 0.1;
 }
 
 class _LoginScreen extends StatefulWidget {
@@ -1723,6 +2116,7 @@ class _DashboardBootstrapResult {
     required this.siteId,
     this.siteDocument,
     this.availableSites = const <SiteDocument>[],
+    this.plcConfigs = const <PlcDisplayConfig>[],
   });
 
   final UserContextResult userContext;
@@ -1731,6 +2125,7 @@ class _DashboardBootstrapResult {
   final String siteId;
   final SiteDocument? siteDocument;
   final List<SiteDocument> availableSites;
+  final List<PlcDisplayConfig> plcConfigs;
 
   bool get bypassesMembership =>
       userContext.role == UserAppRole.owner ||
@@ -1747,6 +2142,10 @@ class _DashboardBootstrapResult {
   bool get canEditConfig =>
       userContext.role == UserAppRole.owner ||
       membership.role == UserAppRole.tenantAdmin;
+
+  bool get canEditManualFanStatus =>
+      userContext.role == UserAppRole.owner ||
+      userContext.role == UserAppRole.valkeTechnician;
 
   String accessDeniedMessage(User user) {
     final String identity = user.email ?? user.uid;
@@ -1820,14 +2219,12 @@ class _DashboardBootstrapResult {
         showMunters2: userShowMunters2 ?? true,
       );
     }
-    if (config == null || !config!.hasVisibleUnitsConfig) {
-      return const UnitVisibilitySettings.defaults();
-    }
-    return UnitVisibilitySettings(
-      showMunters1: config?.readShowMunters1() ?? true,
-      showMunters2: config?.readShowMunters2() ?? true,
-    );
+    return const UnitVisibilitySettings.defaults();
   }
+
+  ManualFanStatusSettings get manualFanStatusSettings =>
+      config?.manualFanStatusSettings ??
+      const ManualFanStatusSettings.defaults();
 
   List<String>? get comparisonModuleOrderOrNull {
     final List<String>? storedOrder = userContext.readComparisonModuleOrder();
@@ -2041,8 +2438,12 @@ enum _SettingsMenuAction {
   debugFilterIcons,
   magnifierSettings,
   unitVisibilitySettings,
+  manualFanStatusSettings,
+  electricConsumptionSettings,
   manageUsers,
+  doorOpeningsCleanup,
   rolesHelp,
+  visualConfig,
   legacyInterfaces,
   legacyDashboard,
   legacyMunters1,
@@ -2065,235 +2466,280 @@ class _SettingsMenuDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool canChangePassword = userRole != UserAppRole.valkeTechnician;
+    final bool canShowAdvancedSeteos = userRole != UserAppRole.tenantAdmin;
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double maxContentHeight = (screenSize.height - 180)
+        .clamp(220.0, 640.0)
+        .toDouble();
 
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
       backgroundColor: const Color(0xFF111827),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: const Text(
-        'Configuracion',
+        'Configuración',
         style: TextStyle(color: Color(0xFFE5E7EB)),
       ),
-      content: SizedBox(
-        width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Usuario',
-              style: TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF0F172A),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFF334155)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Email actual',
-                              style: TextStyle(
-                                color: Color(0xFF94A3B8),
-                                fontSize: 12,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              userEmail,
-                              style: const TextStyle(
-                                color: Color(0xFFE5E7EB),
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      if (canChangePassword) ...[
-                        const SizedBox(width: 8),
-                        IconButton.filledTonal(
-                          tooltip: 'Cambiar password',
-                          onPressed: () => Navigator.of(
-                            context,
-                          ).pop(_SettingsMenuAction.changePassword),
-                          icon: const Icon(Icons.build_rounded, size: 18),
-                        ),
-                      ],
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            if (canEditConfig) ...[
-              const SizedBox(height: 18),
-              const Text(
-                'Seteos',
-                style: TextStyle(
-                  color: Color(0xFFE5E7EB),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 420, maxHeight: maxContentHeight),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const _SettingsMenuSectionTitle('Usuario'),
               const SizedBox(height: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  FilledButton.tonal(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(_SettingsMenuAction.rangeSettings),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Text('Rangos Temp. y Hum.'),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.tonal(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(_SettingsMenuAction.filterSettings),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Text('Limite Presion Diferencial'),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.tonal(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(_SettingsMenuAction.magnifierSettings),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Text('Lupa'),
-                  ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 18),
-            const Text(
-              'Vista',
-              style: TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.tonal(
-                onPressed: () => Navigator.of(
-                  context,
-                ).pop(_SettingsMenuAction.unitVisibilitySettings),
-                style: FilledButton.styleFrom(
-                  minimumSize: const Size(0, 42),
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                ),
-                child: const Text('PLC visibles'),
-              ),
-            ),
-            if (userRole == UserAppRole.owner) ...[
-              const SizedBox(height: 18),
-              const Text(
-                'Administración',
-                style: TextStyle(
-                  color: Color(0xFFE5E7EB),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  FilledButton.tonal(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(_SettingsMenuAction.rolesHelp),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.security_rounded, size: 18),
-                        SizedBox(width: 8),
-                        Text('Roles'),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  FilledButton.tonal(
-                    onPressed: () => Navigator.of(
-                      context,
-                    ).pop(_SettingsMenuAction.manageUsers),
-                    style: FilledButton.styleFrom(
-                      minimumSize: const Size(0, 42),
-                      padding: const EdgeInsets.symmetric(horizontal: 12),
-                    ),
-                    child: const Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.manage_accounts_rounded, size: 18),
-                        SizedBox(width: 8),
-                        Text('Gestión de usuarios'),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 18),
-              const Text(
-                'Interfaces viejas',
-                style: TextStyle(
-                  color: Color(0xFFE5E7EB),
-                  fontSize: 14,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 8),
-              SizedBox(
+              Container(
                 width: double.infinity,
-                child: FilledButton.tonal(
-                  onPressed: () => Navigator.of(
-                    context,
-                  ).pop(_SettingsMenuAction.legacyInterfaces),
-                  style: FilledButton.styleFrom(
-                    minimumSize: const Size(0, 42),
-                    padding: const EdgeInsets.symmetric(horizontal: 12),
-                  ),
-                  child: const Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.subdirectory_arrow_right_rounded, size: 18),
-                      SizedBox(width: 8),
-                      Text('Abrir interfaces'),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0F172A),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF334155)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Email actual',
+                            style: TextStyle(
+                              color: Color(0xFF94A3B8),
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            userEmail,
+                            style: const TextStyle(
+                              color: Color(0xFFE5E7EB),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (canChangePassword) ...[
+                      const SizedBox(width: 8),
+                      IconButton.filledTonal(
+                        tooltip: 'Cambiar password',
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).pop(_SettingsMenuAction.changePassword),
+                        icon: const Icon(Icons.build_rounded, size: 18),
+                      ),
                     ],
-                  ),
+                  ],
                 ),
               ),
+              if (canEditConfig) ...[
+                const SizedBox(height: 18),
+                const _SettingsMenuSectionTitle('Seteos'),
+                const SizedBox(height: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.rangeSettings),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Text('Rangos Temp. y Hum.'),
+                    ),
+                    if (canShowAdvancedSeteos) ...[
+                      const SizedBox(height: 8),
+                      FilledButton.tonal(
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).pop(_SettingsMenuAction.filterSettings),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 42),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: const Text('Límite Presión Diferencial'),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.magnifierSettings),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Text('Lupa'),
+                    ),
+                    if (canShowAdvancedSeteos) ...[
+                      const SizedBox(height: 8),
+                      FilledButton.tonal(
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).pop(_SettingsMenuAction.electricConsumptionSettings),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 42),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: const Text('Consumos Eléctricos'),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+              const SizedBox(height: 18),
+              const _SettingsMenuSectionTitle('Vista'),
+              const SizedBox(height: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  FilledButton.tonal(
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).pop(_SettingsMenuAction.unitVisibilitySettings),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 42),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    child: const Text('PLC visibles'),
+                  ),
+                  if (userRole == UserAppRole.owner ||
+                      userRole == UserAppRole.valkeTechnician) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.manualFanStatusSettings),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.air_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Estado Fanes'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+              if (userRole == UserAppRole.owner) ...[
+                const SizedBox(height: 18),
+                const _SettingsMenuSectionTitle('Administración'),
+                const SizedBox(height: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.rolesHelp),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.security_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Roles'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.manageUsers),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.manage_accounts_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Gestión de usuarios'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.visualConfig),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.drive_file_rename_outline_rounded,
+                            size: 18,
+                          ),
+                          SizedBox(width: 8),
+                          Text('Nombres de sala y PLCs'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.doorOpeningsCleanup),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.delete_sweep_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Borrar aperturas'),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                const _SettingsMenuSectionTitle('Interfaces viejas'),
+                const SizedBox(height: 8),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonal(
+                    onPressed: () => Navigator.of(
+                      context,
+                    ).pop(_SettingsMenuAction.legacyInterfaces),
+                    style: FilledButton.styleFrom(
+                      minimumSize: const Size(0, 42),
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                    ),
+                    child: const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.subdirectory_arrow_right_rounded, size: 18),
+                        SizedBox(width: 8),
+                        Text('Abrir interfaces'),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -2302,6 +2748,24 @@ class _SettingsMenuDialog extends StatelessWidget {
           child: const Text('Cerrar'),
         ),
       ],
+    );
+  }
+}
+
+class _SettingsMenuSectionTitle extends StatelessWidget {
+  const _SettingsMenuSectionTitle(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFE5E7EB),
+        fontSize: 14,
+        fontWeight: FontWeight.w700,
+      ),
     );
   }
 }
@@ -2846,6 +3310,218 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   }
 }
 
+class _ElectricConsumptionSettingsDialog extends StatefulWidget {
+  const _ElectricConsumptionSettingsDialog({required this.initialSettings});
+
+  final ElectricConsumptionSettings initialSettings;
+
+  @override
+  State<_ElectricConsumptionSettingsDialog> createState() =>
+      _ElectricConsumptionSettingsDialogState();
+}
+
+class _ElectricConsumptionSettingsDialogState
+    extends State<_ElectricConsumptionSettingsDialog> {
+  late final TextEditingController _fan15;
+  late final TextEditingController _fan25;
+  late final TextEditingController _fan35;
+  late final TextEditingController _fan50;
+  late final TextEditingController _fan65;
+  late final TextEditingController _fan75;
+  late final TextEditingController _fan85;
+  late final TextEditingController _pump;
+  late final TextEditingController _heat1;
+  late final TextEditingController _heat2;
+  String? _errorText;
+
+  static String _fmt(double? v) => v == null ? '' : v.toString();
+
+  @override
+  void initState() {
+    super.initState();
+    final ElectricConsumptionSettings s = widget.initialSettings;
+    _fan15 = TextEditingController(text: _fmt(s.fanConsumption15));
+    _fan25 = TextEditingController(text: _fmt(s.fanConsumption25));
+    _fan35 = TextEditingController(text: _fmt(s.fanConsumption35));
+    _fan50 = TextEditingController(text: _fmt(s.fanConsumption50));
+    _fan65 = TextEditingController(text: _fmt(s.fanConsumption65));
+    _fan75 = TextEditingController(text: _fmt(s.fanConsumption75));
+    _fan85 = TextEditingController(text: _fmt(s.fanConsumption85));
+    _pump = TextEditingController(text: _fmt(s.pumpConsumption));
+    _heat1 = TextEditingController(text: _fmt(s.heatingConsumption1));
+    _heat2 = TextEditingController(text: _fmt(s.heatingConsumption2));
+  }
+
+  @override
+  void dispose() {
+    _fan15.dispose();
+    _fan25.dispose();
+    _fan35.dispose();
+    _fan50.dispose();
+    _fan65.dispose();
+    _fan75.dispose();
+    _fan85.dispose();
+    _pump.dispose();
+    _heat1.dispose();
+    _heat2.dispose();
+    super.dispose();
+  }
+
+  double? _parse(TextEditingController c) {
+    final String t = c.text.trim().replaceAll(',', '.');
+    if (t.isEmpty) return null;
+    return double.tryParse(t);
+  }
+
+  bool _isInvalidInput(TextEditingController c) {
+    final String t = c.text.trim().replaceAll(',', '.');
+    if (t.isEmpty) return false;
+    final double? v = double.tryParse(t);
+    return v == null || v < 0;
+  }
+
+  void _submit() {
+    final List<TextEditingController> all = [
+      _fan15,
+      _fan25,
+      _fan35,
+      _fan50,
+      _fan65,
+      _fan75,
+      _fan85,
+      _pump,
+      _heat1,
+      _heat2,
+    ];
+    if (all.any(_isInvalidInput)) {
+      setState(() {
+        _errorText =
+            'Algún valor ingresado no es válido. Usa números positivos.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(
+      ElectricConsumptionSettings(
+        fanConsumption15: _parse(_fan15),
+        fanConsumption25: _parse(_fan25),
+        fanConsumption35: _parse(_fan35),
+        fanConsumption50: _parse(_fan50),
+        fanConsumption65: _parse(_fan65),
+        fanConsumption75: _parse(_fan75),
+        fanConsumption85: _parse(_fan85),
+        pumpConsumption: _parse(_pump),
+        heatingConsumption1: _parse(_heat1),
+        heatingConsumption2: _parse(_heat2),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double maxContentHeight = (screenSize.height - 180).clamp(
+      300.0,
+      600.0,
+    );
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Consumos Eléctricos',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 420, maxHeight: maxContentHeight),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Los campos vacíos quedan sin configurar.',
+                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              _sectionLabel('Consumo Forzadores'),
+              const SizedBox(height: 4),
+              const Text(
+                'Potencia consumida según nivel de trabajo',
+                style: TextStyle(color: Color(0xFF64748B), fontSize: 11),
+              ),
+              const SizedBox(height: 10),
+              _RangeField(controller: _fan15, label: '15%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan25, label: '25%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan35, label: '35%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan50, label: '50%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan65, label: '65%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan75, label: '75%', suffix: 'kW'),
+              const SizedBox(height: 8),
+              _RangeField(controller: _fan85, label: '85%', suffix: 'kW'),
+              const SizedBox(height: 16),
+              _sectionLabel('Consumo Bomba Humidificadora'),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _pump,
+                label: 'Bomba humidificadora',
+                suffix: 'kW',
+              ),
+              const SizedBox(height: 16),
+              _sectionLabel('Consumo Calefactores'),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _heat1,
+                label: 'Resistencia etapa 1',
+                suffix: 'kW',
+              ),
+              const SizedBox(height: 8),
+              _RangeField(
+                controller: _heat2,
+                label: 'Resistencia etapa 2',
+                suffix: 'kW',
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFCA5A5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: Color(0xFFCBD5E1),
+        fontSize: 13,
+        fontWeight: FontWeight.w600,
+      ),
+    );
+  }
+}
+
 class _FilterSettingsDialog extends StatefulWidget {
   const _FilterSettingsDialog({required this.initialValue});
 
@@ -3248,10 +3924,230 @@ class _MagnifierSettingsDialog extends StatefulWidget {
       _MagnifierSettingsDialogState();
 }
 
+class _VisualConfigDialog extends StatefulWidget {
+  const _VisualConfigDialog({
+    required this.tenantId,
+    required this.siteId,
+    required this.siteName,
+    required this.plcConfigs,
+    required this.service,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final String siteName;
+  final List<PlcDisplayConfig> plcConfigs;
+  final SitePlcConfigService service;
+
+  @override
+  State<_VisualConfigDialog> createState() => _VisualConfigDialogState();
+}
+
+class _VisualConfigDialogState extends State<_VisualConfigDialog> {
+  late final TextEditingController _siteNameCtrl;
+  late final List<TextEditingController> _displayNameCtrls;
+  late final List<TextEditingController> _columnLabelCtrls;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _siteNameCtrl = TextEditingController(text: widget.siteName);
+    _displayNameCtrls = widget.plcConfigs
+        .map((p) => TextEditingController(text: p.displayName))
+        .toList();
+    _columnLabelCtrls = widget.plcConfigs
+        .map((p) => TextEditingController(text: p.columnLabel))
+        .toList();
+  }
+
+  @override
+  void dispose() {
+    _siteNameCtrl.dispose();
+    for (final c in _displayNameCtrls) {
+      c.dispose();
+    }
+    for (final c in _columnLabelCtrls) {
+      c.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final String siteName = _siteNameCtrl.text.trim();
+    if (siteName.isEmpty) {
+      setState(() => _errorText = 'El nombre de sala no puede estar vacío.');
+      return;
+    }
+    for (int i = 0; i < widget.plcConfigs.length; i++) {
+      if (_displayNameCtrls[i].text.trim().isEmpty ||
+          _columnLabelCtrls[i].text.trim().isEmpty) {
+        setState(
+          () => _errorText = 'Los nombres de PLC no pueden estar vacíos.',
+        );
+        return;
+      }
+    }
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      await widget.service.updateSiteName(
+        tenantId: widget.tenantId,
+        siteId: widget.siteId,
+        name: siteName,
+      );
+      for (int i = 0; i < widget.plcConfigs.length; i++) {
+        await widget.service.updatePlcDisplayConfig(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          plcId: widget.plcConfigs[i].plcId,
+          displayName: _displayNameCtrls[i].text.trim(),
+          columnLabel: _columnLabelCtrls[i].text.trim(),
+        );
+      }
+      if (mounted) {
+        Navigator.of(context).pop(true);
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _errorText = 'Error al guardar: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    const inputStyle = TextStyle(color: Color(0xFFE5E7EB));
+    const labelStyle = TextStyle(color: Color(0xFF94A3B8), fontSize: 12);
+    InputDecoration inputDec(String label) => InputDecoration(
+      labelText: label,
+      labelStyle: labelStyle,
+      enabledBorder: const OutlineInputBorder(
+        borderSide: BorderSide(color: Color(0xFF334155)),
+      ),
+      focusedBorder: const OutlineInputBorder(
+        borderSide: BorderSide(color: Color(0xFF3B82F6)),
+      ),
+      isDense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    );
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Nombres de sala y PLCs',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: 420,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Sala',
+                style: TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _siteNameCtrl,
+                style: inputStyle,
+                decoration: inputDec('Nombre visible'),
+              ),
+              if (widget.plcConfigs.isNotEmpty) ...[
+                const SizedBox(height: 18),
+                const Text(
+                  'PLCs',
+                  style: TextStyle(
+                    color: Color(0xFFE5E7EB),
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                for (int i = 0; i < widget.plcConfigs.length; i++) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    'ID técnico: ${widget.plcConfigs[i].plcId}',
+                    style: labelStyle,
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _displayNameCtrls[i],
+                    style: inputStyle,
+                    decoration: inputDec('Nombre completo (displayName)'),
+                  ),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: _columnLabelCtrls[i],
+                    style: inputStyle,
+                    decoration: inputDec('Etiqueta corta (columnLabel)'),
+                  ),
+                ],
+              ] else
+                const Padding(
+                  padding: EdgeInsets.only(top: 12),
+                  child: Text(
+                    'No hay PLCs configurados en Firestore para esta sala.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                  ),
+                ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFCA5A5),
+                    fontSize: 12,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(false),
+          child: const Text(
+            'Cancelar',
+            style: TextStyle(color: Color(0xFF94A3B8)),
+          ),
+        ),
+        FilledButton(
+          onPressed: _saving ? null : _save,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Guardar'),
+        ),
+      ],
+    );
+  }
+}
+
 class _UnitVisibilitySettingsDialog extends StatefulWidget {
-  const _UnitVisibilitySettingsDialog({required this.initialSettings});
+  const _UnitVisibilitySettingsDialog({
+    required this.initialSettings,
+    this.plc1Label = 'M1',
+    this.plc2Label = 'M2',
+  });
 
   final UnitVisibilitySettings initialSettings;
+  final String plc1Label;
+  final String plc2Label;
 
   @override
   State<_UnitVisibilitySettingsDialog> createState() =>
@@ -3311,9 +4207,9 @@ class _UnitVisibilitySettingsDialogState
               value: _showMunters1,
               activeThumbColor: const Color(0xFF22C55E),
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'Mostrar M1',
-                style: TextStyle(color: Color(0xFFE5E7EB)),
+              title: Text(
+                'Mostrar ${widget.plc1Label}',
+                style: const TextStyle(color: Color(0xFFE5E7EB)),
               ),
               onChanged: (bool value) {
                 setState(() {
@@ -3326,9 +4222,9 @@ class _UnitVisibilitySettingsDialogState
               value: _showMunters2,
               activeThumbColor: const Color(0xFF22C55E),
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'Mostrar M2',
-                style: TextStyle(color: Color(0xFFE5E7EB)),
+              title: Text(
+                'Mostrar ${widget.plc2Label}',
+                style: const TextStyle(color: Color(0xFFE5E7EB)),
               ),
               onChanged: (bool value) {
                 setState(() {
@@ -3358,6 +4254,202 @@ class _UnitVisibilitySettingsDialogState
         ),
         FilledButton(onPressed: _submit, child: const Text('Guardar')),
       ],
+    );
+  }
+}
+
+class _ManualFanStatusSettingsDialog extends StatefulWidget {
+  const _ManualFanStatusSettingsDialog({
+    required this.initialSettings,
+    this.plc1Label = 'M1',
+    this.plc2Label = 'M2',
+  });
+
+  final ManualFanStatusSettings initialSettings;
+  final String plc1Label;
+  final String plc2Label;
+
+  @override
+  State<_ManualFanStatusSettingsDialog> createState() =>
+      _ManualFanStatusSettingsDialogState();
+}
+
+class _ManualFanStatusSettingsDialogState
+    extends State<_ManualFanStatusSettingsDialog> {
+  late FanUnitStatusSettings _munters1;
+  late FanUnitStatusSettings _munters2;
+
+  @override
+  void initState() {
+    super.initState();
+    _munters1 = widget.initialSettings.munters1;
+    _munters2 = widget.initialSettings.munters2;
+  }
+
+  void _submit() {
+    Navigator.of(
+      context,
+    ).pop(ManualFanStatusSettings(munters1: _munters1, munters2: _munters2));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Estado Fanes',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: 520,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'El voltaje de potencia define si hay salida. Estos checks indican que fanes estan habilitados manualmente cuando hay potencia.',
+                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              _FanUnitStatusEditor(
+                title: widget.plc1Label,
+                settings: _munters1,
+                onChanged: (FanUnitStatusSettings value) {
+                  setState(() => _munters1 = value);
+                },
+              ),
+              const SizedBox(height: 14),
+              _FanUnitStatusEditor(
+                title: widget.plc2Label,
+                settings: _munters2,
+                onChanged: (FanUnitStatusSettings value) {
+                  setState(() => _munters2 = value);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+
+class _FanUnitStatusEditor extends StatelessWidget {
+  const _FanUnitStatusEditor({
+    required this.title,
+    required this.settings,
+    required this.onChanged,
+  });
+
+  final String title;
+  final FanUnitStatusSettings settings;
+  final ValueChanged<FanUnitStatusSettings> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              _FanStatusSwitch(
+                label: 'Q5',
+                value: settings.q5,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q5: value)),
+              ),
+              _FanStatusSwitch(
+                label: 'Q6',
+                value: settings.q6,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q6: value)),
+              ),
+              _FanStatusSwitch(
+                label: 'Q7',
+                value: settings.q7,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q7: value)),
+              ),
+              _FanStatusSwitch(
+                label: 'Q8',
+                value: settings.q8,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q8: value)),
+              ),
+              _FanStatusSwitch(
+                label: 'Q9',
+                value: settings.q9,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q9: value)),
+              ),
+              _FanStatusSwitch(
+                label: 'Q10',
+                value: settings.q10,
+                onChanged: (bool value) =>
+                    onChanged(settings.copyWith(q10: value)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _FanStatusSwitch extends StatelessWidget {
+  const _FanStatusSwitch({
+    required this.label,
+    required this.value,
+    required this.onChanged,
+  });
+
+  final String label;
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 78,
+      child: SwitchListTile.adaptive(
+        dense: true,
+        value: value,
+        activeThumbColor: const Color(0xFF22C55E),
+        contentPadding: EdgeInsets.zero,
+        title: Text(
+          label,
+          style: const TextStyle(color: Color(0xFFE5E7EB), fontSize: 12),
+          textAlign: TextAlign.center,
+        ),
+        onChanged: onChanged,
+      ),
     );
   }
 }
@@ -3474,6 +4566,294 @@ class _MagnifierSettingsDialogState extends State<_MagnifierSettingsDialog> {
       ],
     );
   }
+}
+
+class _DoorOpeningsCleanupDialog extends StatefulWidget {
+  const _DoorOpeningsCleanupDialog({
+    required this.tenantId,
+    required this.siteId,
+    required this.repository,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final DoorOpeningsRepository repository;
+
+  @override
+  State<_DoorOpeningsCleanupDialog> createState() =>
+      _DoorOpeningsCleanupDialogState();
+}
+
+class _DoorOpeningsCleanupDialogState
+    extends State<_DoorOpeningsCleanupDialog> {
+  static const List<_CleanupDoorOption> _doors = <_CleanupDoorOption>[
+    _CleanupDoorOption(id: 'sala', label: 'Puerta Sala'),
+    _CleanupDoorOption(id: 'munter', label: 'Puerta Munters'),
+  ];
+
+  int _doorIndex = 0;
+  final Set<String> _selectedOpeningIds = <String>{};
+  bool _deleting = false;
+
+  _CleanupDoorOption get _selectedDoor => _doors[_doorIndex];
+
+  void _switchDoor(int index) {
+    setState(() {
+      _doorIndex = index;
+      _selectedOpeningIds.clear();
+    });
+  }
+
+  void _toggleRecord(String openingId, bool selected) {
+    setState(() {
+      if (selected) {
+        _selectedOpeningIds.add(openingId);
+      } else {
+        _selectedOpeningIds.remove(openingId);
+      }
+    });
+  }
+
+  Future<void> _confirmAndDelete() async {
+    if (_selectedOpeningIds.isEmpty || _deleting) {
+      return;
+    }
+    final int count = _selectedOpeningIds.length;
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF111827),
+        title: const Text(
+          'Confirmar borrado',
+          style: TextStyle(color: Color(0xFFE5E7EB)),
+        ),
+        content: Text(
+          'Se van a borrar $count registros de ${_selectedDoor.label}. Esta acción elimina los documentos de Firestore y no se puede deshacer.',
+          style: const TextStyle(color: Color(0xFFCBD5E1)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancelar'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Borrar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _deleting = true;
+    });
+    try {
+      await widget.repository.deleteDoorOpenings(
+        tenantId: widget.tenantId,
+        siteId: widget.siteId,
+        doorId: _selectedDoor.id,
+        openingIds: _selectedOpeningIds,
+      );
+      if (!mounted) return;
+      setState(() {
+        _selectedOpeningIds.clear();
+        _deleting = false;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Se borraron $count registros.')));
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _deleting = false;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudieron borrar registros: $error')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Borrar aperturas',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: 720,
+        height: 560,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Seleccioná los registros de prueba que querés eliminar de Firestore.',
+              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            SegmentedButton<int>(
+              segments: const <ButtonSegment<int>>[
+                ButtonSegment<int>(value: 0, label: Text('Sala')),
+                ButtonSegment<int>(value: 1, label: Text('Munters')),
+              ],
+              selected: <int>{_doorIndex},
+              onSelectionChanged: _deleting
+                  ? null
+                  : (Set<int> value) => _switchDoor(value.first),
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: StreamBuilder<List<DoorOpeningRecord>>(
+                key: ValueKey<String>(_selectedDoor.id),
+                stream: widget.repository.watchDoorOpeningsForCleanup(
+                  tenantId: widget.tenantId,
+                  siteId: widget.siteId,
+                  doorId: _selectedDoor.id,
+                ),
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState == ConnectionState.waiting &&
+                      !snapshot.hasData) {
+                    return const Center(child: CircularProgressIndicator());
+                  }
+                  if (snapshot.hasError) {
+                    return _CleanupMessage(
+                      text: 'Error cargando registros: ${snapshot.error}',
+                      color: const Color(0xFFFCA5A5),
+                    );
+                  }
+                  final List<DoorOpeningRecord> records =
+                      snapshot.data ?? const <DoorOpeningRecord>[];
+                  if (records.isEmpty) {
+                    return const _CleanupMessage(
+                      text: 'No hay registros para esta puerta.',
+                      color: Color(0xFF94A3B8),
+                    );
+                  }
+                  return ListView.separated(
+                    itemCount: records.length,
+                    separatorBuilder: (context, index) =>
+                        const Divider(color: Color(0xFF1F2937), height: 1),
+                    itemBuilder: (context, index) {
+                      final DoorOpeningRecord record = records[index];
+                      final bool selected = _selectedOpeningIds.contains(
+                        record.openingId,
+                      );
+                      return CheckboxListTile(
+                        value: selected,
+                        enabled: !_deleting,
+                        activeColor: const Color(0xFF38BDF8),
+                        checkColor: const Color(0xFF0F172A),
+                        onChanged: (bool? value) =>
+                            _toggleRecord(record.openingId, value ?? false),
+                        title: Text(
+                          _formatOpeningTitle(record),
+                          style: const TextStyle(color: Color(0xFFE5E7EB)),
+                        ),
+                        subtitle: Text(
+                          _formatOpeningSubtitle(record),
+                          style: const TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 12,
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _deleting ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+        FilledButton(
+          onPressed: _selectedOpeningIds.isEmpty || _deleting
+              ? null
+              : _confirmAndDelete,
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFDC2626),
+            foregroundColor: Colors.white,
+          ),
+          child: _deleting
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Text('Borrar seleccionados (${_selectedOpeningIds.length})'),
+        ),
+      ],
+    );
+  }
+}
+
+class _CleanupDoorOption {
+  const _CleanupDoorOption({required this.id, required this.label});
+
+  final String id;
+  final String label;
+}
+
+class _CleanupMessage extends StatelessWidget {
+  const _CleanupMessage({required this.text, required this.color});
+
+  final String text;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: color),
+      ),
+    );
+  }
+}
+
+String _formatOpeningTitle(DoorOpeningRecord record) {
+  final String openedAt = formatDateTime(record.openedAt);
+  final String status = record.isOpen ? 'abierta' : 'cerrada';
+  return '$openedAt · $status';
+}
+
+String _formatOpeningSubtitle(DoorOpeningRecord record) {
+  final List<String> parts = <String>[
+    'ID ${record.openingId}',
+    if (record.closedAt != null) 'cierre ${formatDateTime(record.closedAt)}',
+    if (record.durationS != null)
+      'duración ${_formatDuration(record.durationS!)}',
+    if (record.source != null && record.source!.isNotEmpty)
+      'origen ${record.source}',
+  ];
+  return parts.join(' · ');
+}
+
+String _formatDuration(int seconds) {
+  final Duration duration = Duration(seconds: seconds);
+  final int hours = duration.inHours;
+  final int minutes = duration.inMinutes.remainder(60);
+  final int secs = duration.inSeconds.remainder(60);
+  if (hours > 0) {
+    return '${hours}h ${minutes}m ${secs}s';
+  }
+  if (minutes > 0) {
+    return '${minutes}m ${secs}s';
+  }
+  return '${secs}s';
 }
 
 InputDecoration _settingsInputDecoration() {

@@ -6,74 +6,117 @@ class DashboardHeader extends StatelessWidget {
   const DashboardHeader({
     super.key,
     required this.selectedTab,
+    required this.screenTitle,
     required this.onSignOut,
     required this.onOpenSettings,
     required this.onSelectComparison,
+    required this.onLogoTap,
+    this.userEmail,
     this.siteName,
     this.activeSiteId,
     this.availableSites = const <SiteDocument>[],
     this.onSiteChanged,
+    this.activeUsersIndicator,
   });
 
   final String selectedTab;
+  final String screenTitle;
   final VoidCallback onSignOut;
   final VoidCallback onOpenSettings;
   final VoidCallback onSelectComparison;
+  final VoidCallback onLogoTap;
+  final String? userEmail;
   final String? siteName;
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
+  final Widget? activeUsersIndicator;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
-      decoration: const BoxDecoration(
-        color: Color(0xCC0F172A),
-        border: Border(bottom: BorderSide(color: Color(0xFF1E293B))),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
-        children: [
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: _HeaderTitle(
-                siteName: siteName,
-                activeSiteId: activeSiteId,
-                availableSites: availableSites,
-                onSiteChanged: onSiteChanged,
-              ),
-            ),
-          ),
-          const SizedBox(width: 20),
-          Flexible(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: Wrap(
-                alignment: WrapAlignment.end,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  if (selectedTab != 'comparativo')
-                    _NavButton(
-                      label: 'Home',
-                      selected: false,
-                      onPressed: onSelectComparison,
-                    ),
-                  _SettingsButton(onPressed: onOpenSettings),
-                  _HeaderActionButton(
-                    onPressed: onSignOut,
-                    tooltip: 'Salir',
-                    icon: Icons.logout,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bool narrow = constraints.maxWidth < 560;
+        final bool veryNarrow = constraints.maxWidth < 360;
+        final EdgeInsets padding = EdgeInsets.symmetric(
+          horizontal: narrow ? 12 : 20,
+          vertical: narrow ? 12 : 16,
+        );
+        final Widget title = _HeaderTitle(
+          siteName: siteName,
+          screenTitle: screenTitle,
+          activeSiteId: activeSiteId,
+          availableSites: availableSites,
+          onSiteChanged: onSiteChanged,
+          compact: narrow,
+          veryCompact: veryNarrow,
+          onLogoTap: onLogoTap,
+        );
+        final String? normalizedEmail = (userEmail ?? '').trim().isEmpty
+            ? null
+            : userEmail!.trim();
+        final Widget actions = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: narrow ? 8 : 12,
+              runSpacing: 8,
+              children: [
+                if (selectedTab != 'comparativo')
+                  _NavButton(
+                    label: 'Home',
+                    selected: false,
+                    onPressed: onSelectComparison,
                   ),
-                ],
-              ),
+                ?activeUsersIndicator,
+                _SettingsButton(onPressed: onOpenSettings),
+                _HeaderActionButton(
+                  onPressed: onSignOut,
+                  tooltip: 'Salir',
+                  icon: Icons.logout,
+                ),
+              ],
             ),
+            if (normalizedEmail != null) ...[
+              const SizedBox(height: 4),
+              _UserEmailLabel(email: normalizedEmail, compact: narrow),
+            ],
+          ],
+        );
+
+        return Container(
+          padding: padding,
+          decoration: const BoxDecoration(
+            color: Color(0xCC0F172A),
+            border: Border(bottom: BorderSide(color: Color(0xFF1E293B))),
           ),
-        ],
-      ),
+          child: narrow
+              ? Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: 10),
+                    actions,
+                  ],
+                )
+              : Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(child: title),
+                    const SizedBox(width: 20),
+                    Flexible(
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: actions,
+                      ),
+                    ),
+                  ],
+                ),
+        );
+      },
     );
   }
 }
@@ -91,10 +134,11 @@ class _SettingsButton extends StatelessWidget {
         backgroundColor: const Color(0xFF111827),
         foregroundColor: const Color(0xFFE5E7EB),
         side: const BorderSide(color: Color(0xFF334155)),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(11),
+        minimumSize: const Size.square(42),
       ),
       tooltip: 'Configuracion',
-      icon: const Icon(Icons.settings),
+      icon: const Icon(Icons.settings, size: 21),
     );
   }
 }
@@ -118,10 +162,37 @@ class _HeaderActionButton extends StatelessWidget {
         backgroundColor: const Color(0xFF111827),
         foregroundColor: const Color(0xFFE5E7EB),
         side: const BorderSide(color: Color(0xFF334155)),
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.all(11),
+        minimumSize: const Size.square(42),
       ),
       tooltip: tooltip,
-      icon: Icon(icon),
+      icon: Icon(icon, size: 21),
+    );
+  }
+}
+
+class _UserEmailLabel extends StatelessWidget {
+  const _UserEmailLabel({required this.email, this.compact = false});
+
+  final String email;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: compact ? 120 : 180),
+      child: Text(
+        email,
+        maxLines: 1,
+        softWrap: false,
+        overflow: TextOverflow.ellipsis,
+        textAlign: TextAlign.right,
+        style: TextStyle(
+          color: const Color(0xFF94A3B8),
+          fontSize: compact ? 9 : 10,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
     );
   }
 }
@@ -129,52 +200,74 @@ class _HeaderActionButton extends StatelessWidget {
 class _HeaderTitle extends StatelessWidget {
   const _HeaderTitle({
     required this.siteName,
+    required this.screenTitle,
     required this.activeSiteId,
     required this.availableSites,
     required this.onSiteChanged,
+    required this.compact,
+    required this.veryCompact,
+    required this.onLogoTap,
   });
 
   final String? siteName;
+  final String screenTitle;
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
+  final bool compact;
+  final bool veryCompact;
+  final VoidCallback onLogoTap;
 
   @override
   Widget build(BuildContext context) {
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: MainAxisSize.max,
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        const _ValkeLogo(),
-        const SizedBox(width: 14),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'AgroDataControl',
-              style: TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 24,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(height: 4),
-            if (availableSites.length > 1)
-              _SiteDropdown(
-                availableSites: availableSites,
-                activeSiteId: activeSiteId,
-                onSiteChanged: onSiteChanged,
-              )
-            else
+        _ValkeLogo(onTap: onLogoTap, compact: veryCompact),
+        SizedBox(width: veryCompact ? 8 : (compact ? 10 : 14)),
+        Flexible(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
               Text(
-                siteName ?? '—',
-                style: const TextStyle(
-                  color: Color(0xFF94A3B8),
-                  fontSize: 13,
+                'AgroDataControl',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: const Color(0xFFE5E7EB),
+                  fontSize: veryCompact ? 18 : (compact ? 21 : 24),
+                  fontWeight: FontWeight.w800,
                 ),
               ),
-          ],
+              const SizedBox(height: 4),
+              if (availableSites.length > 1)
+                _SiteDropdown(
+                  availableSites: availableSites,
+                  activeSiteId: activeSiteId,
+                  onSiteChanged: onSiteChanged,
+                )
+              else
+                Text(
+                  siteName ?? '—',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              const SizedBox(height: 3),
+              Text(
+                screenTitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+              ),
+            ],
+          ),
         ),
       ],
     );
@@ -200,8 +293,9 @@ class _SiteDropdown extends StatelessWidget {
         isDense: true,
         dropdownColor: const Color(0xFF1E293B),
         style: const TextStyle(
-          color: Color(0xFF94A3B8),
-          fontSize: 13,
+          color: Color(0xFFCBD5E1),
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
           fontFamily: 'monospace',
         ),
         icon: const Icon(
@@ -228,16 +322,26 @@ class _SiteDropdown extends StatelessWidget {
 }
 
 class _ValkeLogo extends StatelessWidget {
-  const _ValkeLogo();
+  const _ValkeLogo({required this.onTap, required this.compact});
+
+  final VoidCallback onTap;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
-    return Image.asset(
-      'web/branding/Logo.png',
-      width: 52,
-      height: 52,
-      fit: BoxFit.contain,
-      filterQuality: FilterQuality.high,
+    return Tooltip(
+      message: 'Ir al Dashboard',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Image.asset(
+          'web/branding/Logo.png',
+          width: compact ? 44 : 52,
+          height: compact ? 44 : 52,
+          fit: BoxFit.contain,
+          filterQuality: FilterQuality.high,
+        ),
+      ),
     );
   }
 }

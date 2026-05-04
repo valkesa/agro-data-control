@@ -697,6 +697,10 @@
         <span class="dropdown-item-title">Corrección — Tracking de Aperturas</span>
         <span class="dropdown-item-sub">Bug: loop infinito + señal null · Backend · 22 abr 2026</span>
       </button>
+      <button class="dropdown-item" onclick="showDoc(6)">
+        <span class="dropdown-item-title">Etapa 3 — Configuración Visual de Salas y PLCs</span>
+        <span class="dropdown-item-sub">Nombres desde Firestore · PlcDisplayConfig · Dialog owner · 27 abr 2026</span>
+      </button>
     </div>
   </div>
 </nav>
@@ -774,6 +778,19 @@
       </div>
       <div class="index-card-meta">
         <div class="index-card-date">22 abr 2026</div>
+      </div>
+      <div class="index-card-arrow">›</div>
+    </button>
+
+    <button class="index-card" onclick="showDoc(6)">
+      <div class="index-card-num">6</div>
+      <div class="index-card-body">
+        <div class="index-card-type">Implementación — Etapa 3</div>
+        <div class="index-card-title">Configuración Visual de Salas y PLCs</div>
+        <div class="index-card-sub">Nombres desde Firestore · PlcDisplayConfig · SitePlcConfigService · Dialog owner · Fallbacks seguros</div>
+      </div>
+      <div class="index-card-meta">
+        <div class="index-card-date">27 abr 2026</div>
       </div>
       <div class="index-card-arrow">›</div>
     </button>
@@ -2451,6 +2468,403 @@ _states[door.doorId]!
 </div><!-- #doc-4 -->
 
 
+<!-- ══════════════════════════ DOCUMENT 6 ══════════════════════════ -->
+<div id="doc-5" class="doc-page">
+<div class="page">
+
+  <!-- COVER -->
+  <div class="cover">
+    <div class="tag tag-blue">Etapa 3 — Implementación</div>
+    <h1>Configuración Visual de Salas y PLCs</h1>
+    <h2>Nombres desde Firestore · PlcDisplayConfig · SitePlcConfigService · Dialog owner · Fallbacks seguros</h2>
+    <div class="meta">
+      <span>📅 Fecha: 27 de abril de 2026</span>
+      <span>🔖 Versión: 1.0</span>
+      <span>⚙️ Estado: Implementado — <code>flutter analyze</code> sin errores</span>
+    </div>
+  </div>
+
+  <!-- TOC -->
+  <div class="toc">
+    <h3>Contenido</h3>
+    <ol>
+      <li>Objetivo y Alcance</li>
+      <li>Modelo de Datos: <code>plcs/{plcId}</code></li>
+      <li>Arquitectura del Flujo</li>
+      <li>Archivos Nuevos</li>
+      <li>Cambios por Archivo</li>
+      <li>Reglas Firestore — colección <code>plcs</code></li>
+      <li>Datos Iniciales</li>
+      <li>Fallbacks y Compatibilidad Hacia Atrás</li>
+      <li>Casos Validados</li>
+      <li>Checklist de Deploy</li>
+    </ol>
+  </div>
+
+  <!-- SECTION 1 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">1</div>
+      <h2 class="section-title">Objetivo y Alcance</h2>
+    </div>
+    <p>Separar definitivamente los identificadores técnicos de los nombres visibles en la UI. Los labels de sala (<code>name</code>) y de PLCs (<code>displayName</code>, <code>columnLabel</code>) se leen desde Firestore en vez de estar hardcodeados en el código Dart.</p>
+    <div class="callout callout-success">
+      <div class="callout-title">Principio rector</div>
+      Los IDs técnicos (<code>siteId</code>, <code>plcId</code>, <code>technicalId</code>) son inmutables y nunca cambian. Cambiar un nombre visible no afecta al backend, al historial, ni a ninguna ruta de Firestore. Si la colección <code>plcs</code> no existe en Firestore, la app funciona exactamente igual que antes.
+    </div>
+    <h3>Fuera de alcance en esta etapa</h3>
+    <ul>
+      <li>Edición de <code>backendUrl</code> desde la UI</li>
+      <li>Edición de IPs o mapeos Modbus</li>
+      <li>Permisos configurables por <code>tenant_admin</code> para editar nombres</li>
+      <li>Multi-tenant por usuario</li>
+      <li>Rediseño visual del dashboard</li>
+    </ul>
+  </section>
+
+  <!-- SECTION 2 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">2</div>
+      <h2 class="section-title">Modelo de Datos: <code>plcs/{plcId}</code></h2>
+    </div>
+    <p>Subcollección: <code>tenants/{tenantId}/sites/{siteId}/plcs/{plcId}</code></p>
+    <table>
+      <thead><tr class="blue-head"><th>Campo</th><th>Tipo</th><th>Descripción</th><th>Editable</th></tr></thead>
+      <tbody>
+        <tr><td><code>displayName</code></td><td>string</td><td>Nombre completo visible (ej. "Munters 1")</td><td><span class="badge-yes">✓ owner</span></td></tr>
+        <tr><td><code>columnLabel</code></td><td>string</td><td>Etiqueta corta para encabezados (ej. "M1")</td><td><span class="badge-yes">✓ owner</span></td></tr>
+        <tr><td><code>technicalId</code></td><td>string</td><td>Igual al <code>plcId</code> del documento — inmutable</td><td><span class="badge-no">no</span></td></tr>
+        <tr><td><code>active</code></td><td>bool</td><td>Si <code>false</code>, el PLC no aparece en la UI</td><td><span class="badge-yes">✓ owner</span></td></tr>
+        <tr><td><code>sortOrder</code></td><td>number</td><td>Orden de aparición en columnas (ascendente)</td><td><span class="badge-yes">✓ owner</span></td></tr>
+        <tr><td><code>updatedAt</code></td><td>timestamp</td><td>Timestamp del servidor — se escribe automáticamente</td><td>automático</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-info">
+      <div class="callout-title">Fallbacks en cascada</div>
+      Si <code>columnLabel</code> está vacío → se usa <code>plcId</code>. Si <code>displayName</code> está vacío → se usa <code>columnLabel</code> (que ya tiene el fallback anterior). Si la colección <code>plcs</code> no existe → lista vacía → la UI usa los valores hardcodeados anteriores (<code>'M1'</code>, <code>'M2'</code>, <code>'Munters 1'</code>, <code>'Munters 2'</code>).
+    </div>
+  </section>
+
+  <!-- SECTION 3 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">3</div>
+      <h2 class="section-title">Arquitectura del Flujo</h2>
+    </div>
+    <h3>Bootstrap (inicio de sesión)</h3>
+    <pre><code><span class="comment">// _loadDashboardBootstrap() — secuencia ampliada en Etapa 3</span>
+
+<span class="comment">// Mismo flujo de Etapa 2 + nuevo fetch de plcConfigs</span>
+siteDoc        = <span class="fn">fetchSite</span>(tenantId, resolvedSiteId)
+availableSites = <span class="fn">fetchActiveSitesForUser</span>(tenantId, allowedSiteIds)
+plcConfigs     = <span class="fn">fetchActivePlcs</span>(tenantId, resolvedSiteId)
+  <span class="comment">// → [] si colección no existe (fallback seguro)</span>
+  <span class="comment">// → ordenado por sortOrder asc, luego plcId</span>
+
+<span class="comment">// PlcDashboardService recibe nombres dinámicos</span>
+_service = <span class="type">PlcDashboardService</span>(
+  endpoint: siteDoc?.backendUrl,
+  plcNames: { <span class="kw">for</span> (p <span class="kw">in</span> plcConfigs) p.plcId: p.displayName },
+)
+<span class="comment">// MuntersModel.name se setea con displayName desde Firestore</span>
+<span class="comment">// Fallback: 'Munters 1' / 'Munters 2' si plcNames está vacío</span>
+
+<span class="comment">// ComparisonPage recibe columnLabels para encabezados</span>
+plc1ColumnLabel = plcConfigs[0]?.columnLabel  <span class="comment">// fallback: 'M1'</span>
+plc2ColumnLabel = plcConfigs[1]?.columnLabel  <span class="comment">// fallback: 'M2'</span></code></pre>
+
+    <h3>Recarga tras edición visual (owner)</h3>
+    <pre><code><span class="fn">_openVisualConfig</span>():
+  1. Mostrar <span class="type">_VisualConfigDialog</span> (TextFields editables)
+  2. Owner guarda → <span class="fn">updateSiteName</span>() + <span class="fn">updatePlcDisplayConfig</span>() × N PLCs
+  3. Al cerrar con saved=true:
+       newConfigs   = <span class="fn">fetchActivePlcs</span>(tenantId, siteId)
+       updatedSite  = <span class="fn">fetchSite</span>(tenantId, siteId)
+       setState:
+         _plcConfigs      = newConfigs
+         _activeSiteName  = updatedSite.name
+         _service         = <span class="type">PlcDashboardService</span>(
+                              endpoint: _activeBackendEndpoint,
+                              plcNames: { ... }
+                            )</code></pre>
+  </section>
+
+  <!-- SECTION 4 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">4</div>
+      <h2 class="section-title">Archivos Nuevos</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/models/plc_display_config.dart</span>
+        <span class="change-count">Archivo nuevo</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>PlcDisplayConfig</strong> — modelo inmutable con <code>plcId</code>, <code>displayName</code>, <code>columnLabel</code>, <code>technicalId</code>, <code>active</code>, <code>sortOrder</code></li>
+          <li><code>copyWith()</code> — para actualizaciones parciales en el dialog de configuración</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/services/site_plc_config_service.dart</span>
+        <span class="change-count">Archivo nuevo</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>fetchActivePlcs(tenantId, siteId)</strong> — lee la subcollección <code>plcs</code> filtrando <code>active == true</code>; retorna lista vacía (sin throw) si la colección no existe</li>
+          <li><strong>updateSiteName(tenantId, siteId, name)</strong> — escribe solo el campo <code>name</code> del documento site</li>
+          <li><strong>updatePlcDisplayConfig(tenantId, siteId, plcId, displayName, columnLabel)</strong> — usa <code>SetOptions(merge: true)</code> para no pisar campos técnicos (<code>active</code>, <code>sortOrder</code>); escribe <code>technicalId</code> y <code>updatedAt</code> automáticamente</li>
+          <li>Fallbacks aplicados en <code>_plcFromData()</code>: <code>columnLabel</code> vacío → <code>plcId</code>; <code>displayName</code> vacío → <code>columnLabel</code></li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 5 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">5</div>
+      <h2 class="section-title">Cambios por Archivo</h2>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/firebase/firestore_paths.dart</span>
+        <span class="change-count">2 adiciones</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li>✅ <code>plcsCollection(tenantId, siteId)</code> → <code>tenants/{tenantId}/sites/{siteId}/plcs</code></li>
+          <li>✅ <code>plcConfigDoc(tenantId, siteId, plcId)</code> → <code>tenants/{tenantId}/sites/{siteId}/plcs/{plcId}</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/services/plc_dashboard_service.dart</span>
+        <span class="change-count">2 cambios</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>Constructor</strong> — agrega parámetro opcional <code>Map&lt;String, String&gt; plcNames</code> (default <code>const {}</code>); sigue siendo <code>const</code>-compatible</li>
+          <li><strong>_parseUnit() calls</strong> — <code>name: _plcNames['munters1'] ?? 'Munters 1'</code> y <code>_plcNames['munters2'] ?? 'Munters 2'</code>. <code>MuntersModel.name</code> pasa a ser dinámico sin cambiar el modelo</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/pages/comparison_page.dart</span>
+        <span class="change-count">4 cambios</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>ComparisonPage</strong> — agrega parámetros opcionales <code>plc1ColumnLabel</code> y <code>plc2ColumnLabel</code> (nullable; fallback <code>'M1'</code>/<code>'M2'</code>)</li>
+          <li><strong>_TableHeader</strong> — agrega campos <code>plc1ColumnLabel</code> y <code>plc2ColumnLabel</code> requeridos; los usa en <code>_HeaderUnit(title: ...)</code> reemplazando el hardcode</li>
+          <li><strong>Fila "Nombre"</strong> — reemplaza <code>const _TextValue('Munters 1')</code>/<code>'Munters 2'</code> por <code>_TextValue(widget.munters1.name)</code>/<code>widget.munters2.name</code>, que ya vienen dinámicos desde el servicio</li>
+          <li><strong>Construcción de _TableHeader</strong> — pasa <code>plc1ColumnLabel: widget.plc1ColumnLabel ?? 'M1'</code></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="change-card">
+      <div class="change-card-header">
+        <span class="file-tag">lib/main.dart</span>
+        <span class="change-count">11 cambios</span>
+      </div>
+      <div class="change-card-body">
+        <ul>
+          <li><strong>Imports</strong> — agrega <code>plc_display_config.dart</code> y <code>site_plc_config_service.dart</code></li>
+          <li><strong>_plcConfigs</strong> — nuevo campo de estado <code>List&lt;PlcDisplayConfig&gt;</code>, inicializado vacío</li>
+          <li><strong>_activeBackendEndpoint</strong> — nuevo campo para poder reconstruir el servicio tras edición visual sin perder el endpoint</li>
+          <li><strong>_sitePlcConfigService</strong> — instancia del nuevo servicio</li>
+          <li><strong>_DashboardBootstrapResult</strong> — agrega campo opcional <code>plcConfigs</code></li>
+          <li><strong>_loadDashboardBootstrap()</strong> — fetch de <code>plcConfigs</code> antes de los returns exitosos; los devuelve en el resultado</li>
+          <li><strong>_handleBootstrapResult()</strong> — setea <code>_plcConfigs</code>, <code>_activeBackendEndpoint</code>; construye <code>_service</code> con <code>plcNames</code> mapeado desde configs</li>
+          <li><strong>ComparisonPage call</strong> — pasa <code>plc1ColumnLabel</code> y <code>plc2ColumnLabel</code> desde <code>_plcConfigs</code></li>
+          <li><strong>_UnitVisibilitySettingsDialog</strong> — agrega <code>plc1Label</code>/<code>plc2Label</code> (opcionales, default <code>'M1'</code>/<code>'M2'</code>); los usa en <code>'Mostrar ${widget.plc1Label}'</code> reemplazando el hardcode</li>
+          <li><strong>_SettingsMenuAction.visualConfig</strong> — nuevo valor en el enum; handler en el switch; botón "Nombres de sala y PLCs" en sección Administración (visible solo para owner)</li>
+          <li><strong>_openVisualConfig() + _VisualConfigDialog</strong> — método y widget nuevos: abre dialog con TextFields para <code>sites/{siteId}.name</code> y <code>plcs/{plcId}.displayName</code>/<code>columnLabel</code>; al guardar recarga configs y reconstruye el servicio</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 6 -->
+  <section class="page-break">
+    <div class="section-header">
+      <div class="section-number blue">6</div>
+      <h2 class="section-title">Reglas Firestore — colección <code>plcs</code></h2>
+    </div>
+    <pre><code><span class="comment">// Dentro de match /sites/{siteId}</span>
+
+<span class="kw">match</span> /plcs/{plcId} {
+  <span class="comment">// Cualquier miembro del tenant puede leer</span>
+  allow read: <span class="kw">if</span> <span class="fn">canReadTenant</span>(tenantId);
+
+  <span class="comment">// Solo owner puede crear/editar
+  // technicalId debe coincidir con el ID del documento (inmutable)
+  // displayName y columnLabel no pueden quedar vacíos</span>
+  allow create, update: <span class="kw">if</span> <span class="fn">isOwner</span>()
+    && request.resource.data.technicalId == plcId
+    && request.resource.data.displayName <span class="kw">is</span> string
+    && request.resource.data.displayName.<span class="fn">size</span>() > 0
+    && request.resource.data.columnLabel <span class="kw">is</span> string
+    && request.resource.data.columnLabel.<span class="fn">size</span>() > 0;
+
+  allow delete: <span class="kw">if</span> false;
+}</code></pre>
+    <div class="callout callout-info">
+      <div class="callout-title">Invariante clave</div>
+      La regla valida que <code>technicalId == plcId</code> en cada escritura. Esto garantiza que un owner no puede crear un documento PLC con un <code>technicalId</code> que no coincida con su ID de documento, previniendo inconsistencias entre la key técnica y el campo informativo.
+    </div>
+  </section>
+
+  <!-- SECTION 7 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">7</div>
+      <h2 class="section-title">Datos Iniciales</h2>
+    </div>
+    <p>Cargar manualmente desde la consola de Firebase (o script) para el tenant/site actual:</p>
+    <table>
+      <thead><tr class="blue-head"><th>Ruta</th><th>Campo</th><th>Valor</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="3"><code>tenants/{tenantId}/sites/genetica-1</code></td><td><code>name</code></td><td>"Sala Genética"</td></tr>
+        <tr><td><code>technicalId</code></td><td>"genetica-1"</td></tr>
+        <tr><td><code>active</code></td><td>true</td></tr>
+        <tr><td rowspan="5"><code>…/plcs/munters1</code></td><td><code>displayName</code></td><td>"Munters 1"</td></tr>
+        <tr><td><code>columnLabel</code></td><td>"M1"</td></tr>
+        <tr><td><code>technicalId</code></td><td>"munters1"</td></tr>
+        <tr><td><code>active</code></td><td>true</td></tr>
+        <tr><td><code>sortOrder</code></td><td>1</td></tr>
+        <tr><td rowspan="5"><code>…/plcs/munters2</code></td><td><code>displayName</code></td><td>"Munters 2"</td></tr>
+        <tr><td><code>columnLabel</code></td><td>"M2"</td></tr>
+        <tr><td><code>technicalId</code></td><td>"munters2"</td></tr>
+        <tr><td><code>active</code></td><td>true</td></tr>
+        <tr><td><code>sortOrder</code></td><td>2</td></tr>
+      </tbody>
+    </table>
+    <div class="callout callout-info">
+      <div class="callout-title">Nota</div>
+      Si los <code>plcId</code> reales en producción son distintos de <code>munters1</code>/<code>munters2</code>, crear los documentos con los IDs correctos y actualizar los hardcodes restantes en <code>plc_dashboard_service.dart</code> (los de <code>unitKey</code>, que son técnicos, no de display).
+    </div>
+  </section>
+
+  <!-- SECTION 8 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">8</div>
+      <h2 class="section-title">Fallbacks y Compatibilidad Hacia Atrás</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Escenario</th><th>Comportamiento</th></tr></thead>
+      <tbody>
+        <tr><td>Colección <code>plcs</code> no existe en Firestore</td><td><code>fetchActivePlcs()</code> retorna <code>[]</code> silenciosamente. <code>_plcConfigs</code> queda vacío. <code>ComparisonPage</code> usa <code>'M1'</code>/<code>'M2'</code>. <code>PlcDashboardService</code> usa <code>'Munters 1'</code>/<code>'Munters 2'</code>. Sin cambio visible.</td></tr>
+        <tr><td><code>columnLabel</code> vacío en Firestore</td><td><code>_plcFromData()</code> usa <code>plcId</code> como fallback.</td></tr>
+        <tr><td><code>displayName</code> vacío en Firestore</td><td><code>_plcFromData()</code> usa <code>columnLabel</code> (que ya tiene su propio fallback).</td></tr>
+        <tr><td>Error de red al leer <code>plcs</code></td><td><code>catch</code> retorna <code>[]</code> con <code>debugPrint</code>. App funciona igual que sin datos.</td></tr>
+        <tr><td>Un PLC tiene <code>active: false</code></td><td>No aparece en <code>_plcConfigs</code>. Si los dos PLCs quedan activos, funciona normal.</td></tr>
+        <tr><td>Owner edita un nombre</td><td>El backend sigue recibiendo <code>munters1</code>/<code>munters2</code> como <code>unitKey</code>. Solo cambia el label visible. Sin impacto en historial ni métricas.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- SECTION 9 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">9</div>
+      <h2 class="section-title">Casos Validados</h2>
+    </div>
+
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 1</span>
+      <div class="test-case-body">
+        <strong>Firestore tiene <code>name</code> para la sala</strong>
+        <p>El selector de sala (header) muestra ese nombre. Fallback al <code>siteId</code> si está vacío.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 2</span>
+      <div class="test-case-body">
+        <strong>Firestore no tiene <code>name</code></strong>
+        <p><code>_siteFromData()</code> en <code>SiteConfigService</code> devuelve <code>siteId</code> como nombre. Sin cambio visible para el usuario.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 3</span>
+      <div class="test-case-body">
+        <strong>Existen PLCs configurados en Firestore</strong>
+        <p>La UI muestra <code>columnLabel</code> en los encabezados de columna y <code>displayName</code> en la fila "Nombre" y en el título del tab legacy.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 4</span>
+      <div class="test-case-body">
+        <strong>No existe colección <code>plcs</code></strong>
+        <p>La UI mantiene exactamente el comportamiento anterior: encabezados <code>M1</code>/<code>M2</code>, fila Nombre <code>Munters 1</code>/<code>Munters 2</code>. Sin error, sin crash.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 5</span>
+      <div class="test-case-body">
+        <strong>Cambiar <code>displayName</code> no rompe snapshots ni métricas</strong>
+        <p>El servicio sigue usando <code>unitKey: 'munters1'</code>/<code>'munters2'</code> para parsear el JSON del backend. El historial referencia <code>plcId</code> en Firestore. <code>displayName</code> es solo presentación.</p>
+      </div>
+    </div>
+    <div class="test-case pass">
+      <span class="test-badge pass">CASO 6</span>
+      <div class="test-case-body">
+        <strong>Cambiar <code>columnLabel</code> cambia solo el encabezado visual</strong>
+        <p>El encabezado de columna en <code>ComparisonPage</code> y el label del toggle en "Unidades visibles" se actualizan tras recargar. Sin impacto en datos.</p>
+      </div>
+    </div>
+    <div class="test-case deny">
+      <span class="test-badge deny">CASO 7</span>
+      <div class="test-case-body">
+        <strong><code>tenant_operator</code> intenta editar nombres visuales</strong>
+        <p>Bloqueado en dos capas: (1) el botón "Nombres de sala y PLCs" en el menú solo aparece para <code>owner</code>; (2) la regla Firestore <code>allow create, update: if isOwner()</code> rechaza la escritura desde cualquier otro rol.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- SECTION 10 -->
+  <section>
+    <div class="section-header">
+      <div class="section-number blue">10</div>
+      <h2 class="section-title">Checklist de Deploy</h2>
+    </div>
+    <table>
+      <thead><tr class="blue-head"><th>Acción</th><th>Responsable</th><th>Estado</th></tr></thead>
+      <tbody>
+        <tr><td>Deploy de <code>firestore.rules</code> (agrega regla <code>plcs/{plcId}</code>)</td><td>DevOps / Developer</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr><td>Cargar documentos iniciales en Firestore (ver §7)</td><td>Developer / Admin</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr><td>Deploy de frontend Flutter Web</td><td>DevOps / Developer</td><td><span class="badge badge-red">Pendiente</span></td></tr>
+        <tr><td>Smoke test: sin colección <code>plcs</code> — UI igual que antes</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Smoke test: con colección <code>plcs</code> — encabezados y fila Nombre usan Firestore</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Smoke test: owner edita nombre → UI se actualiza · backend sin cambios</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Smoke test: <code>tenant_operator</code> no ve botón de config visual</td><td>QA / Developer</td><td><span class="badge badge-orange">Pendiente post-deploy</span></td></tr>
+        <tr><td>Código Dart — sin errores de análisis (<code>flutter analyze</code>)</td><td>—</td><td><span class="badge badge-green">✓ Verificado</span></td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <div class="footer">
+    AgroDataControl — Etapa 3: Configuración Visual de Salas y PLCs | 27 de abril de 2026<br>
+    Implementación validada con <code>flutter analyze</code>. Pendiente carga de datos iniciales en Firestore y deploy de rules para activar en producción.
+  </div>
+
+</div><!-- .page -->
+</div><!-- #doc-5 -->
+
+
 <script>
   const _docs = [
     { title: 'Índice',                                   sub: 'Todos los documentos' },
@@ -2459,6 +2873,7 @@ _states[door.doorId]!
     { title: 'Etapa 2 — Multi-Site Real',               sub: 'Sites dinámicos · Backend por sala · 22 abr 2026' },
     { title: 'Corrección — APERTURAS en M1',            sub: 'Bug: datos en columna M2 en vez de M1 · 22 abr 2026' },
     { title: 'Corrección — Tracking de Aperturas',      sub: 'Bug: loop infinito + señal null · Backend · 22 abr 2026' },
+    { title: 'Etapa 3 — Configuración Visual de Salas y PLCs', sub: 'Nombres desde Firestore · PlcDisplayConfig · Dialog owner · 27 abr 2026' },
   ];
 
   function showDoc(index) {

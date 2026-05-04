@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
+import '../models/manual_fan_status_settings.dart';
 
 class ControlDashboardConfigService {
   const ControlDashboardConfigService();
@@ -198,6 +199,57 @@ class ControlDashboardConfigService {
     }
   }
 
+  Future<ControlDashboardSaveResult> saveManualFanStatusSettings({
+    required String tenantId,
+    required String siteId,
+    required String userUid,
+    required ManualFanStatusSettings settings,
+  }) async {
+    final String path = FirestorePaths.controlDashboardSettings(
+      tenantId,
+      siteId,
+    );
+    debugPrint('[Firestore] dashboard fan status save started path=$path');
+
+    try {
+      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
+        'ui': <String, Object?>{
+          'manualFanStatus': <String, Object?>{
+            'munters1': <String, Object?>{
+              'q5': settings.munters1.q5,
+              'q6': settings.munters1.q6,
+              'q7': settings.munters1.q7,
+              'q8': settings.munters1.q8,
+              'q9': settings.munters1.q9,
+              'q10': settings.munters1.q10,
+            },
+            'munters2': <String, Object?>{
+              'q5': settings.munters2.q5,
+              'q6': settings.munters2.q6,
+              'q7': settings.munters2.q7,
+              'q8': settings.munters2.q8,
+              'q9': settings.munters2.q9,
+              'q10': settings.munters2.q10,
+            },
+          },
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedByUid': userUid,
+      }, SetOptions(merge: true));
+
+      debugPrint('[Firestore] dashboard fan status save success path=$path');
+      return const ControlDashboardSaveResult.success();
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[Firestore] dashboard fan status save error path=$path error=$error',
+      );
+      debugPrint(
+        '[Firestore] dashboard fan status save error stack=$stackTrace',
+      );
+      return ControlDashboardSaveResult.error(error.toString());
+    }
+  }
+
   DateTime? _parseDateTime(Object? value) {
     if (value is Timestamp) {
       return value.toDate();
@@ -300,6 +352,112 @@ class ControlDashboardConfigResult {
     rawData,
     const ['ui', 'visibleUnits', 'munters2'],
   );
+
+  ManualFanStatusSettings get manualFanStatusSettings {
+    const FanUnitStatusSettings defaults = FanUnitStatusSettings.defaults();
+    return ManualFanStatusSettings(
+      munters1: FanUnitStatusSettings(
+        q5:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q5',
+            ]) ??
+            defaults.q5,
+        q6:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q6',
+            ]) ??
+            defaults.q6,
+        q7:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q7',
+            ]) ??
+            defaults.q7,
+        q8:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q8',
+            ]) ??
+            defaults.q8,
+        q9:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q9',
+            ]) ??
+            defaults.q9,
+        q10:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters1',
+              'q10',
+            ]) ??
+            defaults.q10,
+      ),
+      munters2: FanUnitStatusSettings(
+        q5:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q5',
+            ]) ??
+            defaults.q5,
+        q6:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q6',
+            ]) ??
+            defaults.q6,
+        q7:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q7',
+            ]) ??
+            defaults.q7,
+        q8:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q8',
+            ]) ??
+            defaults.q8,
+        q9:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q9',
+            ]) ??
+            defaults.q9,
+        q10:
+            ControlDashboardThresholds._readBool(rawData, const [
+              'ui',
+              'manualFanStatus',
+              'munters2',
+              'q10',
+            ]) ??
+            defaults.q10,
+      ),
+    );
+  }
 
   bool get hasVisibleUnitsConfig {
     final Object? ui = rawData['ui'];

@@ -102,13 +102,65 @@ service cloud.firestore {
         && ui.munters2 is bool;
     }
 
+    function isValidManualFanUnit(unit) {
+      return unit is map
+        && unit.keys().hasOnly(['q5', 'q6', 'q7', 'q8', 'q9', 'q10'])
+        && unit.q5 is bool
+        && unit.q6 is bool
+        && unit.q7 is bool
+        && unit.q8 is bool
+        && unit.q9 is bool
+        && unit.q10 is bool;
+    }
+
+    function isValidManualFanStatus(status) {
+      return status is map
+        && status.keys().hasOnly(['munters1', 'munters2'])
+        && isValidManualFanUnit(status.munters1)
+        && isValidManualFanUnit(status.munters2);
+    }
+
+    function hasValidManualFanStatus() {
+      return request.resource.data.ui is map
+        && request.resource.data.ui.manualFanStatus is map
+        && isValidManualFanStatus(request.resource.data.ui.manualFanStatus);
+    }
+
+    function isManualFanStatusCreate() {
+      return request.resource.data.keys().hasOnly(['ui', 'updatedAt', 'updatedByUid'])
+        && request.resource.data.ui.keys().hasOnly(['manualFanStatus'])
+        && hasValidManualFanStatus();
+    }
+
+    function isManualFanStatusUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ui', 'updatedAt', 'updatedByUid'])
+        && hasValidManualFanStatus()
+        && (
+          (!('ui' in resource.data)
+            && request.resource.data.ui.keys().hasOnly(['manualFanStatus']))
+          || (
+            resource.data.ui is map
+            && request.resource.data.ui.diff(resource.data.ui).affectedKeys()
+                .hasOnly(['manualFanStatus'])
+          )
+        );
+    }
+
+    function canWriteManualFanStatus(tenantId) {
+      return isOwner() || isValkeTechnician(tenantId);
+    }
+
     // A user can switch their own active site, provided the new siteId is
     // already listed in their allowedSiteIds (prevents access to unlisted sites).
     function isOwnSiteSwitch(uid) {
       return signedIn()
         && request.auth.uid == uid
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['defaultSiteId'])
-        && resource.data.allowedSiteIds.hasAny([request.resource.data.defaultSiteId]);
+        && request.resource.data.defaultSiteId is string
+        && resource.data.activeTenantId is string
+        && resource.data.allowedSiteIds.hasAny([request.resource.data.defaultSiteId])
+        && exists(/databases/$(database)/documents/tenants/$(resource.data.activeTenantId)/sites/$(request.resource.data.defaultSiteId));
     }
 
     function isOwnUiUpdate(uid) {
@@ -154,6 +206,48 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    function isValidPresenceDoc(uid) {
+      return request.resource.data.keys().hasOnly([
+          'uid',
+          'displayName',
+          'email',
+          'role',
+          'lastSeenAt',
+          'activeSince',
+          'isOnline',
+          'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'uid',
+          'displayName',
+          'email',
+          'role',
+          'lastSeenAt',
+          'isOnline',
+          'updatedAt'
+        ])
+        && request.resource.data.uid == uid
+        && request.resource.data.displayName is string
+        && request.resource.data.email is string
+        && request.resource.data.role is string
+        && request.resource.data.isOnline is bool
+        && request.resource.data.lastSeenAt is timestamp
+        && request.resource.data.updatedAt is timestamp
+        && (
+          !('activeSince' in request.resource.data)
+          || request.resource.data.activeSince is timestamp
+        );
+    }
+
+    match /workspaces/{workspaceId}/presence/{uid} {
+      allow get: if isOwner() || (signedIn() && request.auth.uid == uid);
+      allow list: if isOwner();
+      allow create, update: if signedIn()
+        && request.auth.uid == uid
+        && isValidPresenceDoc(uid);
+      allow delete: if false;
+    }
+
     match /tenants/{tenantId} {
       allow read: if canReadTenant(tenantId);
 
@@ -181,11 +275,40 @@ service cloud.firestore {
 
       match /sites/{siteId} {
         allow read: if canReadTenant(tenantId);
+        allow update: if isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name', 'updatedAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && (
+            !('updatedAt' in request.resource.data)
+            || request.resource.data.updatedAt is timestamp
+          );
+        allow create, delete: if false;
+
+        // PLC display configuration (displayName, columnLabel).
+        // technicalId is immutable — only owner can write.
+        match /plcs/{plcId} {
+          allow read: if canReadTenant(tenantId);
+          allow create, update: if isOwner()
+            && request.resource.data.technicalId == plcId
+            && request.resource.data.displayName is string
+            && request.resource.data.displayName.size() > 0
+            && request.resource.data.columnLabel is string
+            && request.resource.data.columnLabel.size() > 0;
+          allow delete: if false;
+        }
 
         match /settings/{docId} {
           allow read: if canReadTenant(tenantId);
           allow create, update: if docId == 'controlDashboard'
             && (canEditTenantConfig(tenantId) || isOwner());
+          allow create: if docId == 'controlDashboard'
+            && canWriteManualFanStatus(tenantId)
+            && isManualFanStatusCreate();
+          allow update: if docId == 'controlDashboard'
+            && canWriteManualFanStatus(tenantId)
+            && isManualFanStatusUpdate();
           allow delete: if false;
         }
 
@@ -195,7 +318,8 @@ service cloud.firestore {
 
           match /openings/{openingId} {
             allow read: if canReadTenant(tenantId);
-            allow create, update, delete: if false;
+            allow delete: if isOwner();
+            allow create, update: if false;
           }
         }
       }

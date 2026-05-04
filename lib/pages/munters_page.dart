@@ -103,13 +103,13 @@ class _MuntersPageState extends State<MuntersPage> {
         child: Column(
           children: [
             _ValueRow(
-              label: 'T°C SAL sala',
+              label: 'T. Salida Sala',
               value: _formatDecimal(data.tempInterior, 1),
               unit: '°C',
             ),
             const SizedBox(height: 4),
             _ValueRow(
-              label: 'T°C. ING sala',
+              label: 'T. Ingreso Sala',
               value: _formatDecimal(data.tempIngresoSala, 1),
               unit: '°C',
             ),
@@ -121,7 +121,7 @@ class _MuntersPageState extends State<MuntersPage> {
             ),
             const SizedBox(height: 4),
             _ValueRow(
-              label: 'Temp. exterior',
+              label: 'T. Exterior',
               value: _formatDecimal(data.tempExterior, 0),
               unit: '°C',
             ),

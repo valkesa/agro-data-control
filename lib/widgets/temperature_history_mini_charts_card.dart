@@ -167,8 +167,10 @@ class _TemperatureHistoryMiniChartsCardState
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Mode chips at the top, centered.
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              Wrap(
+                alignment: WrapAlignment.center,
+                spacing: 6,
+                runSpacing: 4,
                 children: [
                   _ModeChip(
                     label: 'Horario',
@@ -180,7 +182,6 @@ class _TemperatureHistoryMiniChartsCardState
                       });
                     },
                   ),
-                  const SizedBox(width: 6),
                   _ModeChip(
                     label: 'Diario',
                     selected: _mode == _ChartMode.daily,
@@ -218,19 +219,19 @@ class _TemperatureHistoryMiniChartsCardState
                 ),
                 const SizedBox(height: 8),
                 // Legend at the bottom.
-                Row(
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 4,
                   children: [
                     _LegendDot(
                       color: const Color(0xFF38BDF8),
                       label: 'Interior',
                     ),
-                    if (hasExterior) ...[
-                      const SizedBox(width: 12),
+                    if (hasExterior)
                       _LegendDot(
                         color: const Color(0xFFF59E0B),
                         label: 'Exterior',
                       ),
-                    ],
                   ],
                 ),
               ],
@@ -360,12 +361,10 @@ class _MiniLineChartState extends State<_MiniLineChart> {
                     ),
                     top: 0,
                     child: _ChartTooltip(
-                      avgLabel: _tooltipAvgLabel(selectedPoint, widget.mode),
-                      timestampLabel: _tooltipTimestamp(
+                      timestampLabel: _tooltipAvgLabel(
                         selectedPoint,
                         widget.mode,
                       ),
-                      lines: _tooltipLines(selectedPoint, widget.mode),
                     ),
                   ),
               ],
@@ -760,6 +759,33 @@ class _MiniChartPainter extends CustomPainter {
       2.5,
       Paint()..color = const Color(0xFF38BDF8),
     );
+    _paintDotLabel(
+      canvas,
+      chartRect,
+      selectedOffset,
+      '${points[selectedIndex].avgTemp.round()}°',
+      const Color(0xFF38BDF8),
+    );
+
+    final double? extAvgSelected = _pointExteriorAvg(points[selectedIndex]);
+    if (extAvgSelected != null) {
+      final double extY =
+          chartRect.bottom -
+          (((extAvgSelected - chartMin) / safeRange) * chartRect.height);
+      final Offset extDotOffset = Offset(selectedOffset.dx, extY);
+      canvas.drawCircle(
+        extDotOffset,
+        3.5,
+        Paint()..color = const Color(0xFFF59E0B),
+      );
+      _paintDotLabel(
+        canvas,
+        chartRect,
+        extDotOffset,
+        '${extAvgSelected.round()}°',
+        const Color(0xFFF59E0B),
+      );
+    }
 
     _paintXAxisLabels(canvas, size, chartRect);
     _paintYAxisLabels(canvas, chartRect, chartMin, chartMax);
@@ -842,6 +868,35 @@ class _MiniChartPainter extends CustomPainter {
     }
   }
 
+  void _paintDotLabel(
+    Canvas canvas,
+    Rect chartRect,
+    Offset dotOffset,
+    String text,
+    Color color,
+  ) {
+    final TextPainter tp = TextPainter(
+      text: TextSpan(
+        text: text,
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    double dx = dotOffset.dx + 6;
+    if (dx + tp.width > chartRect.right) {
+      dx = dotOffset.dx - tp.width - 6;
+    }
+    final double dy = (dotOffset.dy - tp.height - 4).clamp(
+      chartRect.top,
+      chartRect.bottom - tp.height,
+    );
+    tp.paint(canvas, Offset(dx, dy));
+  }
+
   @override
   bool shouldRepaint(covariant _MiniChartPainter oldDelegate) {
     return oldDelegate.points != points ||
@@ -853,15 +908,9 @@ class _MiniChartPainter extends CustomPainter {
 }
 
 class _ChartTooltip extends StatelessWidget {
-  const _ChartTooltip({
-    required this.avgLabel,
-    required this.timestampLabel,
-    required this.lines,
-  });
+  const _ChartTooltip({required this.timestampLabel});
 
-  final String avgLabel;
   final String timestampLabel;
-  final List<String> lines;
 
   @override
   Widget build(BuildContext context) {
@@ -873,25 +922,12 @@ class _ChartTooltip extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: const Color(0xFF223046)),
       ),
-      child: DefaultTextStyle(
-        style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              avgLabel,
-              style: const TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 4),
-            Text(timestampLabel),
-            const SizedBox(height: 2),
-            for (final String line in lines) Text(line),
-          ],
+      child: Text(
+        timestampLabel,
+        style: const TextStyle(
+          color: Color(0xFFE5E7EB),
+          fontSize: 10,
+          fontWeight: FontWeight.w700,
         ),
       ),
     );
@@ -1089,24 +1125,6 @@ String _tooltipAvgLabel(TemperatureHistoryPointBase point, _ChartMode mode) =>
     ? '${_formatDate(point.timestamp)} ${_formatHour(point.timestamp)}'
     : _formatDate(point.timestamp);
 
-// Tooltip: second line is the column header.
-String _tooltipTimestamp(TemperatureHistoryPointBase point, _ChartMode mode) =>
-    'Prom / Max / Min';
-
-// Tooltip: one line per series (interior always, exterior when available).
-List<String> _tooltipLines(TemperatureHistoryPointBase point, _ChartMode mode) {
-  String t(double v) => v.round().toString();
-  final List<String> lines = <String>[
-    'I: ${t(point.avgTemp)}/${t(point.maxTemp)}/${t(point.minTemp)} °C',
-  ];
-  final double? extAvg = _pointExteriorAvg(point);
-  final double? extMax = _pointExteriorMax(point);
-  final double? extMin = _pointExteriorMin(point);
-  if (extAvg != null && extMax != null && extMin != null) {
-    lines.add('E: ${t(extAvg)}/${t(extMax)}/${t(extMin)} °C');
-  }
-  return lines;
-}
 
 String _axisLabel(TemperatureHistoryPointBase point, _ChartMode mode) {
   return mode == _ChartMode.hourly

@@ -124,12 +124,12 @@ class _EnvironmentSection extends StatelessWidget {
           return Column(
             children: [
               _ValueRow(
-                label: 'T°C SAL sala',
+                label: 'T. Salida Sala',
                 value: _formatDecimal(unit.tempInterior, 1),
                 unit: '°C',
               ),
               _ValueRow(
-                label: 'T°C. ING sala',
+                label: 'T. Ingreso Sala',
                 value: _formatDecimal(unit.tempIngresoSala, 1),
                 unit: '°C',
               ),
@@ -139,7 +139,7 @@ class _EnvironmentSection extends StatelessWidget {
                 unit: '%',
               ),
               _ValueRow(
-                label: 'Temp. Exterior',
+                label: 'T. Exterior',
                 value: _formatDecimal(unit.tempExterior, 0),
                 unit: '°C',
               ),
@@ -168,7 +168,7 @@ class _EnvironmentSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: _ValueRow(
-                    label: 'T°C SAL sala',
+                    label: 'T. Salida Sala',
                     value: _formatDecimal(unit.tempInterior, 1),
                     unit: '°C',
                   ),
@@ -176,7 +176,7 @@ class _EnvironmentSection extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: _ValueRow(
-                    label: 'T°C. ING sala',
+                    label: 'T. Ingreso Sala',
                     value: _formatDecimal(unit.tempIngresoSala, 1),
                     unit: '°C',
                   ),
@@ -196,7 +196,7 @@ class _EnvironmentSection extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: _ValueRow(
-                    label: 'Temp. Exterior',
+                    label: 'T. Exterior',
                     value: _formatDecimal(unit.tempExterior, 0),
                     unit: '°C',
                   ),

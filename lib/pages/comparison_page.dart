@@ -28,6 +28,9 @@ class ComparisonPage extends StatefulWidget {
     required this.magnifierSettings,
     required this.moduleOrder,
     required this.onModuleOrderChanged,
+    required this.homeGeneration,
+    this.plc1ColumnLabel,
+    this.plc2ColumnLabel,
   });
 
   static const String sectionEstado = 'Estado';
@@ -38,6 +41,11 @@ class ComparisonPage extends StatefulWidget {
   static const String sectionAperturas = 'Aperturas';
   static const String sectionCalefaccion = 'Calefaccion';
   static const String sectionAlarmas = 'Alarmas';
+  static const String sectionAmoniaco = 'Amoniaco';
+  static const String sectionAgua = 'Agua';
+  static const String sectionEnergiaE = 'EnergiaE';
+  static const String sectionOee = 'Oee';
+  static const String sectionProduccion = 'Produccion';
 
   static const List<String> defaultModuleOrder = <String>[
     sectionEstado,
@@ -48,6 +56,11 @@ class ComparisonPage extends StatefulWidget {
     sectionAperturas,
     sectionCalefaccion,
     sectionAlarmas,
+    sectionAmoniaco,
+    sectionAgua,
+    sectionEnergiaE,
+    sectionOee,
+    sectionProduccion,
   ];
 
   static List<String> normalizeModuleOrder(List<String> rawOrder) {
@@ -89,6 +102,10 @@ class ComparisonPage extends StatefulWidget {
   final MagnifierSettings magnifierSettings;
   final List<String> moduleOrder;
   final ValueChanged<List<String>> onModuleOrderChanged;
+  final int homeGeneration;
+  // Column header labels from Firestore plc config. Fallback to 'M1'/'M2'.
+  final String? plc1ColumnLabel;
+  final String? plc2ColumnLabel;
 
   @override
   State<ComparisonPage> createState() => _ComparisonPageState();
@@ -106,17 +123,21 @@ class _ComparisonPageState extends State<ComparisonPage> {
   static const String _sectionAperturas = ComparisonPage.sectionAperturas;
   static const String _sectionCalefaccion = ComparisonPage.sectionCalefaccion;
   static const String _sectionAlarmas = ComparisonPage.sectionAlarmas;
+  static const String _sectionAmoniaco = ComparisonPage.sectionAmoniaco;
+  static const String _sectionAgua = ComparisonPage.sectionAgua;
+  static const String _sectionEnergiaE = ComparisonPage.sectionEnergiaE;
+  static const String _sectionOee = ComparisonPage.sectionOee;
+  static const String _sectionProduccion = ComparisonPage.sectionProduccion;
 
   Timer? _technicalDataAutoCollapseTimer;
   Timer? _sectionsAutoCollapseTimer;
   bool _technicalDataExpanded = false;
   final bool _munters1Collapsed = false;
   final bool _munters2Collapsed = false;
-  bool _allSectionsExpanded = false;
   bool _reorderEnabled = false;
   int _sectionsCollapseGeneration = 0;
-  int _sectionsExpandGeneration = 0;
   final Map<String, int> _sectionExpandRequests = <String, int>{};
+  final Set<String> _expandedSectionIds = <String>{};
   final Map<String, GlobalKey> _sectionKeys = <String, GlobalKey>{
     _sectionFuncionamiento: GlobalKey(),
     _sectionAmbiente: GlobalKey(),
@@ -126,6 +147,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
     _sectionAperturas: GlobalKey(),
     _sectionCalefaccion: GlobalKey(),
     _sectionAlarmas: GlobalKey(),
+    _sectionAmoniaco: GlobalKey(),
+    _sectionAgua: GlobalKey(),
+    _sectionEnergiaE: GlobalKey(),
+    _sectionOee: GlobalKey(),
+    _sectionProduccion: GlobalKey(),
   };
 
   @override
@@ -133,6 +159,18 @@ class _ComparisonPageState extends State<ComparisonPage> {
     _technicalDataAutoCollapseTimer?.cancel();
     _sectionsAutoCollapseTimer?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant ComparisonPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.homeGeneration != oldWidget.homeGeneration) {
+      _sectionsAutoCollapseTimer?.cancel();
+      setState(() {
+        _sectionsCollapseGeneration += 1;
+        _expandedSectionIds.clear();
+      });
+    }
   }
 
   void _setTechnicalDataExpanded(bool expanded) {
@@ -163,33 +201,34 @@ class _ComparisonPageState extends State<ComparisonPage> {
         return;
       }
       setState(() {
-        _allSectionsExpanded = false;
         _sectionsCollapseGeneration += 1;
+        _expandedSectionIds.clear();
       });
     });
   }
 
-  void _expandAllSections() {
-    _sectionsAutoCollapseTimer?.cancel();
+  void _handleSectionExpandedChanged(
+    String sectionId, {
+    required bool expanded,
+    int? plcIndex,
+  }) {
     setState(() {
-      _allSectionsExpanded = true;
-      _sectionsExpandGeneration += 1;
+      if (expanded) {
+        _expandedSectionIds.add(sectionId);
+      } else {
+        _expandedSectionIds.remove(sectionId);
+      }
     });
-    _handleSectionExpanded();
-  }
-
-  void _collapseAllSections() {
-    _sectionsAutoCollapseTimer?.cancel();
-    setState(() {
-      _allSectionsExpanded = false;
-      _sectionsCollapseGeneration += 1;
-    });
+    if (expanded) {
+      _handleSectionExpanded();
+    }
   }
 
   void _focusSection(String sectionId) {
     setState(() {
       _sectionExpandRequests[sectionId] =
           (_sectionExpandRequests[sectionId] ?? 0) + 1;
+      _expandedSectionIds.add(sectionId);
     });
     _handleSectionExpanded();
     final GlobalKey? targetKey = _sectionKeys[sectionId];
@@ -491,18 +530,18 @@ class _ComparisonPageState extends State<ComparisonPage> {
 
     final Widget funcionamientoSection = _SectionTable(
       key: _sectionKeys[_sectionFuncionamiento],
+      sectionId: _sectionFuncionamiento,
       title: 'ESTADO',
       plcIconData: funcionamientoPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration:
           _sectionExpandRequests[_sectionFuncionamiento] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _ComparisonRow(
           label: 'Nombre',
-          munters1: const _TextValue('Munters 1'),
-          munters2: const _TextValue('Munters 2'),
+          munters1: _TextValue(widget.munters1.name),
+          munters2: _TextValue(widget.munters2.name),
         ),
         _ComparisonRow(
           label: 'Estado equipo',
@@ -638,12 +677,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget ambienteSection = _SectionTable(
       key: _sectionKeys[_sectionAmbiente],
+      sectionId: _sectionAmbiente,
       title: 'AMBIENTE',
       plcIconData: ambientePlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAmbiente] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _EnvironmentTemperatureBlock(
           munters1: munters1,
@@ -717,12 +756,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget filtrosSection = _SectionTable(
       key: _sectionKeys[_sectionFiltros],
+      sectionId: _sectionFiltros,
       title: 'FILTROS',
       plcIconData: filtrosPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionFiltros] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _ComparisonRow(
           label: 'Presion diferencial',
@@ -752,12 +791,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget ventilacionSection = _SectionTable(
       key: _sectionKeys[_sectionVentilacion],
+      sectionId: _sectionVentilacion,
       title: 'VENTILACION',
       plcIconData: ventilacionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionVentilacion] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _ComparisonRow(
           label: 'Estado fans',
@@ -807,13 +846,13 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget humidificacionSection = _SectionTable(
       key: _sectionKeys[_sectionHumidificacion],
+      sectionId: _sectionHumidificacion,
       title: 'ENFRIAMIENTO',
       plcIconData: humidificacionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration:
           _sectionExpandRequests[_sectionHumidificacion] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _ComparisonRow(
           label: 'Bomba humidificador',
@@ -877,12 +916,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget estadosMecanicosSection = _SectionTable(
       key: _sectionKeys[_sectionAperturas],
+      sectionId: _sectionAperturas,
       title: 'APERTURAS',
       plcIconData: aperturasPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAperturas] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         DoorOpeningsModule(
           tenantId: widget.tenantId,
@@ -893,12 +932,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget calefaccionSection = _SectionTable(
       key: _sectionKeys[_sectionCalefaccion],
+      sectionId: _sectionCalefaccion,
       title: 'CALEFACCION',
       plcIconData: calefaccionPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionCalefaccion] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         if (_hasCalefaccionNotice(munters1, rangeSettings) ||
             _hasCalefaccionNotice(munters2, rangeSettings))
@@ -946,12 +985,12 @@ class _ComparisonPageState extends State<ComparisonPage> {
     );
     final Widget alarmasSection = _SectionTable(
       key: _sectionKeys[_sectionAlarmas],
+      sectionId: _sectionAlarmas,
       title: 'ALARMAS',
       plcIconData: alarmasPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
-      expandGeneration: _sectionsExpandGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionAlarmas] ?? 0,
-      onExpanded: _handleSectionExpanded,
+      onExpandedChanged: _handleSectionExpandedChanged,
       rows: [
         _ComparisonRow(
           label: 'Eventos',
@@ -1002,6 +1041,159 @@ class _ComparisonPageState extends State<ComparisonPage> {
         ),
       ],
     );
+    final List<_PlcModuleIconData> amoniacoPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.air,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.air,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+    ];
+    final Widget amoniacoSection = _SectionTable(
+      key: _sectionKeys[_sectionAmoniaco],
+      sectionId: _sectionAmoniaco,
+      title: 'AMONIACO',
+      plcIconData: amoniacoPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionAmoniaco] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: [
+        _ComparisonRow(
+          label: 'NH3',
+          munters1: const _TextValue('Sin datos'),
+          munters2: const _TextValue('Sin datos'),
+        ),
+        _ComparisonRow(
+          label: 'Seteo Alarma',
+          munters1: const _TextValue('Sin datos'),
+          munters2: const _TextValue('Sin datos'),
+        ),
+        _ComparisonRow(
+          label: 'Gráfico',
+          munters1: const _TextValue('Sin datos'),
+          munters2: const _TextValue('Sin datos'),
+        ),
+      ],
+    );
+    final List<_PlcModuleIconData> aguaPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.water_drop_outlined,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.water_drop_outlined,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+    ];
+    final Widget aguaSection = _SectionTable(
+      key: _sectionKeys[_sectionAgua],
+      sectionId: _sectionAgua,
+      title: 'AGUA',
+      plcIconData: aguaPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionAgua] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: [
+        _ComparisonRow(
+          label: 'Litros Consumidos',
+          munters1: const _TextValue('Sin datos'),
+          munters2: const _TextValue('Sin datos'),
+        ),
+      ],
+    );
+    final List<_PlcModuleIconData> energiaEPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.bolt,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.bolt,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+    ];
+    final Widget energiaESection = _SectionTable(
+      key: _sectionKeys[_sectionEnergiaE],
+      sectionId: _sectionEnergiaE,
+      title: 'ENERGIA E.',
+      plcIconData: energiaEPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionEnergiaE] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: [
+        _ComparisonRow(
+          label: 'Potencia Ventilación',
+          munters1: const _DashWithUnitValue('kW'),
+          munters2: const _DashWithUnitValue('kW'),
+        ),
+        _ComparisonRow(
+          label: 'Potencia Enfriamiento',
+          munters1: const _DashWithUnitValue('kW'),
+          munters2: const _DashWithUnitValue('kW'),
+        ),
+        _ComparisonRow(
+          label: 'Potencia Calefacción',
+          munters1: const _DashWithUnitValue('kW'),
+          munters2: const _DashWithUnitValue('kW'),
+        ),
+        _ComparisonRow(
+          label: 'Potencia Diaria',
+          munters1: const _DashWithUnitValue('kWh'),
+          munters2: const _DashWithUnitValue('kWh'),
+        ),
+      ],
+    );
+    final List<_PlcModuleIconData> oeePlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.speed,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.speed,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+    ];
+    final Widget oeeSection = _SectionTable(
+      key: _sectionKeys[_sectionOee],
+      sectionId: _sectionOee,
+      title: 'OEE',
+      plcIconData: oeePlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionOee] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: const [],
+    );
+    final List<_PlcModuleIconData> produccionPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.factory_outlined,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+      _PlcModuleIconData(
+        icon: Icons.factory_outlined,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+      ),
+    ];
+    final Widget produccionSection = _SectionTable(
+      key: _sectionKeys[_sectionProduccion],
+      sectionId: _sectionProduccion,
+      title: 'PRODUCCION',
+      plcIconData: produccionPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionProduccion] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: const [],
+    );
     final bool hasAnyModuleAlarm =
         _isModuleStatusAlarm(m1AlarmasStatus) ||
         _isModuleStatusAlarm(m2AlarmasStatus);
@@ -1014,6 +1206,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
       _sectionAperturas: estadosMecanicosSection,
       _sectionCalefaccion: calefaccionSection,
       _sectionAlarmas: alarmasSection,
+      _sectionAmoniaco: amoniacoSection,
+      _sectionAgua: aguaSection,
+      _sectionEnergiaE: energiaESection,
+      _sectionOee: oeeSection,
+      _sectionProduccion: produccionSection,
     };
     final List<String> storedModuleIds = ComparisonPage.normalizeModuleOrder(
       widget.moduleOrder,
@@ -1078,11 +1275,9 @@ class _ComparisonPageState extends State<ComparisonPage> {
                     _TableHeader(
                       showMunters1: widget.showMunters1,
                       showMunters2: widget.showMunters2,
+                      plc1ColumnLabel: widget.plc1ColumnLabel ?? 'M1',
+                      plc2ColumnLabel: widget.plc2ColumnLabel ?? 'M2',
                       magnifierSettings: widget.magnifierSettings,
-                      onToggleAll: _allSectionsExpanded
-                          ? _collapseAllSections
-                          : _expandAllSections,
-                      allSectionsExpanded: _allSectionsExpanded,
                       reorderEnabled: _reorderEnabled,
                       onToggleReorder: () {
                         setState(() {
@@ -1172,48 +1367,10 @@ class _ComparisonColumnDividerPainter extends CustomPainter {
   final bool munters1Collapsed;
   final bool munters2Collapsed;
 
-  static const double _actionColumnWidth = 26;
-  static const double _collapsedColumnWidth = 52;
-
   @override
   void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
-      ..color = const Color(0x66CBD5E1)
-      ..strokeWidth = 0.8;
-
-    final double actionReservedWidth = showMunters1 || showMunters2
-        ? _actionColumnWidth
-        : 0;
-    final double flexAreaWidth = math.max(0, size.width - actionReservedWidth);
-    final List<double> widths = <double>[3];
-    double fixedWidth = 0;
-    double flexTotal = 3;
-
-    if (showMunters1) {
-      if (munters1Collapsed) {
-        fixedWidth += _collapsedColumnWidth;
-        widths.add(-_collapsedColumnWidth);
-      } else {
-        flexTotal += 4;
-        widths.add(4);
-      }
-    }
-    if (showMunters2) {
-      if (munters2Collapsed) {
-        fixedWidth += _collapsedColumnWidth;
-        widths.add(-_collapsedColumnWidth);
-      } else {
-        flexTotal += 4;
-        widths.add(4);
-      }
-    }
-
-    final double flexibleWidth = math.max(0, flexAreaWidth - fixedWidth);
-    double x = 0;
-    for (final double width in widths) {
-      x += width < 0 ? -width : flexibleWidth * (width / flexTotal);
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
-    }
+    // Guias de referencia.
+    // canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
   }
 
   @override
@@ -1308,18 +1465,18 @@ class _TableHeader extends StatelessWidget {
   const _TableHeader({
     required this.showMunters1,
     required this.showMunters2,
+    required this.plc1ColumnLabel,
+    required this.plc2ColumnLabel,
     required this.magnifierSettings,
-    required this.onToggleAll,
-    required this.allSectionsExpanded,
     required this.reorderEnabled,
     required this.onToggleReorder,
   });
 
   final bool showMunters1;
   final bool showMunters2;
+  final String plc1ColumnLabel;
+  final String plc2ColumnLabel;
   final MagnifierSettings magnifierSettings;
-  final VoidCallback onToggleAll;
-  final bool allSectionsExpanded;
   final bool reorderEnabled;
   final VoidCallback onToggleReorder;
 
@@ -1329,7 +1486,8 @@ class _TableHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       decoration: const BoxDecoration(
         color: Color(0xFF1E293B),
-        border: Border(bottom: BorderSide(color: Color(0xFF334155))),
+        // Guias de referencia.
+        // border: Border(bottom: BorderSide(color: Color(0xFF334155))),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
@@ -1348,14 +1506,8 @@ class _TableHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (showMunters1) _HeaderUnit(title: 'M1'),
-          if (showMunters2) _HeaderUnit(title: 'M2'),
-          _HeaderTapIcon(
-            icon: allSectionsExpanded
-                ? Icons.unfold_less_rounded
-                : Icons.unfold_more_rounded,
-            onTap: onToggleAll,
-          ),
+          if (showMunters1) _HeaderUnit(title: plc1ColumnLabel),
+          if (showMunters2) _HeaderUnit(title: plc2ColumnLabel),
         ],
       ),
     );
@@ -1388,31 +1540,6 @@ class _HeaderUnit extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _HeaderTapIcon extends StatelessWidget {
-  const _HeaderTapIcon({required this.icon, required this.onTap});
-
-  final IconData icon;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Container(
-        width: 26,
-        height: 26,
-        decoration: BoxDecoration(
-          color: const Color(0xFF162133),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFF223046)),
-        ),
-        child: Icon(icon, size: 16, color: const Color(0xFF94A3B8)),
       ),
     );
   }
@@ -1929,22 +2056,23 @@ class _OnOffHeaderValue extends StatelessWidget {
 class _SectionTable extends StatefulWidget {
   const _SectionTable({
     super.key,
+    required this.sectionId,
     required this.title,
     required this.rows,
     required this.plcIconData,
     required this.collapseGeneration,
-    required this.expandGeneration,
     required this.expandRequestGeneration,
-    required this.onExpanded,
+    required this.onExpandedChanged,
   });
 
+  final String sectionId;
   final String title;
   final List<Widget> rows;
   final List<_PlcModuleIconData> plcIconData;
   final int collapseGeneration;
-  final int expandGeneration;
   final int expandRequestGeneration;
-  final VoidCallback onExpanded;
+  final void Function(String sectionId, {required bool expanded, int? plcIndex})
+  onExpandedChanged;
 
   @override
   State<_SectionTable> createState() => _SectionTableState();
@@ -1962,11 +2090,6 @@ class _SectionTableState extends State<_SectionTable> {
         _expanded = false;
       });
     }
-    if (widget.expandGeneration != oldWidget.expandGeneration && !_expanded) {
-      setState(() {
-        _expanded = true;
-      });
-    }
     if (widget.expandRequestGeneration != oldWidget.expandRequestGeneration &&
         !_expanded) {
       setState(() {
@@ -1978,6 +2101,19 @@ class _SectionTableState extends State<_SectionTable> {
   @override
   Widget build(BuildContext context) {
     final _ComparisonColumnsScope scope = _ComparisonColumnsScope.of(context);
+    void toggleSection({int? plcIndex}) {
+      final bool nextExpanded = !_expanded;
+      setState(() {
+        _expanded = nextExpanded;
+      });
+      widget.onExpandedChanged(
+        widget.sectionId,
+        expanded: nextExpanded,
+        plcIndex: nextExpanded ? plcIndex : null,
+      );
+    }
+
+    final bool hasRows = widget.rows.isNotEmpty;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(10),
@@ -1988,22 +2124,15 @@ class _SectionTableState extends State<_SectionTable> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          InkWell(
-            borderRadius: BorderRadius.circular(6),
-            onTap: () {
-              setState(() {
-                _expanded = !_expanded;
-              });
-              if (_expanded) {
-                widget.onExpanded();
-              }
-            },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 3,
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 2),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: hasRows ? toggleSection : null,
                     child: SizedBox(
                       height: 18,
                       child: Row(
@@ -2023,13 +2152,17 @@ class _SectionTableState extends State<_SectionTable> {
                       ),
                     ),
                   ),
-                  if (!scope.showMunters1)
-                    const SizedBox.shrink()
-                  else if (scope.munters1Collapsed)
-                    const SizedBox(width: 52)
-                  else
-                    Expanded(
-                      flex: 4,
+                ),
+                if (!scope.showMunters1)
+                  const SizedBox.shrink()
+                else if (scope.munters1Collapsed)
+                  const SizedBox(width: 52)
+                else
+                  Expanded(
+                    flex: 4,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: hasRows ? () => toggleSection(plcIndex: 0) : null,
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: widget.plcIconData.isNotEmpty
@@ -2037,13 +2170,17 @@ class _SectionTableState extends State<_SectionTable> {
                             : const SizedBox.shrink(),
                       ),
                     ),
-                  if (!scope.showMunters2)
-                    const SizedBox.shrink()
-                  else if (scope.munters2Collapsed)
-                    const SizedBox(width: 52)
-                  else
-                    Expanded(
-                      flex: 4,
+                  ),
+                if (!scope.showMunters2)
+                  const SizedBox.shrink()
+                else if (scope.munters2Collapsed)
+                  const SizedBox(width: 52)
+                else
+                  Expanded(
+                    flex: 4,
+                    child: GestureDetector(
+                      behavior: HitTestBehavior.opaque,
+                      onTap: hasRows ? () => toggleSection(plcIndex: 1) : null,
                       child: Align(
                         alignment: Alignment.centerLeft,
                         child: widget.plcIconData.length > 1
@@ -2051,15 +2188,22 @@ class _SectionTableState extends State<_SectionTable> {
                             : const SizedBox.shrink(),
                       ),
                     ),
-                  Icon(
-                    _expanded
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    color: const Color(0xFF94A3B8),
-                    size: 18,
                   ),
-                ],
-              ),
+                if (hasRows)
+                  InkWell(
+                    borderRadius: BorderRadius.circular(6),
+                    onTap: toggleSection,
+                    child: Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up_rounded
+                          : Icons.keyboard_arrow_down_rounded,
+                      color: const Color(0xFF94A3B8),
+                      size: 18,
+                    ),
+                  )
+                else
+                  const SizedBox(width: 18),
+              ],
             ),
           ),
           if (_expanded) ...[
@@ -2404,7 +2548,7 @@ bool _isVentilationFullyRunning(MuntersModel unit) {
     unit.fanQ9,
     unit.fanQ10,
   ].whereType<bool>().toList(growable: false);
-  return fans.isNotEmpty && fans.every((bool f) => f == true);
+  return fans.any((bool f) => f == true);
 }
 
 Color _resolveVentilationIconColorForUnit(MuntersModel unit) {
@@ -3135,9 +3279,10 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
   final bool munters2Blocked;
 
   static const List<String> _labels = <String>[
-    'Temp. exterior',
-    'T°C. ING sala',
-    'T°C SAL sala',
+    'T. Exterior',
+    'T. Ingreso Sala',
+    'T. Salida Sala',
+    '∆T (Ing-Egr)',
   ];
   static const double _actionColumnWidth = 26;
 
@@ -3203,25 +3348,111 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
 class _EnvironmentTemperatureLabels extends StatelessWidget {
   const _EnvironmentTemperatureLabels();
 
+  static const double _rowH = _EnvironmentTemperatureColumn._valueRowHeight;
+  static const double _bracketWidth = 20;
+  static const int _labelCount = 4;
+
   @override
   Widget build(BuildContext context) {
-    return Column(
+    return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        for (final String label in _EnvironmentTemperatureBlock._labels)
-          SizedBox(
-            height: _EnvironmentTemperatureColumn._valueRowHeight,
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                label,
-                style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (final String label in _EnvironmentTemperatureBlock._labels)
+              SizedBox(
+                height: _rowH,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    label,
+                    style: const TextStyle(
+                      color: Color(0xFFCBD5E1),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               ),
-            ),
-          ),
+          ],
+        ),
+        SizedBox(
+          width: _bracketWidth,
+          height: _rowH * _labelCount,
+          child: CustomPaint(painter: _DeltaBracketPainter(rowHeight: _rowH)),
+        ),
+        const Spacer(),
       ],
     );
   }
+}
+
+class _DeltaBracketPainter extends CustomPainter {
+  const _DeltaBracketPainter({required this.rowHeight});
+
+  final double rowHeight;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final Paint paint = Paint()
+      ..color = const Color(0xFF475569)
+      ..strokeWidth = 1
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+
+    // Vertical centers of rows 1 (Ingreso), 2 (Salida) and 3 (∆T).
+    final double yIngreso = rowHeight * 1 + rowHeight / 2;
+    final double yEgreso = rowHeight * 2 + rowHeight / 2;
+    final double yDelta = rowHeight * 3 + rowHeight / 2;
+    final double yMid = (yIngreso + yEgreso) / 2;
+
+    final double xBracket = size.width - 10;
+    const double tickLen = 6;
+
+    // Horizontal ticks from Ingreso and Egreso rows into the bracket.
+    canvas.drawLine(
+      Offset(xBracket - tickLen, yIngreso),
+      Offset(xBracket, yIngreso),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(xBracket - tickLen, yEgreso),
+      Offset(xBracket, yEgreso),
+      paint,
+    );
+
+    // Vertical line spanning both rows.
+    canvas.drawLine(
+      Offset(xBracket, yIngreso),
+      Offset(xBracket, yEgreso),
+      paint,
+    );
+
+    // Connector from midpoint down to the ∆T row.
+    canvas.drawLine(Offset(xBracket, yMid), Offset(xBracket, yDelta), paint);
+
+    // Small arrowhead pointing right at the ∆T row.
+    canvas.drawLine(
+      Offset(xBracket, yDelta),
+      Offset(xBracket + tickLen, yDelta),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(xBracket + tickLen - 3, yDelta - 3),
+      Offset(xBracket + tickLen, yDelta),
+      paint,
+    );
+    canvas.drawLine(
+      Offset(xBracket + tickLen - 3, yDelta + 3),
+      Offset(xBracket + tickLen, yDelta),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant _DeltaBracketPainter old) =>
+      old.rowHeight != rowHeight;
 }
 
 class _EnvironmentTemperatureColumn extends StatelessWidget {
@@ -3243,41 +3474,20 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
 
   static const double _contentLeft = 0;
   static const double _gaugeWidth = 104;
-  static const double _markerWidth = 8;
   static const double _valueRowHeight = 48;
-  static const double _gaugeCenterYInRow = 23;
-  static const double _blockHeight = 174;
+  static const double _blockHeight = 222;
 
   @override
   Widget build(BuildContext context) {
     final double? delta = ingreso != null && egreso != null
         ? egreso! - ingreso!
         : null;
-    final bool showIngresoEgresoConnector =
-        !blocked && ingreso != null && egreso != null && max > min;
-
     return SizedBox(
       width: _gaugeWidth,
       height: _blockHeight,
       child: Stack(
         clipBehavior: Clip.none,
         children: [
-          if (showIngresoEgresoConnector)
-            Positioned.fill(
-              child: CustomPaint(
-                painter: _TemperatureConnectorPainter(
-                  start: Offset(
-                    _temperatureMarkerCenterX(ingreso!, min, max),
-                    _valueRowHeight + _gaugeCenterYInRow,
-                  ),
-                  end: Offset(
-                    _temperatureMarkerCenterX(egreso!, min, max),
-                    (_valueRowHeight * 2) + _gaugeCenterYInRow,
-                  ),
-                  label: '∆T: ${_formatDeltaLabel(delta!.abs())}',
-                ),
-              ),
-            ),
           Padding(
             padding: const EdgeInsets.only(left: _contentLeft),
             child: Column(
@@ -3300,6 +3510,11 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
                   max: max,
                   blocked: blocked,
                 ),
+                _DeltaTemperatureValue(
+                  delta: delta,
+                  blocked: blocked,
+                  gaugeWidth: _gaugeWidth,
+                ),
               ],
             ),
           ),
@@ -3311,66 +3526,6 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  static double _temperatureMarkerCenterX(
-    double value,
-    double min,
-    double max,
-  ) {
-    final double clamped = ((value - min) / (max - min)).clamp(0.0, 1.0);
-    final double markerLeft = clamped * (_gaugeWidth - _markerWidth);
-    return _contentLeft + markerLeft + (_markerWidth / 2);
-  }
-
-  static String _formatDeltaLabel(double value) {
-    return value % 1 == 0 ? value.toStringAsFixed(0) : value.toStringAsFixed(1);
-  }
-}
-
-class _TemperatureConnectorPainter extends CustomPainter {
-  const _TemperatureConnectorPainter({
-    required this.start,
-    required this.end,
-    required this.label,
-  });
-
-  final Offset start;
-  final Offset end;
-  final String label;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final Paint paint = Paint()
-      ..color = const Color(0xB8CBD5E1)
-      ..strokeWidth = 1.4
-      ..strokeCap = StrokeCap.round;
-
-    canvas.drawLine(start, end, paint);
-
-    final TextPainter textPainter = TextPainter(
-      text: TextSpan(
-        text: label,
-        style: const TextStyle(
-          color: Color(0xFF94A3B8),
-          fontSize: 10,
-          fontWeight: FontWeight.w400,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    final Offset midpoint = Offset(
-      (start.dx + end.dx) / 2,
-      (start.dy + end.dy) / 2,
-    );
-    textPainter.paint(canvas, midpoint + const Offset(7, -10));
-  }
-
-  @override
-  bool shouldRepaint(_TemperatureConnectorPainter oldDelegate) {
-    return oldDelegate.start != start ||
-        oldDelegate.end != end ||
-        oldDelegate.label != label;
   }
 }
 
@@ -3638,6 +3793,39 @@ class _TextValue extends StatelessWidget {
         color: missingValue ? const Color(0xFF94A3B8) : const Color(0xFFE5E7EB),
         fontSize: 12,
         fontWeight: missingValue ? FontWeight.w400 : fontWeight,
+      ),
+    );
+  }
+}
+
+class _DashWithUnitValue extends StatelessWidget {
+  const _DashWithUnitValue(this.unit);
+
+  final String unit;
+
+  @override
+  Widget build(BuildContext context) {
+    return RichText(
+      textAlign: TextAlign.center,
+      text: TextSpan(
+        children: [
+          const TextSpan(
+            text: '-',
+            style: TextStyle(
+              color: Color(0xFF94A3B8),
+              fontSize: 12,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+          TextSpan(
+            text: ' $unit',
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 11,
+              fontWeight: FontWeight.w400,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -4102,7 +4290,11 @@ class _TemperatureValue extends StatelessWidget {
       return const _TextValue('-', fontWeight: FontWeight.w400);
     }
     if (value == null) {
-      return const _TextValue('Sin datos');
+      return _LinearGaugeEmpty(
+        min: min,
+        max: max,
+        gaugeWidth: _EnvironmentTemperatureColumn._gaugeWidth,
+      );
     }
     final double currentValue = value!;
 
@@ -4361,6 +4553,213 @@ double? _normalizeVoltageToPercent(double? voltage) {
   // Backend exposes the raw analog output scaled by 100.
   // Example: 450 => 4.50 V, so 100% = 10.00 V.
   return (voltage / 1000).clamp(0.0, 1.0);
+}
+
+class _LinearGaugeEmpty extends StatelessWidget {
+  const _LinearGaugeEmpty({
+    required this.min,
+    required this.max,
+    required this.gaugeWidth,
+  });
+
+  final double min;
+  final double max;
+  final double gaugeWidth;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 48,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: gaugeWidth,
+            height: 14,
+            child: const Align(
+              alignment: Alignment.center,
+              child: Text(
+                'Sin datos',
+                style: TextStyle(
+                  color: Color(0xFF64748B),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: gaugeWidth,
+            height: 18,
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(99),
+                child: Container(height: 8, color: const Color(0xFF334155)),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: gaugeWidth,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  _formatGaugeEdge(min),
+                  style: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                Text(
+                  _formatGaugeEdge(max),
+                  style: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeltaTemperatureValue extends StatelessWidget {
+  const _DeltaTemperatureValue({
+    required this.delta,
+    required this.blocked,
+    required this.gaugeWidth,
+  });
+
+  final double? delta;
+  final bool blocked;
+  final double gaugeWidth;
+
+  static const double _maxDelta = 5.0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (blocked || delta == null) {
+      return _LinearGaugeEmpty(
+        min: 0,
+        max: _maxDelta.toInt().toDouble(),
+        gaugeWidth: gaugeWidth,
+      );
+    }
+    final double clampedDelta = delta!.abs().clamp(0.0, _maxDelta);
+    return SizedBox(
+      height: 48,
+      width: gaugeWidth,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: gaugeWidth,
+            height: 14,
+            child: Align(
+              alignment: Alignment.center,
+              child: Text(
+                '∆T: ${clampedDelta.toStringAsFixed(1)} °C',
+                style: const TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ),
+          ),
+          SizedBox(
+            width: gaugeWidth,
+            height: 18,
+            child: CustomPaint(
+              painter: _DeltaTrianglePainter(
+                delta: clampedDelta,
+                maxDelta: _maxDelta,
+                width: gaugeWidth,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: gaugeWidth,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: const [
+                Text(
+                  '0°',
+                  style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+                Text(
+                  '5°',
+                  style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w400,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DeltaTrianglePainter extends CustomPainter {
+  const _DeltaTrianglePainter({
+    required this.delta,
+    required this.maxDelta,
+    required this.width,
+  });
+
+  final double delta;
+  final double maxDelta;
+  final double width;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double h = size.height;
+    final double w = size.width;
+
+    // Triangle: bottom-left(0,h) → bottom-right(w,h) → top-right(w,0)
+    // Hypotenuse goes from bottom-left to top-right.
+    final Path triangle = Path()
+      ..moveTo(0, h)
+      ..lineTo(w, h)
+      ..lineTo(w, 0)
+      ..close();
+
+    final Paint fillPaint = Paint()
+      ..shader = const LinearGradient(
+        colors: [Color(0xFF1E3A5F), Color(0xFF3B82F6)],
+      ).createShader(Rect.fromLTWH(0, 0, w, h));
+    canvas.drawPath(triangle, fillPaint);
+
+    // Vertical bar at delta position (cursor)
+    final double barX = (delta / maxDelta) * w;
+    // Height of the triangle at barX = (barX / w) * h
+    final double barTop = h - (barX / w) * h;
+    const double barWidth = 3;
+
+    final Paint barPaint = Paint()
+      ..color = const Color(0xFFE2E8F0)
+      ..strokeWidth = barWidth
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(barX, barTop), Offset(barX, h), barPaint);
+  }
+
+  @override
+  bool shouldRepaint(_DeltaTrianglePainter old) =>
+      old.delta != delta || old.maxDelta != maxDelta || old.width != width;
 }
 
 class _LinearGauge extends StatelessWidget {

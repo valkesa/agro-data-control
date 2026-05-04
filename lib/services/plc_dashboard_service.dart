@@ -13,9 +13,15 @@ import '../models/plc_raw_payload.dart';
 
 class PlcDashboardService {
   static const Duration _requestTimeout = Duration(seconds: 6);
-  const PlcDashboardService({String? endpoint}) : _endpoint = endpoint;
+  const PlcDashboardService({
+    String? endpoint,
+    Map<String, String> plcNames = const <String, String>{},
+  })  : _endpoint = endpoint,
+        _plcNames = plcNames;
 
   final String? _endpoint;
+  // plcId → displayName, loaded from Firestore via SitePlcConfigService.
+  final Map<String, String> _plcNames;
 
   Future<DashboardSnapshot> fetchSnapshot() async {
     final LiveSnapshotResult result = await fetchLiveSnapshot();
@@ -146,7 +152,7 @@ class PlcDashboardService {
       doorEvents: _parseDoorEvents(decoded),
       units: [
         _parseUnit(
-          name: 'Munters 1',
+          name: _plcNames['munters1'] ?? 'Munters 1',
           unitKey: 'munters1',
           historyClientId: _sanitizeSegment(
             _parseString(
@@ -166,7 +172,7 @@ class PlcDashboardService {
           ],
         ),
         _parseUnit(
-          name: 'Munters 2',
+          name: _plcNames['munters2'] ?? 'Munters 2',
           unitKey: 'munters2',
           historyClientId: _sanitizeSegment(
             _parseString(
@@ -359,24 +365,28 @@ class PlcDashboardService {
           ['hr45'],
         ]),
       ),
-      tempIngresoSala: _parseSignedHoldingRegister(
-        _read(unitRaw, fallbackRaw, const [
-          ['tempIngresoSala'],
-          ['temperaturaIngresoSala'],
-          ['tempSalaIngreso'],
-          ['clima', 'tempIngresoSala'],
-          ['vm224'],
-          ['VM224'],
-          ['vw224'],
-          ['VW224'],
-          ['holdingRegisters', '112'],
-          ['holdingRegisters', 'HR112'],
-          ['registers', 'HR112'],
-          ['registers', '112'],
-          ['hr', '112'],
-          ['hr112'],
-        ]),
-      ),
+      // TEMPORAL: sensor ING sala de Munters 2 desconectado — el backend devuelve 0
+      // en vez de null. Revertir a _parseSignedHoldingRegister(...) cuando se reconecte.
+      tempIngresoSala: unitKey == 'munters2'
+          ? null
+          : _parseSignedHoldingRegister(
+              _read(unitRaw, fallbackRaw, const [
+                ['tempIngresoSala'],
+                ['temperaturaIngresoSala'],
+                ['tempSalaIngreso'],
+                ['clima', 'tempIngresoSala'],
+                ['vm224'],
+                ['VM224'],
+                ['vw224'],
+                ['VW224'],
+                ['holdingRegisters', '112'],
+                ['holdingRegisters', 'HR112'],
+                ['registers', 'HR112'],
+                ['registers', '112'],
+                ['hr', '112'],
+                ['hr112'],
+              ]),
+            ),
       humInterior: _parseSignedHoldingRegister(
         _read(unitRaw, fallbackRaw, const [
           ['humedadInterior'],
