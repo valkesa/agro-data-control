@@ -126,6 +126,39 @@ service cloud.firestore {
         && isValidManualFanStatus(request.resource.data.ui.manualFanStatus);
     }
 
+    function isValidMaintenanceMode(mode) {
+      return ['in_situ', 'systems', 'scheduled'].hasAny([mode]);
+    }
+
+    function isValidMaintenanceEntry(entry) {
+      return isValidMaintenanceMode(entry)
+        || (
+          entry is map
+          && entry.keys().hasOnly(['mode', 'expiresAt'])
+          && isValidMaintenanceMode(entry.mode)
+          && entry.expiresAt is timestamp
+        );
+    }
+
+    function isValidMaintenanceSettings(settings) {
+      return settings is map
+        && settings.keys().hasOnly(['munters1', 'munters2'])
+        && (
+          !settings.keys().hasAny(['munters1'])
+          || isValidMaintenanceEntry(settings.munters1)
+        )
+        && (
+          !settings.keys().hasAny(['munters2'])
+          || isValidMaintenanceEntry(settings.munters2)
+        );
+    }
+
+    function hasValidMaintenanceSettings() {
+      return request.resource.data.ui is map
+        && request.resource.data.ui.maintenance is map
+        && isValidMaintenanceSettings(request.resource.data.ui.maintenance);
+    }
+
     function isManualFanStatusCreate() {
       return request.resource.data.keys().hasOnly(['ui', 'updatedAt', 'updatedByUid'])
         && request.resource.data.ui.keys().hasOnly(['manualFanStatus'])
@@ -149,6 +182,53 @@ service cloud.firestore {
 
     function canWriteManualFanStatus(tenantId) {
       return isOwner() || isValkeTechnician(tenantId);
+    }
+
+    function isMaintenanceCreate() {
+      return request.resource.data.keys().hasOnly(['ui', 'updatedAt', 'updatedByUid'])
+        && request.resource.data.ui.keys().hasOnly(['maintenance'])
+        && hasValidMaintenanceSettings();
+    }
+
+    function isMaintenanceUpdate() {
+      return request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['ui', 'updatedAt', 'updatedByUid'])
+        && hasValidMaintenanceSettings()
+        && (
+          (!('ui' in resource.data)
+            && request.resource.data.ui.keys().hasOnly(['maintenance']))
+          || (
+            resource.data.ui is map
+            && request.resource.data.ui.diff(resource.data.ui).affectedKeys()
+                .hasOnly(['maintenance'])
+          )
+        );
+    }
+
+    function isValidOptionalNumber(field) {
+      return !request.resource.data.keys().hasAny([field])
+        || request.resource.data[field] is number;
+    }
+
+    function isValidElectricalConsumptionSettings() {
+      return request.resource.data.keys().hasOnly([
+          'fanLevels',
+          'humidifierPumpKw',
+          'heaterStage1Kw',
+          'heaterStage2Kw',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.fanLevels is list
+        && request.resource.data.fanLevels.size() <= 100
+        && isValidOptionalNumber('humidifierPumpKw')
+        && isValidOptionalNumber('heaterStage1Kw')
+        && isValidOptionalNumber('heaterStage2Kw')
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          !('updatedAt' in request.resource.data)
+          || request.resource.data.updatedAt is timestamp
+        );
     }
 
     // A user can switch their own active site, provided the new siteId is
@@ -297,6 +377,14 @@ service cloud.firestore {
             && request.resource.data.columnLabel is string
             && request.resource.data.columnLabel.size() > 0;
           allow delete: if false;
+
+          match /settings/{docId} {
+            allow read: if canReadTenant(tenantId);
+            allow create, update: if docId == 'electricalConsumption'
+              && (canEditTenantConfig(tenantId) || isOwner())
+              && isValidElectricalConsumptionSettings();
+            allow delete: if false;
+          }
         }
 
         match /settings/{docId} {
@@ -309,6 +397,12 @@ service cloud.firestore {
           allow update: if docId == 'controlDashboard'
             && canWriteManualFanStatus(tenantId)
             && isManualFanStatusUpdate();
+          allow create: if docId == 'controlDashboard'
+            && canWriteManualFanStatus(tenantId)
+            && isMaintenanceCreate();
+          allow update: if docId == 'controlDashboard'
+            && canWriteManualFanStatus(tenantId)
+            && isMaintenanceUpdate();
           allow delete: if false;
         }
 

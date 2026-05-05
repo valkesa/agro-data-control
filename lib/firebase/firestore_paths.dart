@@ -81,4 +81,11 @@ class FirestorePaths {
 
   static String plcConfigDoc(String tenantId, String siteId, String plcId) =>
       'tenants/$tenantId/sites/$siteId/plcs/$plcId';
+
+  static String plcElectricalConsumptionSettings({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) =>
+      '${plcConfigDoc(tenantId, siteId, plcId)}/settings/electricalConsumption';
 }

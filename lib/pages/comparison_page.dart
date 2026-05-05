@@ -7,6 +7,7 @@ import '../models/dashboard_range_settings.dart';
 import '../models/dashboard_door_event.dart';
 import '../models/magnifier_settings.dart';
 import '../models/munters_model.dart';
+import '../models/plc_maintenance_settings.dart';
 import '../models/plc_unit_diagnostics.dart';
 import '../widgets/door_openings_module.dart';
 import '../widgets/status_indicator.dart';
@@ -31,6 +32,8 @@ class ComparisonPage extends StatefulWidget {
     required this.homeGeneration,
     this.plc1ColumnLabel,
     this.plc2ColumnLabel,
+    this.plc1MaintenanceMode,
+    this.plc2MaintenanceMode,
   });
 
   static const String sectionEstado = 'Estado';
@@ -106,6 +109,8 @@ class ComparisonPage extends StatefulWidget {
   // Column header labels from Firestore plc config. Fallback to 'M1'/'M2'.
   final String? plc1ColumnLabel;
   final String? plc2ColumnLabel;
+  final PlcMaintenanceMode? plc1MaintenanceMode;
+  final PlcMaintenanceMode? plc2MaintenanceMode;
 
   @override
   State<ComparisonPage> createState() => _ComparisonPageState();
@@ -1277,6 +1282,8 @@ class _ComparisonPageState extends State<ComparisonPage> {
                       showMunters2: widget.showMunters2,
                       plc1ColumnLabel: widget.plc1ColumnLabel ?? 'M1',
                       plc2ColumnLabel: widget.plc2ColumnLabel ?? 'M2',
+                      plc1MaintenanceMode: widget.plc1MaintenanceMode,
+                      plc2MaintenanceMode: widget.plc2MaintenanceMode,
                       magnifierSettings: widget.magnifierSettings,
                       reorderEnabled: _reorderEnabled,
                       onToggleReorder: () {
@@ -1467,6 +1474,8 @@ class _TableHeader extends StatelessWidget {
     required this.showMunters2,
     required this.plc1ColumnLabel,
     required this.plc2ColumnLabel,
+    required this.plc1MaintenanceMode,
+    required this.plc2MaintenanceMode,
     required this.magnifierSettings,
     required this.reorderEnabled,
     required this.onToggleReorder,
@@ -1476,6 +1485,8 @@ class _TableHeader extends StatelessWidget {
   final bool showMunters2;
   final String plc1ColumnLabel;
   final String plc2ColumnLabel;
+  final PlcMaintenanceMode? plc1MaintenanceMode;
+  final PlcMaintenanceMode? plc2MaintenanceMode;
   final MagnifierSettings magnifierSettings;
   final bool reorderEnabled;
   final VoidCallback onToggleReorder;
@@ -1506,8 +1517,10 @@ class _TableHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (showMunters1) _HeaderUnit(title: plc1ColumnLabel),
-          if (showMunters2) _HeaderUnit(title: plc2ColumnLabel),
+          if (showMunters1)
+            _HeaderUnit(title: plc1ColumnLabel, mode: plc1MaintenanceMode),
+          if (showMunters2)
+            _HeaderUnit(title: plc2ColumnLabel, mode: plc2MaintenanceMode),
         ],
       ),
     );
@@ -1515,29 +1528,96 @@ class _TableHeader extends StatelessWidget {
 }
 
 class _HeaderUnit extends StatelessWidget {
-  const _HeaderUnit({required this.title});
+  const _HeaderUnit({required this.title, required this.mode});
 
   final String title;
+  final PlcMaintenanceMode? mode;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       flex: 4,
       child: SizedBox(
-        height: 24,
+        height: mode == null ? 24 : 44,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
+            if (mode == null)
+              Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                ),
+              )
+            else
+              Tooltip(
+                message: mode!.fullLabel,
+                child: Container(
+                  height: 42,
+                  constraints: const BoxConstraints(maxWidth: 160),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFF59E0B),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: const Color(0xFFFBBF24)),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x335B3B00),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            mode!.icon,
+                            color: const Color(0xFF111827),
+                            size: 14,
+                          ),
+                          const SizedBox(width: 5),
+                          Flexible(
+                            child: Text(
+                              mode!.label,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.center,
+                              style: const TextStyle(
+                                color: Color(0xFF111827),
+                                fontSize: 12,
+                                fontWeight: FontWeight.w800,
+                                height: 1,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 3),
+                      const Text(
+                        'Tareas de Mantenimiento',
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          color: Color(0xFF111827),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
-            ),
           ],
         ),
       ),

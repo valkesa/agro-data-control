@@ -15,6 +15,7 @@ import 'models/magnifier_settings.dart';
 import 'models/manual_fan_status_settings.dart';
 import 'models/munters_model.dart';
 import 'models/plc_display_config.dart';
+import 'models/plc_maintenance_settings.dart';
 import 'models/plc_unit_diagnostics.dart';
 import 'models/unit_visibility_settings.dart';
 import 'models/water_shortage_summary.dart';
@@ -25,6 +26,7 @@ import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
 import 'services/control_dashboard_config_service.dart';
 import 'services/door_openings_repository.dart';
+import 'services/electric_consumption_settings_service.dart';
 import 'services/firebase_email_auth_service.dart';
 import 'services/plc_dashboard_service.dart';
 import 'services/presence_service.dart';
@@ -177,6 +179,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
       const TenantMembershipService();
   final ControlDashboardConfigService _dashboardConfigService =
       const ControlDashboardConfigService();
+  final ElectricConsumptionSettingsService _electricConsumptionSettingsService =
+      const ElectricConsumptionSettingsService();
   final PresenceService _presenceService = const PresenceService();
   PlcDashboardService _service = const PlcDashboardService();
   String? _activeSiteId;
@@ -193,15 +197,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
   DashboardSnapshot _snapshot = DashboardSnapshot.placeholder();
   Timer? _refreshTimer;
   Timer? _presenceHeartbeatTimer;
+  Timer? _maintenanceExpiryTimer;
   DashboardRangeSettings _rangeSettings =
       const DashboardRangeSettings.defaults();
-  ElectricConsumptionSettings _electricConsumptionSettings =
-      const ElectricConsumptionSettings.defaults();
   MagnifierSettings _magnifierSettings = const MagnifierSettings.defaults();
   UnitVisibilitySettings _unitVisibilitySettings =
       const UnitVisibilitySettings.defaults();
   ManualFanStatusSettings _manualFanStatusSettings =
       const ManualFanStatusSettings.defaults();
+  PlcMaintenanceSettings _maintenanceSettings =
+      const PlcMaintenanceSettings.empty();
   List<String> _comparisonModuleOrder = ComparisonPage.defaultModuleOrder;
   int _dashboardHomeGeneration = 0;
   late Future<_DashboardBootstrapResult> _dashboardBootstrapFuture;
@@ -234,6 +239,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
     unawaited(_stopPresence(markOffline: true));
     _disposeBrowserExitGuard();
     _refreshTimer?.cancel();
+    _maintenanceExpiryTimer?.cancel();
     _snapshotPulseTimer?.cancel();
     _configSubscription?.cancel();
     super.dispose();
@@ -248,6 +254,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
             return;
           }
           final ControlDashboardThresholds t = config.thresholds;
+          setState(() {
+            _maintenanceSettings = config.maintenanceSettings.withoutExpired();
+          });
+          _scheduleMaintenanceExpiryTimer();
           if (t.tempInteriorMin != null &&
               t.tempInteriorMax != null &&
               t.humidityInteriorMin != null &&
@@ -345,6 +355,27 @@ class _AgroDataShellState extends State<AgroDataShell> {
         user: widget.user,
         role: _userRole,
       ),
+    );
+  }
+
+  void _scheduleMaintenanceExpiryTimer() {
+    _maintenanceExpiryTimer?.cancel();
+    final DateTime? nextExpiration = _maintenanceSettings.nextExpiration;
+    if (nextExpiration == null) {
+      return;
+    }
+    final Duration delay = nextExpiration.difference(DateTime.now());
+    _maintenanceExpiryTimer = Timer(
+      delay.isNegative ? Duration.zero : delay + const Duration(seconds: 1),
+      () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _maintenanceSettings = _maintenanceSettings.withoutExpired();
+        });
+        _scheduleMaintenanceExpiryTimer();
+      },
     );
   }
 
@@ -458,7 +489,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
       setState(() {
         _unitVisibilitySettings = result.unitVisibilitySettings;
         _manualFanStatusSettings = result.manualFanStatusSettings;
+        _maintenanceSettings = result.maintenanceSettings.withoutExpired();
       });
+      _scheduleMaintenanceExpiryTimer();
     }
     final List<String>? configuredComparisonModuleOrder =
         result.comparisonModuleOrderOrNull;
@@ -654,6 +687,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
         case _SettingsMenuAction.manualFanStatusSettings:
           await _openManualFanStatusSettings();
           continue;
+        case _SettingsMenuAction.maintenanceSettings:
+          await _openMaintenanceSettings();
+          continue;
         case _SettingsMenuAction.electricConsumptionSettings:
           await _openElectricConsumptionSettings();
           continue;
@@ -675,6 +711,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
             // ignore: use_build_context_synchronously
             context: context,
             builder: (context) => const _RolesHelpDialog(),
+          );
+          continue;
+        case _SettingsMenuAction.rolesCompare:
+          await showDialog<void>(
+            // ignore: use_build_context_synchronously
+            context: context,
+            builder: (context) => _RolesCompareDialog(userRole: _userRole),
           );
           continue;
         case _SettingsMenuAction.legacyInterfaces:
@@ -986,19 +1029,57 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _openElectricConsumptionSettings() async {
-    final ElectricConsumptionSettings? updated =
-        await showDialog<ElectricConsumptionSettings>(
-          context: context,
-          builder: (context) => _ElectricConsumptionSettingsDialog(
-            initialSettings: _electricConsumptionSettings,
-          ),
-        );
-    if (updated == null || !mounted) {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) {
       return;
     }
-    setState(() {
-      _electricConsumptionSettings = updated;
-    });
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String siteId = bootstrap.siteId;
+    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No hay tenant/sitio activo.')),
+      );
+      return;
+    }
+
+    final List<PlcDisplayConfig> plcConfigs = _effectivePlcConfigs(
+      bootstrap.plcConfigs,
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _ElectricConsumptionSettingsDialog(
+        tenantId: tenantId,
+        siteId: siteId,
+        userUid: widget.user.uid,
+        plcConfigs: plcConfigs,
+        service: _electricConsumptionSettingsService,
+      ),
+    );
+  }
+
+  List<PlcDisplayConfig> _effectivePlcConfigs(List<PlcDisplayConfig> configs) {
+    if (configs.isNotEmpty) {
+      return configs;
+    }
+    return const <PlcDisplayConfig>[
+      PlcDisplayConfig(
+        plcId: 'munters1',
+        displayName: 'Munters 1',
+        columnLabel: 'M1',
+        technicalId: 'munters1',
+        active: true,
+        sortOrder: 1,
+      ),
+      PlcDisplayConfig(
+        plcId: 'munters2',
+        displayName: 'Munters 2',
+        columnLabel: 'M2',
+        technicalId: 'munters2',
+        active: true,
+        sortOrder: 2,
+      ),
+    ];
   }
 
   Future<void> _openManualFanStatusSettings() async {
@@ -1059,6 +1140,62 @@ class _AgroDataShellState extends State<AgroDataShell> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Estado de fanes guardado.')));
+  }
+
+  Future<void> _openMaintenanceSettings() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) {
+      return;
+    }
+    final bool canEditMaintenance =
+        bootstrap.userContext.role == UserAppRole.owner ||
+        bootstrap.userContext.role == UserAppRole.valkeTechnician;
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String siteId = bootstrap.siteId;
+    if (!canEditMaintenance ||
+        tenantId == null ||
+        tenantId.isEmpty ||
+        siteId.isEmpty) {
+      return;
+    }
+
+    final PlcMaintenanceSettings? updated =
+        await showDialog<PlcMaintenanceSettings>(
+          context: context,
+          builder: (context) => _MaintenanceSettingsDialog(
+            initialSettings: _maintenanceSettings,
+            plcConfigs: _effectivePlcConfigs(bootstrap.plcConfigs),
+          ),
+        );
+    if (updated == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _maintenanceSettings = updated.withoutExpired();
+    });
+    _scheduleMaintenanceExpiryTimer();
+
+    final ControlDashboardSaveResult result = await _dashboardConfigService
+        .saveMaintenanceSettings(
+          tenantId: tenantId,
+          siteId: siteId,
+          userUid: widget.user.uid,
+          settings: updated,
+        );
+
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.isSuccess
+              ? 'Mantenimiento guardado.'
+              : 'No se pudo guardar mantenimiento: ${result.errorMessage}',
+        ),
+      ),
+    );
   }
 
   Future<void> _openVisualConfig() async {
@@ -1562,8 +1699,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Widget _buildDashboard(BuildContext context) {
-    final List<MuntersModel> units = _applyManualFanStatusToUnits(
-      _snapshot.units,
+    final List<MuntersModel> units = _applyMaintenanceToUnits(
+      _applyManualFanStatusToUnits(_snapshot.units),
     );
     final MuntersModel munters1 = units.first;
     final MuntersModel munters2 = units.length > 1
@@ -1577,6 +1714,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
         : selectedUnit.name;
     final String? presenceWorkspaceId =
         _presenceWorkspaceId ?? _historyTenantId;
+    final Map<String, WaterShortageSummary> visibleWaterShortageSummaries =
+        _waterShortageSummariesWithoutMaintenance();
 
     debugPrint(
       '[frontend-render] root.plcOnline=null status.plcOnline=null munters1.plcOnline=${munters1.plcOnline} munters2.plcOnline=${munters2.plcOnline}',
@@ -1659,6 +1798,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             plc2ColumnLabel: _plcConfigs.length > 1
                                 ? _plcConfigs[1].columnLabel
                                 : null,
+                            plc1MaintenanceMode: _maintenanceSettings.modeFor(
+                              _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].plcId
+                                  : 'munters1',
+                            ),
+                            plc2MaintenanceMode: _maintenanceSettings.modeFor(
+                              _plcConfigs.length > 1
+                                  ? _plcConfigs[1].plcId
+                                  : 'munters2',
+                            ),
                           ),
                         );
                       }
@@ -1672,7 +1821,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             snapshotStale: _snapshotStale,
                             showSnapshotPulse: _showSnapshotPulse,
                             waterShortageSummary:
-                                _waterShortageSummaries[selectedUnit
+                                visibleWaterShortageSummaries[selectedUnit
                                     .historyPlcId],
                           ),
                         );
@@ -1692,7 +1841,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                   units: units,
                                   selectedUnitName: selectedUnit.name,
                                   waterShortageSummaries:
-                                      _waterShortageSummaries,
+                                      visibleWaterShortageSummaries,
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -1703,7 +1852,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                   snapshotStale: _snapshotStale,
                                   showSnapshotPulse: _showSnapshotPulse,
                                   waterShortageSummary:
-                                      _waterShortageSummaries[selectedUnit
+                                      visibleWaterShortageSummaries[selectedUnit
                                           .historyPlcId],
                                 ),
                               ),
@@ -1720,7 +1869,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             DashboardPage(
                               units: units,
                               selectedUnitName: selectedUnit.name,
-                              waterShortageSummaries: _waterShortageSummaries,
+                              waterShortageSummaries:
+                                  visibleWaterShortageSummaries,
                             ),
                             const SizedBox(height: 12),
                             MuntersPage(
@@ -1728,7 +1878,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                               snapshotStale: _snapshotStale,
                               showSnapshotPulse: _showSnapshotPulse,
                               waterShortageSummary:
-                                  _waterShortageSummaries[selectedUnit
+                                  visibleWaterShortageSummaries[selectedUnit
                                       .historyPlcId],
                             ),
                           ],
@@ -1742,6 +1892,100 @@ class _AgroDataShellState extends State<AgroDataShell> {
           ),
         ),
       ),
+    );
+  }
+
+  Map<String, WaterShortageSummary>
+  _waterShortageSummariesWithoutMaintenance() {
+    if (_maintenanceSettings.modesByPlcId.isEmpty) {
+      return _waterShortageSummaries;
+    }
+    return <String, WaterShortageSummary>{
+      for (final MapEntry<String, WaterShortageSummary> entry
+          in _waterShortageSummaries.entries)
+        if (!_maintenanceSettings.isInMaintenance(entry.key))
+          entry.key: entry.value,
+    };
+  }
+
+  List<MuntersModel> _applyMaintenanceToUnits(List<MuntersModel> units) {
+    if (units.isEmpty || _maintenanceSettings.modesByPlcId.isEmpty) {
+      return units;
+    }
+    return units.map(_applyMaintenanceToUnit).toList(growable: false);
+  }
+
+  MuntersModel _applyMaintenanceToUnit(MuntersModel source) {
+    final PlcMaintenanceMode? mode = _maintenanceSettings.modeFor(
+      source.historyPlcId,
+    );
+    if (mode == null) {
+      return source;
+    }
+    return MuntersModel(
+      name: source.name,
+      historyClientId: source.historyClientId,
+      historyPlcId: source.historyPlcId,
+      diagnostics: PlcUnitDiagnostics(
+        backendAlive: source.backendOnline ?? _backendOnline,
+        plcConnectOk: false,
+        validKeySignals: null,
+        invalidKeySignals: null,
+        totalKeySignals: null,
+        lastPollAt: null,
+        lastSuccessfulReadAt: null,
+        stateCode: PlcUnitDiagnostics.plcStateUnknown,
+        stateLabel: mode.fullLabel,
+        stateReason:
+            'Valores ocultos en frontend por mantenimiento seleccionado.',
+      ),
+      backendOnline: source.backendOnline,
+      configured: source.configured,
+      plcReachable: null,
+      plcRunning: null,
+      dataFresh: null,
+      plcOnline: null,
+      plcLatencyMs: null,
+      routerLatencyMs: null,
+      backendStartedAt: null,
+      lastUpdatedAt: null,
+      previousLastUpdatedAt: null,
+      updateDeltaSeconds: null,
+      lastHeartbeatValue: null,
+      lastHeartbeatChangeAt: null,
+      lastError: null,
+      tempInterior: null,
+      tempIngresoSala: null,
+      humInterior: null,
+      tempExterior: null,
+      humExterior: null,
+      nh3: null,
+      presionDiferencial: null,
+      tensionSalidaVentiladores: null,
+      fanQ5: null,
+      fanQ6: null,
+      fanQ7: null,
+      fanQ8: null,
+      fanQ9: null,
+      fanQ10: null,
+      bombaHumidificador: null,
+      resistencia1: null,
+      resistencia2: null,
+      alarmaGeneral: null,
+      fallaRed: null,
+      nivelAguaAlarma: null,
+      fallaTermicaBomba: null,
+      eventosSinAgua: null,
+      horasMunter: null,
+      horasFiltroF9: null,
+      horasFiltroG4: null,
+      horasPolifosfato: null,
+      salaAbierta: null,
+      aperturasSala: null,
+      munterAbierto: null,
+      aperturasMunter: null,
+      cantidadApagadas: null,
+      estadoEquipo: null,
     );
   }
 
@@ -2226,6 +2470,9 @@ class _DashboardBootstrapResult {
       config?.manualFanStatusSettings ??
       const ManualFanStatusSettings.defaults();
 
+  PlcMaintenanceSettings get maintenanceSettings =>
+      config?.maintenanceSettings ?? const PlcMaintenanceSettings.empty();
+
   List<String>? get comparisonModuleOrderOrNull {
     final List<String>? storedOrder = userContext.readComparisonModuleOrder();
     if (storedOrder == null) {
@@ -2439,10 +2686,12 @@ enum _SettingsMenuAction {
   magnifierSettings,
   unitVisibilitySettings,
   manualFanStatusSettings,
+  maintenanceSettings,
   electricConsumptionSettings,
   manageUsers,
   doorOpeningsCleanup,
   rolesHelp,
+  rolesCompare,
   visualConfig,
   legacyInterfaces,
   legacyDashboard,
@@ -2614,6 +2863,27 @@ class _SettingsMenuDialog extends StatelessWidget {
                     FilledButton.tonal(
                       onPressed: () => Navigator.of(
                         context,
+                      ).pop(_SettingsMenuAction.maintenanceSettings),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.handyman_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Mantenimiento'),
+                        ],
+                      ),
+                    ),
+                  ],
+                  if (userRole == UserAppRole.owner ||
+                      userRole == UserAppRole.valkeTechnician) ...[
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
                       ).pop(_SettingsMenuAction.manualFanStatusSettings),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 42),
@@ -2631,6 +2901,29 @@ class _SettingsMenuDialog extends StatelessWidget {
                   ],
                 ],
               ),
+              if (userRole == UserAppRole.owner ||
+                  userRole == UserAppRole.tenantAdmin) ...[
+                const SizedBox(height: 18),
+                const _SettingsMenuSectionTitle('Ayuda'),
+                const SizedBox(height: 8),
+                FilledButton.tonal(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_SettingsMenuAction.rolesCompare),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 42),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.help_outline_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Text('Comparativa de roles'),
+                    ],
+                  ),
+                ),
+              ],
               if (userRole == UserAppRole.owner) ...[
                 const SizedBox(height: 18),
                 const _SettingsMenuSectionTitle('Administración'),
@@ -2766,6 +3059,196 @@ class _SettingsMenuSectionTitle extends StatelessWidget {
         fontSize: 14,
         fontWeight: FontWeight.w700,
       ),
+    );
+  }
+}
+
+class _RolesCompareDialog extends StatelessWidget {
+  const _RolesCompareDialog({required this.userRole});
+
+  final String? userRole;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool showOwner = userRole == UserAppRole.owner;
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Ayuda — Comparativa de roles',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: showOwner ? 560 : 420,
+        child: SingleChildScrollView(
+          child: _RolesCompareTable(showOwner: showOwner),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+      ],
+    );
+  }
+}
+
+class _RolesCompareTable extends StatelessWidget {
+  const _RolesCompareTable({required this.showOwner});
+
+  final bool showOwner;
+
+  static const _headerStyle = TextStyle(
+    color: Color(0xFF94A3B8),
+    fontSize: 11,
+    fontWeight: FontWeight.w700,
+  );
+  static const _labelStyle = TextStyle(color: Color(0xFFCBD5E1), fontSize: 12);
+  static const _scopeStyle = TextStyle(
+    color: Color(0xFF93C5FD),
+    fontSize: 11,
+    fontWeight: FontWeight.w600,
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    // (label, ownerVal, adminVal, operatorVal)
+    final data = <(String, bool, bool, bool)>[
+      ('Ver datos y métricas', true, true, true),
+      ('Operar la aplicación', true, true, true),
+      ('Editar configuraciones del tenant/site', true, true, false),
+      ('Ajustes avanzados de la app', true, true, false),
+      ('Gestionar operadores', true, true, false),
+      if (showOwner) ...[
+        ('Crear/gestionar Admins de Tenant', true, false, false),
+        ('Config. visual de PLCs', true, false, false),
+        ('Control manual de fanes', true, false, false),
+        ('Ver usuarios activos en tiempo real', true, false, false),
+      ],
+    ];
+
+    final columnWidths = showOwner
+        ? const <int, TableColumnWidth>{
+            0: FlexColumnWidth(),
+            1: FixedColumnWidth(58),
+            2: FixedColumnWidth(58),
+            3: FixedColumnWidth(72),
+          }
+        : const <int, TableColumnWidth>{
+            0: FlexColumnWidth(),
+            1: FixedColumnWidth(58),
+            2: FixedColumnWidth(72),
+          };
+
+    final colHeaders = showOwner
+        ? ['Owner', 'Admin', 'Operador']
+        : ['Admin', 'Operador'];
+
+    return Table(
+      columnWidths: columnWidths,
+      border: TableBorder.symmetric(
+        inside: const BorderSide(color: Color(0xFF1E293B)),
+      ),
+      children: [
+        // Header
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFF0F172A)),
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text('Capacidad', style: _headerStyle),
+            ),
+            ...colHeaders.map(
+              (h) => Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                child: Text(
+                  h,
+                  style: _headerStyle,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+          ],
+        ),
+        // Data rows
+        ...data.indexed.map((entry) {
+          final (i, (label, ownerVal, adminVal, opVal)) = entry;
+          final values = showOwner
+              ? [ownerVal, adminVal, opVal]
+              : [adminVal, opVal];
+          return TableRow(
+            decoration: BoxDecoration(
+              color: i.isEven
+                  ? const Color(0xFF111827)
+                  : const Color(0xFF0F172A),
+            ),
+            children: [
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
+                child: Text(label, style: _labelStyle),
+              ),
+              ...values.map(
+                (v) => Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 8,
+                  ),
+                  child: Text(
+                    v ? '✓' : '✗',
+                    style: TextStyle(
+                      color: v
+                          ? const Color(0xFF4ADE80)
+                          : const Color(0xFFF87171),
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ),
+            ],
+          );
+        }),
+        // Scope footer
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFF0F172A)),
+          children: [
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: Text('Ámbito', style: _headerStyle),
+            ),
+            if (showOwner)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                child: Text(
+                  'Global',
+                  style: _scopeStyle,
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: Text(
+                'Su tenant',
+                style: _scopeStyle,
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+              child: Text(
+                'Su tenant',
+                style: _scopeStyle,
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -3311,9 +3794,19 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
 }
 
 class _ElectricConsumptionSettingsDialog extends StatefulWidget {
-  const _ElectricConsumptionSettingsDialog({required this.initialSettings});
+  const _ElectricConsumptionSettingsDialog({
+    required this.tenantId,
+    required this.siteId,
+    required this.userUid,
+    required this.plcConfigs,
+    required this.service,
+  });
 
-  final ElectricConsumptionSettings initialSettings;
+  final String tenantId;
+  final String siteId;
+  final String userUid;
+  final List<PlcDisplayConfig> plcConfigs;
+  final ElectricConsumptionSettingsService service;
 
   @override
   State<_ElectricConsumptionSettingsDialog> createState() =>
@@ -3322,107 +3815,220 @@ class _ElectricConsumptionSettingsDialog extends StatefulWidget {
 
 class _ElectricConsumptionSettingsDialogState
     extends State<_ElectricConsumptionSettingsDialog> {
-  late final TextEditingController _fan15;
-  late final TextEditingController _fan25;
-  late final TextEditingController _fan35;
-  late final TextEditingController _fan50;
-  late final TextEditingController _fan65;
-  late final TextEditingController _fan75;
-  late final TextEditingController _fan85;
-  late final TextEditingController _pump;
-  late final TextEditingController _heat1;
-  late final TextEditingController _heat2;
+  final Map<String, _ElectricPlcControllers> _controllersByPlc =
+      <String, _ElectricPlcControllers>{};
+  bool _loading = true;
+  bool _saving = false;
   String? _errorText;
 
-  static String _fmt(double? v) => v == null ? '' : v.toString();
+  static String _fmt(double? value) => value == null ? '' : value.toString();
 
   @override
   void initState() {
     super.initState();
-    final ElectricConsumptionSettings s = widget.initialSettings;
-    _fan15 = TextEditingController(text: _fmt(s.fanConsumption15));
-    _fan25 = TextEditingController(text: _fmt(s.fanConsumption25));
-    _fan35 = TextEditingController(text: _fmt(s.fanConsumption35));
-    _fan50 = TextEditingController(text: _fmt(s.fanConsumption50));
-    _fan65 = TextEditingController(text: _fmt(s.fanConsumption65));
-    _fan75 = TextEditingController(text: _fmt(s.fanConsumption75));
-    _fan85 = TextEditingController(text: _fmt(s.fanConsumption85));
-    _pump = TextEditingController(text: _fmt(s.pumpConsumption));
-    _heat1 = TextEditingController(text: _fmt(s.heatingConsumption1));
-    _heat2 = TextEditingController(text: _fmt(s.heatingConsumption2));
+    _loadAllPlcs();
   }
 
   @override
   void dispose() {
-    _fan15.dispose();
-    _fan25.dispose();
-    _fan35.dispose();
-    _fan50.dispose();
-    _fan65.dispose();
-    _fan75.dispose();
-    _fan85.dispose();
-    _pump.dispose();
-    _heat1.dispose();
-    _heat2.dispose();
+    for (final _ElectricPlcControllers controllers
+        in _controllersByPlc.values) {
+      controllers.dispose();
+    }
     super.dispose();
   }
 
-  double? _parse(TextEditingController c) {
-    final String t = c.text.trim().replaceAll(',', '.');
-    if (t.isEmpty) return null;
-    return double.tryParse(t);
+  Future<void> _loadAllPlcs() async {
+    setState(() {
+      _loading = true;
+      _errorText = null;
+    });
+    try {
+      await Future.wait(
+        widget.plcConfigs.map((PlcDisplayConfig plc) async {
+          final ElectricConsumptionSettings settings = await widget.service
+              .readSettings(
+                tenantId: widget.tenantId,
+                siteId: widget.siteId,
+                plcId: plc.plcId,
+              );
+          _controllersByPlc[plc.plcId]?.dispose();
+          _controllersByPlc[plc.plcId] = _ElectricPlcControllers.fromSettings(
+            settings,
+            format: _fmt,
+          );
+        }),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorText = 'No se pudo cargar la configuración: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
   }
 
-  bool _isInvalidInput(TextEditingController c) {
-    final String t = c.text.trim().replaceAll(',', '.');
-    if (t.isEmpty) return false;
-    final double? v = double.tryParse(t);
-    return v == null || v < 0;
+  void _addFanLevel(String plcId) {
+    setState(() {
+      _controllersByPlc[plcId]?.fanRows.add(_FanLevelControllers());
+      _errorText = null;
+    });
   }
 
-  void _submit() {
-    final List<TextEditingController> all = [
-      _fan15,
-      _fan25,
-      _fan35,
-      _fan50,
-      _fan65,
-      _fan75,
-      _fan85,
-      _pump,
-      _heat1,
-      _heat2,
-    ];
-    if (all.any(_isInvalidInput)) {
+  void _removeFanLevel(String plcId, int index) {
+    setState(() {
+      _controllersByPlc[plcId]?.fanRows.removeAt(index).dispose();
+      _errorText = null;
+    });
+  }
+
+  double? _parse(TextEditingController controller) {
+    final String text = controller.text.trim().replaceAll(',', '.');
+    if (text.isEmpty) {
+      return null;
+    }
+    return double.tryParse(text);
+  }
+
+  Future<void> _save() async {
+    final Map<String, ElectricConsumptionSettings> settingsByPlc =
+        <String, ElectricConsumptionSettings>{};
+    for (final PlcDisplayConfig plc in widget.plcConfigs) {
+      final _ElectricPlcControllers? controllers = _controllersByPlc[plc.plcId];
+      if (controllers == null) {
+        continue;
+      }
+      final ElectricConsumptionSettings? settings = _buildSettings(
+        plcLabel: plc.columnLabel,
+        controllers: controllers,
+      );
+      if (settings == null) {
+        return;
+      }
+      settingsByPlc[plc.plcId] = settings;
+    }
+
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+    try {
+      for (final MapEntry<String, ElectricConsumptionSettings> entry
+          in settingsByPlc.entries) {
+        await widget.service.saveSettings(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          plcId: entry.key,
+          userUid: widget.userUid,
+          settings: entry.value,
+        );
+        _controllersByPlc[entry.key]?.applySettings(entry.value, format: _fmt);
+      }
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Consumos eléctricos guardados.')),
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _errorText = 'No se pudo guardar en Firebase: $error';
+      });
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+        });
+      }
+    }
+  }
+
+  ElectricConsumptionSettings? _buildSettings({
+    required String plcLabel,
+    required _ElectricPlcControllers controllers,
+  }) {
+    final List<FanConsumptionLevel> levels = <FanConsumptionLevel>[];
+    final Set<double> percents = <double>{};
+
+    for (final _FanLevelControllers row in controllers.fanRows) {
+      final bool percentEmpty = row.percent.text.trim().isEmpty;
+      final bool kwEmpty = row.kw.text.trim().isEmpty;
+      if (percentEmpty && kwEmpty) {
+        continue;
+      }
+      final double? percent = _parse(row.percent);
+      final double? kw = _parse(row.kw);
+      if (percent == null || percent <= 0 || percent > 100) {
+        setState(() {
+          _errorText =
+              '$plcLabel: cada porcentaje debe ser mayor a 0 y menor o igual a 100.';
+        });
+        return null;
+      }
+      if (kw == null || kw < 0) {
+        setState(() {
+          _errorText =
+              '$plcLabel: cada consumo de forzador debe ser mayor o igual a 0.';
+        });
+        return null;
+      }
+      if (!percents.add(percent)) {
+        setState(() {
+          _errorText = '$plcLabel: no puede haber porcentajes repetidos.';
+        });
+        return null;
+      }
+      levels.add(FanConsumptionLevel(percent: percent, kw: kw));
+    }
+    levels.sort((a, b) => a.percent.compareTo(b.percent));
+
+    final double? pump = _parse(controllers.pump);
+    final double? heat1 = _parse(controllers.heat1);
+    final double? heat2 = _parse(controllers.heat2);
+    if (_hasInvalidKw(controllers.pump) ||
+        _hasInvalidKw(controllers.heat1) ||
+        _hasInvalidKw(controllers.heat2)) {
       setState(() {
         _errorText =
-            'Algún valor ingresado no es válido. Usa números positivos.';
+            '$plcLabel: bomba y resistencias deben ser números mayores o iguales a 0.';
       });
-      return;
+      return null;
     }
-    Navigator.of(context).pop(
-      ElectricConsumptionSettings(
-        fanConsumption15: _parse(_fan15),
-        fanConsumption25: _parse(_fan25),
-        fanConsumption35: _parse(_fan35),
-        fanConsumption50: _parse(_fan50),
-        fanConsumption65: _parse(_fan65),
-        fanConsumption75: _parse(_fan75),
-        fanConsumption85: _parse(_fan85),
-        pumpConsumption: _parse(_pump),
-        heatingConsumption1: _parse(_heat1),
-        heatingConsumption2: _parse(_heat2),
-      ),
+
+    return ElectricConsumptionSettings(
+      fanLevels: levels,
+      humidifierPumpKw: pump,
+      heaterStage1Kw: heat1,
+      heaterStage2Kw: heat2,
     );
+  }
+
+  bool _hasInvalidKw(TextEditingController controller) {
+    if (controller.text.trim().isEmpty) {
+      return false;
+    }
+    final double? value = _parse(controller);
+    return value == null || value < 0;
   }
 
   @override
   Widget build(BuildContext context) {
     final Size screenSize = MediaQuery.sizeOf(context);
     final double maxContentHeight = (screenSize.height - 180).clamp(
-      300.0,
-      600.0,
+      380.0,
+      720.0,
     );
+    final bool twoColumns = screenSize.width >= 860;
 
     return AlertDialog(
       backgroundColor: const Color(0xFF111827),
@@ -3432,85 +4038,228 @@ class _ElectricConsumptionSettingsDialogState
         style: TextStyle(color: Color(0xFFE5E7EB)),
       ),
       content: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 420, maxHeight: maxContentHeight),
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Los campos vacíos quedan sin configurar.',
-                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
-              ),
-              const SizedBox(height: 16),
-              _sectionLabel('Consumo Forzadores'),
-              const SizedBox(height: 4),
-              const Text(
-                'Potencia consumida según nivel de trabajo',
-                style: TextStyle(color: Color(0xFF64748B), fontSize: 11),
-              ),
-              const SizedBox(height: 10),
-              _RangeField(controller: _fan15, label: '15%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan25, label: '25%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan35, label: '35%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan50, label: '50%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan65, label: '65%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan75, label: '75%', suffix: 'kW'),
-              const SizedBox(height: 8),
-              _RangeField(controller: _fan85, label: '85%', suffix: 'kW'),
-              const SizedBox(height: 16),
-              _sectionLabel('Consumo Bomba Humidificadora'),
-              const SizedBox(height: 10),
-              _RangeField(
-                controller: _pump,
-                label: 'Bomba humidificadora',
-                suffix: 'kW',
-              ),
-              const SizedBox(height: 16),
-              _sectionLabel('Consumo Calefactores'),
-              const SizedBox(height: 10),
-              _RangeField(
-                controller: _heat1,
-                label: 'Resistencia etapa 1',
-                suffix: 'kW',
-              ),
-              const SizedBox(height: 8),
-              _RangeField(
-                controller: _heat2,
-                label: 'Resistencia etapa 2',
-                suffix: 'kW',
-              ),
-              if (_errorText != null) ...[
-                const SizedBox(height: 12),
-                Text(
-                  _errorText!,
-                  style: const TextStyle(
-                    color: Color(0xFFFCA5A5),
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ],
-          ),
+        constraints: BoxConstraints(
+          maxWidth: twoColumns ? 960 : 560,
+          maxHeight: maxContentHeight,
         ),
+        child: _loading
+            ? const SizedBox(
+                height: 160,
+                child: Center(child: CircularProgressIndicator()),
+              )
+            : SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Los campos vacíos quedan sin configurar.',
+                      style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                    ),
+                    const SizedBox(height: 14),
+                    if (twoColumns)
+                      Wrap(
+                        spacing: 14,
+                        runSpacing: 14,
+                        children: [
+                          for (final PlcDisplayConfig plc in widget.plcConfigs)
+                            SizedBox(
+                              width: 450,
+                              child: _buildElectricPlcColumn(plc),
+                            ),
+                        ],
+                      )
+                    else
+                      Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (
+                            int i = 0;
+                            i < widget.plcConfigs.length;
+                            i++
+                          ) ...[
+                            _buildElectricPlcColumn(widget.plcConfigs[i]),
+                            if (i < widget.plcConfigs.length - 1)
+                              const SizedBox(height: 14),
+                          ],
+                        ],
+                      ),
+                    if (_errorText != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _errorText!,
+                        style: const TextStyle(
+                          color: Color(0xFFFCA5A5),
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancelar'),
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+        FilledButton(
+          onPressed: _saving || _loading ? null : _save,
+          child: Text(_saving ? 'Guardando...' : 'Guardar todo'),
+        ),
       ],
     );
   }
 
-  Widget _sectionLabel(String text) {
+  Widget _buildElectricPlcColumn(PlcDisplayConfig plc) {
+    final _ElectricPlcControllers controllers =
+        _controllersByPlc[plc.plcId] ?? _ElectricPlcControllers();
+    _controllersByPlc[plc.plcId] = controllers;
+    return _ElectricPlcColumn(
+      plc: plc,
+      controllers: controllers,
+      onAddFanLevel: () => _addFanLevel(plc.plcId),
+      onRemoveFanLevel: (int index) => _removeFanLevel(plc.plcId, index),
+    );
+  }
+}
+
+class _ElectricPlcControllers {
+  _ElectricPlcControllers()
+    : pump = TextEditingController(),
+      heat1 = TextEditingController(),
+      heat2 = TextEditingController();
+
+  factory _ElectricPlcControllers.fromSettings(
+    ElectricConsumptionSettings settings, {
+    required String Function(double?) format,
+  }) {
+    return _ElectricPlcControllers()..applySettings(settings, format: format);
+  }
+
+  final List<_FanLevelControllers> fanRows = <_FanLevelControllers>[];
+  final TextEditingController pump;
+  final TextEditingController heat1;
+  final TextEditingController heat2;
+
+  void applySettings(
+    ElectricConsumptionSettings settings, {
+    required String Function(double?) format,
+  }) {
+    for (final _FanLevelControllers row in fanRows) {
+      row.dispose();
+    }
+    fanRows
+      ..clear()
+      ..addAll(
+        settings.fanLevels.map(
+          (FanConsumptionLevel level) => _FanLevelControllers(
+            percent: format(level.percent),
+            kw: format(level.kw),
+          ),
+        ),
+      );
+    pump.text = format(settings.humidifierPumpKw);
+    heat1.text = format(settings.heaterStage1Kw);
+    heat2.text = format(settings.heaterStage2Kw);
+  }
+
+  void dispose() {
+    for (final _FanLevelControllers row in fanRows) {
+      row.dispose();
+    }
+    pump.dispose();
+    heat1.dispose();
+    heat2.dispose();
+  }
+}
+
+class _ElectricPlcColumn extends StatelessWidget {
+  const _ElectricPlcColumn({
+    required this.plc,
+    required this.controllers,
+    required this.onAddFanLevel,
+    required this.onRemoveFanLevel,
+  });
+
+  final PlcDisplayConfig plc;
+  final _ElectricPlcControllers controllers;
+  final VoidCallback onAddFanLevel;
+  final ValueChanged<int> onRemoveFanLevel;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${plc.columnLabel} · ${plc.displayName}',
+              style: const TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 14),
+            _ElectricSectionLabel('Consumo Forzadores'),
+            const SizedBox(height: 10),
+            for (int i = 0; i < controllers.fanRows.length; i++) ...[
+              _FanLevelRow(
+                row: controllers.fanRows[i],
+                onRemove: () => onRemoveFanLevel(i),
+              ),
+              const SizedBox(height: 8),
+            ],
+            OutlinedButton.icon(
+              onPressed: onAddFanLevel,
+              icon: const Icon(Icons.add),
+              label: const Text('Agregar nivel'),
+            ),
+            const SizedBox(height: 16),
+            _ElectricSectionLabel('Consumo Bomba Humidificadora'),
+            const SizedBox(height: 10),
+            _RangeField(
+              controller: controllers.pump,
+              label: 'Bomba humidificadora',
+              suffix: 'kW',
+            ),
+            const SizedBox(height: 16),
+            _ElectricSectionLabel('Consumo Calefactores'),
+            const SizedBox(height: 10),
+            _RangeField(
+              controller: controllers.heat1,
+              label: 'Resistencia etapa 1',
+              suffix: 'kW',
+            ),
+            const SizedBox(height: 8),
+            _RangeField(
+              controller: controllers.heat2,
+              label: 'Resistencia etapa 2',
+              suffix: 'kW',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ElectricSectionLabel extends StatelessWidget {
+  const _ElectricSectionLabel(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
     return Text(
       text,
       style: const TextStyle(
@@ -3518,6 +4267,56 @@ class _ElectricConsumptionSettingsDialogState
         fontSize: 13,
         fontWeight: FontWeight.w600,
       ),
+    );
+  }
+}
+
+class _FanLevelControllers {
+  _FanLevelControllers({String percent = '', String kw = ''})
+    : percent = TextEditingController(text: percent),
+      kw = TextEditingController(text: kw);
+
+  final TextEditingController percent;
+  final TextEditingController kw;
+
+  void dispose() {
+    percent.dispose();
+    kw.dispose();
+  }
+}
+
+class _FanLevelRow extends StatelessWidget {
+  const _FanLevelRow({required this.row, required this.onRemove});
+
+  final _FanLevelControllers row;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _RangeField(
+            controller: row.percent,
+            label: 'Porcentaje',
+            suffix: '%',
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _RangeField(
+            controller: row.kw,
+            label: 'Consumo',
+            suffix: 'kW',
+          ),
+        ),
+        const SizedBox(width: 8),
+        IconButton(
+          tooltip: 'Eliminar nivel',
+          onPressed: onRemove,
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
     );
   }
 }
@@ -4254,6 +5053,262 @@ class _UnitVisibilitySettingsDialogState
         ),
         FilledButton(onPressed: _submit, child: const Text('Guardar')),
       ],
+    );
+  }
+}
+
+class _MaintenanceSettingsDialog extends StatefulWidget {
+  const _MaintenanceSettingsDialog({
+    required this.initialSettings,
+    required this.plcConfigs,
+  });
+
+  final PlcMaintenanceSettings initialSettings;
+  final List<PlcDisplayConfig> plcConfigs;
+
+  @override
+  State<_MaintenanceSettingsDialog> createState() =>
+      _MaintenanceSettingsDialogState();
+}
+
+class _MaintenanceSettingsDialogState
+    extends State<_MaintenanceSettingsDialog> {
+  static const List<Duration> _durationOptions = <Duration>[
+    Duration(hours: 1),
+    Duration(hours: 2),
+    Duration(hours: 4),
+    Duration(hours: 8),
+    Duration(hours: 24),
+  ];
+
+  late Map<String, PlcMaintenanceEntry> _entriesByPlcId;
+  late Map<String, Duration> _durationsByPlcId;
+
+  @override
+  void initState() {
+    super.initState();
+    _entriesByPlcId = Map<String, PlcMaintenanceEntry>.of(
+      widget.initialSettings.activeEntriesByPlcId,
+    );
+    _durationsByPlcId = <String, Duration>{
+      for (final MapEntry<String, PlcMaintenanceEntry> entry
+          in _entriesByPlcId.entries)
+        entry.key: _durationForEntry(entry.value),
+    };
+  }
+
+  Duration _durationForEntry(PlcMaintenanceEntry entry) {
+    final DateTime? expiresAt = entry.expiresAt;
+    if (expiresAt == null) {
+      return _durationOptions.first;
+    }
+    final Duration remaining = expiresAt.difference(DateTime.now());
+    for (final Duration option in _durationOptions) {
+      if (remaining <= option) {
+        return option;
+      }
+    }
+    return _durationOptions.last;
+  }
+
+  String _durationLabel(Duration duration) {
+    return '${duration.inHours}h';
+  }
+
+  String _expirationLabel(DateTime expiresAt) {
+    final DateTime local = expiresAt.toLocal();
+    final String hh = local.hour.toString().padLeft(2, '0');
+    final String mm = local.minute.toString().padLeft(2, '0');
+    return 'Visible automaticamente a las $hh:$mm';
+  }
+
+  PlcMaintenanceEntry _entryFor({
+    required PlcMaintenanceMode mode,
+    required Duration duration,
+  }) {
+    return PlcMaintenanceEntry(
+      mode: mode,
+      expiresAt: DateTime.now().add(duration),
+    );
+  }
+
+  void _setMode(String plcId, PlcMaintenanceMode? mode) {
+    setState(() {
+      if (mode == null) {
+        _entriesByPlcId.remove(plcId);
+      } else {
+        final Duration duration =
+            _durationsByPlcId[plcId] ?? _durationOptions.first;
+        _durationsByPlcId[plcId] = duration;
+        _entriesByPlcId[plcId] = _entryFor(mode: mode, duration: duration);
+      }
+    });
+  }
+
+  void _setDuration(String plcId, Duration duration) {
+    final PlcMaintenanceEntry? currentEntry = _entriesByPlcId[plcId];
+    if (currentEntry == null) {
+      return;
+    }
+    setState(() {
+      _durationsByPlcId[plcId] = duration;
+      _entriesByPlcId[plcId] = _entryFor(
+        mode: currentEntry.mode,
+        duration: duration,
+      );
+    });
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(
+      PlcMaintenanceSettings(
+        entriesByPlcId: Map<String, PlcMaintenanceEntry>.of(_entriesByPlcId),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Row(
+        children: [
+          Icon(Icons.handyman_rounded, color: Color(0xFF94A3B8), size: 20),
+          SizedBox(width: 8),
+          Text('Mantenimiento', style: TextStyle(color: Color(0xFFE5E7EB))),
+        ],
+      ),
+      content: SizedBox(
+        width: 540,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Los PLCs marcados siguen recibiendo datos, pero la UI los muestra en gris y oculta sus valores.',
+                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+              ),
+              const SizedBox(height: 16),
+              for (final PlcDisplayConfig plc in widget.plcConfigs) ...[
+                _MaintenancePlcEditor(
+                  plc: plc,
+                  selectedEntry: _entriesByPlcId[plc.plcId],
+                  selectedDuration:
+                      _durationsByPlcId[plc.plcId] ?? _durationOptions.first,
+                  durationOptions: _durationOptions,
+                  durationLabel: _durationLabel,
+                  expirationLabel: _expirationLabel,
+                  onChanged: (PlcMaintenanceMode? mode) =>
+                      _setMode(plc.plcId, mode),
+                  onDurationChanged: (Duration duration) =>
+                      _setDuration(plc.plcId, duration),
+                ),
+                const SizedBox(height: 12),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+
+class _MaintenancePlcEditor extends StatelessWidget {
+  const _MaintenancePlcEditor({
+    required this.plc,
+    required this.selectedEntry,
+    required this.selectedDuration,
+    required this.durationOptions,
+    required this.durationLabel,
+    required this.expirationLabel,
+    required this.onChanged,
+    required this.onDurationChanged,
+  });
+
+  final PlcDisplayConfig plc;
+  final PlcMaintenanceEntry? selectedEntry;
+  final Duration selectedDuration;
+  final List<Duration> durationOptions;
+  final String Function(Duration duration) durationLabel;
+  final String Function(DateTime expiresAt) expirationLabel;
+  final ValueChanged<PlcMaintenanceMode?> onChanged;
+  final ValueChanged<Duration> onDurationChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    final PlcMaintenanceMode? selectedMode = selectedEntry?.mode;
+    final DateTime? expiresAt = selectedEntry?.expiresAt;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${plc.columnLabel} · ${plc.displayName}',
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              ChoiceChip(
+                label: const Text('Activo'),
+                selected: selectedMode == null,
+                onSelected: (_) => onChanged(null),
+              ),
+              for (final PlcMaintenanceMode mode in PlcMaintenanceMode.values)
+                ChoiceChip(
+                  avatar: Icon(mode.icon, size: 16),
+                  label: Text(mode.label),
+                  selected: selectedMode == mode,
+                  onSelected: (_) => onChanged(mode),
+                ),
+            ],
+          ),
+          if (selectedMode != null) ...[
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final Duration duration in durationOptions)
+                  ChoiceChip(
+                    label: Text(durationLabel(duration)),
+                    selected: selectedDuration == duration,
+                    onSelected: (_) => onDurationChanged(duration),
+                  ),
+              ],
+            ),
+            if (expiresAt != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                expirationLabel(expiresAt),
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+              ),
+            ],
+          ],
+        ],
+      ),
     );
   }
 }

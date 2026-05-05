@@ -1,0 +1,13 @@
+Desde la raiz del Repo
+./scripts/export_munters_daily_temperatures.sh --output scripts/munters_daily_temperatures.csv
+
+Con rango de Fechas
+./scripts/export_munters_daily_temperatures.sh \
+  --from 2026-04-01 \
+  --to 2026-05-04 \
+  --output scripts/munters_daily_temperatures.csv
+
+Si estás en tu máquina y no existe el service account configurado del VPS:
+./scripts/export_munters_daily_temperatures.sh \
+  --service-account /ruta/al/service-account.json \
+  --output scripts/munters_daily_temperatures.csv

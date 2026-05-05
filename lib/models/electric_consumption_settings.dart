@@ -1,37 +1,80 @@
 class ElectricConsumptionSettings {
   const ElectricConsumptionSettings({
-    this.fanConsumption15,
-    this.fanConsumption25,
-    this.fanConsumption35,
-    this.fanConsumption50,
-    this.fanConsumption65,
-    this.fanConsumption75,
-    this.fanConsumption85,
-    this.pumpConsumption,
-    this.heatingConsumption1,
-    this.heatingConsumption2,
+    this.fanLevels = const <FanConsumptionLevel>[],
+    this.humidifierPumpKw,
+    this.heaterStage1Kw,
+    this.heaterStage2Kw,
   });
 
   const ElectricConsumptionSettings.defaults()
-    : fanConsumption15 = null,
-      fanConsumption25 = null,
-      fanConsumption35 = null,
-      fanConsumption50 = null,
-      fanConsumption65 = null,
-      fanConsumption75 = null,
-      fanConsumption85 = null,
-      pumpConsumption = null,
-      heatingConsumption1 = null,
-      heatingConsumption2 = null;
+    : fanLevels = const <FanConsumptionLevel>[],
+      humidifierPumpKw = null,
+      heaterStage1Kw = null,
+      heaterStage2Kw = null;
 
-  final double? fanConsumption15;
-  final double? fanConsumption25;
-  final double? fanConsumption35;
-  final double? fanConsumption50;
-  final double? fanConsumption65;
-  final double? fanConsumption75;
-  final double? fanConsumption85;
-  final double? pumpConsumption;
-  final double? heatingConsumption1;
-  final double? heatingConsumption2;
+  factory ElectricConsumptionSettings.fromFirestore(Map<String, dynamic> data) {
+    final List<FanConsumptionLevel> levels =
+        (data['fanLevels'] as List<dynamic>? ?? <dynamic>[])
+            .map(FanConsumptionLevel.tryParse)
+            .whereType<FanConsumptionLevel>()
+            .toList()
+          ..sort((a, b) => a.percent.compareTo(b.percent));
+
+    return ElectricConsumptionSettings(
+      fanLevels: levels,
+      humidifierPumpKw: _readDouble(data['humidifierPumpKw']),
+      heaterStage1Kw: _readDouble(data['heaterStage1Kw']),
+      heaterStage2Kw: _readDouble(data['heaterStage2Kw']),
+    );
+  }
+
+  final List<FanConsumptionLevel> fanLevels;
+  final double? humidifierPumpKw;
+  final double? heaterStage1Kw;
+  final double? heaterStage2Kw;
+
+  Map<String, Object?> toFirestore() {
+    return <String, Object?>{
+      'fanLevels': fanLevels
+          .map((FanConsumptionLevel level) => level.toFirestore())
+          .toList(growable: false),
+      if (humidifierPumpKw != null) 'humidifierPumpKw': humidifierPumpKw,
+      if (heaterStage1Kw != null) 'heaterStage1Kw': heaterStage1Kw,
+      if (heaterStage2Kw != null) 'heaterStage2Kw': heaterStage2Kw,
+    };
+  }
+}
+
+class FanConsumptionLevel {
+  const FanConsumptionLevel({required this.percent, required this.kw});
+
+  static FanConsumptionLevel? tryParse(Object? raw) {
+    if (raw is! Map<String, dynamic>) {
+      return null;
+    }
+    final double? percent = _readDouble(raw['percent']);
+    final double? kw = _readDouble(raw['kw']);
+    if (percent == null || kw == null) {
+      return null;
+    }
+    return FanConsumptionLevel(percent: percent, kw: kw);
+  }
+
+  final double percent;
+  final double kw;
+
+  Map<String, Object?> toFirestore() => <String, Object?>{
+    'percent': percent,
+    'kw': kw,
+  };
+}
+
+double? _readDouble(Object? value) {
+  if (value is num) {
+    return value.toDouble();
+  }
+  if (value is String) {
+    return double.tryParse(value);
+  }
+  return null;
 }

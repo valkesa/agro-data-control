@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
 import '../models/manual_fan_status_settings.dart';
+import '../models/plc_maintenance_settings.dart';
 
 class ControlDashboardConfigService {
   const ControlDashboardConfigService();
@@ -250,6 +251,38 @@ class ControlDashboardConfigService {
     }
   }
 
+  Future<ControlDashboardSaveResult> saveMaintenanceSettings({
+    required String tenantId,
+    required String siteId,
+    required String userUid,
+    required PlcMaintenanceSettings settings,
+  }) async {
+    final String path = FirestorePaths.controlDashboardSettings(
+      tenantId,
+      siteId,
+    );
+    debugPrint('[Firestore] dashboard maintenance save started path=$path');
+
+    try {
+      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
+        'ui': <String, Object?>{'maintenance': settings.toFirestore()},
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedByUid': userUid,
+      }, SetOptions(merge: true));
+
+      debugPrint('[Firestore] dashboard maintenance save success path=$path');
+      return const ControlDashboardSaveResult.success();
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[Firestore] dashboard maintenance save error path=$path error=$error',
+      );
+      debugPrint(
+        '[Firestore] dashboard maintenance save error stack=$stackTrace',
+      );
+      return ControlDashboardSaveResult.error(error.toString());
+    }
+  }
+
   DateTime? _parseDateTime(Object? value) {
     if (value is Timestamp) {
       return value.toDate();
@@ -457,6 +490,56 @@ class ControlDashboardConfigResult {
             defaults.q10,
       ),
     );
+  }
+
+  PlcMaintenanceSettings get maintenanceSettings {
+    final Object? ui = rawData['ui'];
+    if (ui is! Map<String, dynamic>) {
+      return const PlcMaintenanceSettings.empty();
+    }
+    final Object? maintenance = ui['maintenance'];
+    if (maintenance is! Map<String, dynamic>) {
+      return const PlcMaintenanceSettings.empty();
+    }
+    return PlcMaintenanceSettings(
+      entriesByPlcId: <String, PlcMaintenanceEntry>{
+        for (final MapEntry<String, dynamic> entry in maintenance.entries)
+          if (_maintenanceEntryFromRaw(entry.value) != null)
+            entry.key: _maintenanceEntryFromRaw(entry.value)!,
+      },
+    ).withoutExpired();
+  }
+
+  PlcMaintenanceEntry? _maintenanceEntryFromRaw(Object? value) {
+    final PlcMaintenanceMode? legacyMode = PlcMaintenanceMode.fromFirestore(
+      value,
+    );
+    if (legacyMode != null) {
+      return PlcMaintenanceEntry(mode: legacyMode, expiresAt: null);
+    }
+    if (value is! Map<String, dynamic>) {
+      return null;
+    }
+    final PlcMaintenanceMode? mode = PlcMaintenanceMode.fromFirestore(
+      value['mode'],
+    );
+    if (mode == null) {
+      return null;
+    }
+    return PlcMaintenanceEntry(
+      mode: mode,
+      expiresAt: _parseRawDateTime(value['expiresAt']),
+    );
+  }
+
+  DateTime? _parseRawDateTime(Object? value) {
+    if (value is Timestamp) {
+      return value.toDate();
+    }
+    if (value is DateTime) {
+      return value;
+    }
+    return null;
   }
 
   bool get hasVisibleUnitsConfig {
