@@ -268,7 +268,7 @@ class ControlDashboardConfigService {
         'ui': <String, Object?>{'maintenance': settings.toFirestore()},
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedByUid': userUid,
-      }, SetOptions(merge: true));
+      }, SetOptions(mergeFields: <Object>['ui.maintenance', 'updatedAt', 'updatedByUid']));
 
       debugPrint('[Firestore] dashboard maintenance save success path=$path');
       return const ControlDashboardSaveResult.success();

@@ -13,6 +13,7 @@ class PlcInstallationConfig {
     required this.units,
     required this.temperatureHistories,
     required this.doorOpenings,
+    required this.runtimeEvents,
     this.routerHost,
   });
 
@@ -59,6 +60,12 @@ class PlcInstallationConfig {
         fallbackTenantId: fallbackTenantId,
         fallbackSiteId: fallbackSiteId,
       ),
+      runtimeEvents: RuntimeEventsConfig.fromJson(
+        json['runtimeEvents'] as Map<String, dynamic>?,
+        fallbackTenantId: fallbackTenantId,
+        fallbackSiteId: fallbackSiteId,
+        fallbackPlcId: fallbackPlcId,
+      ),
       routerHost: json['routerHost'] as String?,
     );
   }
@@ -76,6 +83,7 @@ class PlcInstallationConfig {
   final Map<String, UnitConfig> units;
   final List<TemperatureHistoryConfig> temperatureHistories;
   final DoorOpeningsConfig doorOpenings;
+  final RuntimeEventsConfig runtimeEvents;
   final String? routerHost;
 }
 
@@ -108,8 +116,7 @@ class TemperatureHistoryConfig {
             (json?['tenantId'] ?? json?['clientId']) as String?,
           ) ??
           fallbackTenantId,
-      siteId:
-          _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      siteId: _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
       plcId: _sanitizeSegment(json?['plcId'] as String?) ?? fallbackPlcId,
       firestoreProjectId: json?['firestoreProjectId'] as String?,
       firestoreDatabaseId:
@@ -126,6 +133,7 @@ class TemperatureHistoryConfig {
   final String plcId;
   final String? firestoreProjectId;
   final String firestoreDatabaseId;
+
   /// Ruta al archivo JSON del Service Account de Google.
   final String firestoreServiceAccountPath;
 }
@@ -155,12 +163,9 @@ class DoorOpeningsConfig {
             (json?['tenantId'] ?? json?['clientId']) as String?,
           ) ??
           fallbackTenantId,
-      siteId:
-          _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      siteId: _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
       doors: doorsRaw
-          .map(
-            (Object? d) => DoorConfig.fromJson(d as Map<String, dynamic>),
-          )
+          .map((Object? d) => DoorConfig.fromJson(d as Map<String, dynamic>))
           .toList(),
       firestoreProjectId: json?['firestoreProjectId'] as String?,
       firestoreDatabaseId:
@@ -203,6 +208,116 @@ class DoorConfig {
   final String unitKey;
   final String signalKey;
   final String label;
+}
+
+class RuntimeEventsConfig {
+  RuntimeEventsConfig({
+    required this.enabled,
+    required this.tenantId,
+    required this.siteId,
+    required this.plcs,
+    required this.firestoreProjectId,
+    required this.firestoreDatabaseId,
+    required this.firestoreServiceAccountPath,
+  });
+
+  factory RuntimeEventsConfig.fromJson(
+    Map<String, dynamic>? json, {
+    required String fallbackTenantId,
+    required String fallbackSiteId,
+    required String fallbackPlcId,
+  }) {
+    final List<dynamic> plcsRaw =
+        json?['plcs'] as List<dynamic>? ?? <dynamic>[];
+    return RuntimeEventsConfig(
+      enabled: json?['enabled'] as bool? ?? false,
+      tenantId:
+          _sanitizeSegment(
+            (json?['tenantId'] ?? json?['clientId']) as String?,
+          ) ??
+          fallbackTenantId,
+      siteId: _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      plcs: plcsRaw
+          .map(
+            (Object? plc) => RuntimePlcConfig.fromJson(
+              plc as Map<String, dynamic>,
+              fallbackPlcId: fallbackPlcId,
+            ),
+          )
+          .toList(),
+      firestoreProjectId: json?['firestoreProjectId'] as String?,
+      firestoreDatabaseId:
+          json?['firestoreDatabaseId'] as String? ?? '(default)',
+      firestoreServiceAccountPath:
+          json?['firestoreServiceAccountPath'] as String? ?? '',
+    );
+  }
+
+  final bool enabled;
+  final String tenantId;
+  final String siteId;
+  final List<RuntimePlcConfig> plcs;
+  final String? firestoreProjectId;
+  final String firestoreDatabaseId;
+
+  /// Ruta al archivo JSON del Service Account de Google.
+  final String firestoreServiceAccountPath;
+}
+
+class RuntimePlcConfig {
+  RuntimePlcConfig({
+    required this.unitKey,
+    required this.plcId,
+    required this.humidifierPumpSignal,
+    required this.heater1Signal,
+    required this.heater2Signal,
+    required this.fansPowerSignal,
+    required this.fansPowerMultiplier,
+    required this.fansPowerOffset,
+    required this.nominalPowerWatts,
+  });
+
+  factory RuntimePlcConfig.fromJson(
+    Map<String, dynamic> json, {
+    required String fallbackPlcId,
+  }) {
+    final String unitKey = json['unitKey'] as String? ?? fallbackPlcId;
+    final Map<String, dynamic> nominalPowerRaw =
+        json['nominalPowerWatts'] as Map<String, dynamic>? ??
+        <String, dynamic>{};
+    return RuntimePlcConfig(
+      unitKey: unitKey,
+      plcId:
+          _sanitizeSegment(json['plcId'] as String?) ??
+          _sanitizeSegment(unitKey) ??
+          fallbackPlcId,
+      humidifierPumpSignal:
+          json['humidifierPumpSignal'] as String? ?? 'bombaHumidificador',
+      heater1Signal: json['heater1Signal'] as String? ?? 'resistencia1',
+      heater2Signal: json['heater2Signal'] as String? ?? 'resistencia2',
+      fansPowerSignal:
+          json['fansPowerSignal'] as String? ?? 'tensionSalidaVentiladores',
+      fansPowerMultiplier:
+          (json['fansPowerMultiplier'] as num?)?.toDouble() ?? 1,
+      fansPowerOffset: (json['fansPowerOffset'] as num?)?.toDouble() ?? 0,
+      nominalPowerWatts: nominalPowerRaw.map(
+        (String key, dynamic value) => MapEntry(
+          key,
+          value is num ? value.toDouble() : double.tryParse(value.toString()),
+        ),
+      ),
+    );
+  }
+
+  final String unitKey;
+  final String plcId;
+  final String humidifierPumpSignal;
+  final String heater1Signal;
+  final String heater2Signal;
+  final String fansPowerSignal;
+  final double fansPowerMultiplier;
+  final double fansPowerOffset;
+  final Map<String, double?> nominalPowerWatts;
 }
 
 class UnitConfig {

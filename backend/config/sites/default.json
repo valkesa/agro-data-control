@@ -54,6 +54,38 @@
       }
     ]
   },
+  "runtimeEvents": {
+    "enabled": true,
+    "tenantId": "the-gene-pig",
+    "siteId": "genetica-1",
+    "firestoreProjectId": "agro-data-control",
+    "firestoreDatabaseId": "(default)",
+    "firestoreServiceAccountPath": "/root/backend/config/service-account.json",
+    "plcs": [
+      {
+        "unitKey": "munters1",
+        "plcId": "munters1",
+        "humidifierPumpSignal": "bombaHumidificador",
+        "heater1Signal": "resistencia1",
+        "heater2Signal": "resistencia2",
+        "fansPowerSignal": "tensionSalidaVentiladores",
+        "fansPowerMultiplier": 0.1,
+        "fansPowerOffset": 0,
+        "nominalPowerWatts": {}
+      },
+      {
+        "unitKey": "munters2",
+        "plcId": "munters2",
+        "humidifierPumpSignal": "bombaHumidificador",
+        "heater1Signal": "resistencia1",
+        "heater2Signal": "resistencia2",
+        "fansPowerSignal": "tensionSalidaVentiladores",
+        "fansPowerMultiplier": 0.1,
+        "fansPowerOffset": 0,
+        "nominalPowerWatts": {}
+      }
+    ]
+  },
   "units": {
     "munters1": {
       "name": "Munters 1",

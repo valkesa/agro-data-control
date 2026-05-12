@@ -294,6 +294,8 @@ service cloud.firestore {
           'role',
           'lastSeenAt',
           'activeSince',
+          'currentSessionId',
+          'platform',
           'isOnline',
           'updatedAt'
         ])
@@ -314,8 +316,85 @@ service cloud.firestore {
         && request.resource.data.lastSeenAt is timestamp
         && request.resource.data.updatedAt is timestamp
         && (
+          !('currentSessionId' in request.resource.data)
+          || request.resource.data.currentSessionId is string
+        )
+        && (
+          !('platform' in request.resource.data)
+          || request.resource.data.platform is string
+        )
+        && (
           !('activeSince' in request.resource.data)
           || request.resource.data.activeSince is timestamp
+        );
+    }
+
+    function isValidSessionReason(reason) {
+      return ['', 'manual_logout', 'inactivity_timeout', 'session_replaced']
+        .hasAny([reason]);
+    }
+
+    function isValidUserSessionDoc(sessionId) {
+      return request.resource.data.keys().hasOnly([
+          'sessionId',
+          'uid',
+          'displayName',
+          'email',
+          'role',
+          'loginAt',
+          'activeSince',
+          'lastSeenAt',
+          'closedAt',
+          'closeReason',
+          'activeDurationSeconds',
+          'isActive',
+          'platform',
+          'userAgent',
+          'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.keys().hasAll([
+          'sessionId',
+          'uid',
+          'displayName',
+          'email',
+          'role',
+          'loginAt',
+          'activeSince',
+          'lastSeenAt',
+          'closeReason',
+          'isActive',
+          'platform',
+          'userAgent',
+          'updatedAt'
+        ])
+        && request.resource.data.sessionId == sessionId
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.displayName is string
+        && request.resource.data.email is string
+        && request.resource.data.role is string
+        && request.resource.data.loginAt is timestamp
+        && request.resource.data.activeSince is timestamp
+        && request.resource.data.lastSeenAt is timestamp
+        && request.resource.data.closeReason is string
+        && isValidSessionReason(request.resource.data.closeReason)
+        && request.resource.data.isActive is bool
+        && request.resource.data.platform is string
+        && request.resource.data.userAgent is string
+        && request.resource.data.updatedAt is timestamp
+        && (
+          !('createdAt' in request.resource.data)
+          || request.resource.data.createdAt is timestamp
+        )
+        && (
+          !('closedAt' in request.resource.data)
+          || request.resource.data.closedAt == null
+          || request.resource.data.closedAt is timestamp
+        )
+        && (
+          !('activeDurationSeconds' in request.resource.data)
+          || request.resource.data.activeDurationSeconds == null
+          || request.resource.data.activeDurationSeconds is int
         );
     }
 
@@ -325,6 +404,14 @@ service cloud.firestore {
       allow create, update: if signedIn()
         && request.auth.uid == uid
         && isValidPresenceDoc(uid);
+      allow delete: if false;
+    }
+
+    match /workspaces/{workspaceId}/userSessions/{sessionId} {
+      allow get, list: if isOwner()
+        || (signedIn() && resource.data.uid == request.auth.uid);
+      allow create, update: if signedIn()
+        && isValidUserSessionDoc(sessionId);
       allow delete: if false;
     }
 

@@ -168,9 +168,12 @@ class AgroDataShell extends StatefulWidget {
   State<AgroDataShell> createState() => _AgroDataShellState();
 }
 
-class _AgroDataShellState extends State<AgroDataShell> {
+class _AgroDataShellState extends State<AgroDataShell>
+    with WidgetsBindingObserver {
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
-  static const Duration _presenceHeartbeatInterval = Duration(seconds: 30);
+  static const Duration _presenceHeartbeatInterval = Duration(seconds: 60);
+  static const Duration _presenceActiveThreshold = Duration(minutes: 5);
+  static const Duration _presenceInteractionThrottle = Duration(seconds: 15);
   static const Duration _snapshotStaleThreshold = Duration(seconds: 20);
   static const Duration _snapshotPulseDuration = Duration(milliseconds: 400);
 
@@ -216,11 +219,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
   bool _backendOnline = false;
   bool _snapshotStale = false;
   DateTime? _lastSuccessfulSnapshotAt;
+  DateTime _lastPresenceActivityAt = DateTime.now();
+  DateTime? _lastPresenceWriteAt;
   Timer? _snapshotPulseTimer;
   String? _historyTenantId;
   String? _historySiteId;
   String? _userRole;
   String? _presenceWorkspaceId;
+  String? _presenceSessionId;
+  bool _presenceVisible = true;
+  bool _presenceStartInFlight = false;
   final WaterShortageRepository _waterShortageRepo =
       const WaterShortageRepository();
   final Map<String, bool?> _prevNivelAguaAlarma = {};
@@ -230,19 +238,31 @@ class _AgroDataShellState extends State<AgroDataShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _disposeBrowserExitGuard = registerBrowserExitGuard();
     _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
   }
 
   @override
   void dispose() {
-    unawaited(_stopPresence(markOffline: true));
+    unawaited(
+      _stopPresence(markOffline: false, closeReason: 'session_replaced'),
+    );
     _disposeBrowserExitGuard();
     _refreshTimer?.cancel();
     _maintenanceExpiryTimer?.cancel();
     _snapshotPulseTimer?.cancel();
     _configSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _presenceVisible = state == AppLifecycleState.resumed;
+    if (state == AppLifecycleState.resumed) {
+      _recordPresenceActivity();
+    }
   }
 
   void _startConfigStream({required String tenantId, required String siteId}) {
@@ -295,7 +315,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _signOut() async {
-    await _stopPresence(markOffline: true);
+    await _stopPresence(markOffline: true, closeReason: 'manual_logout');
     await widget.authService.signOut();
   }
 
@@ -304,15 +324,11 @@ class _AgroDataShellState extends State<AgroDataShell> {
     required String? role,
   }) async {
     if (_presenceWorkspaceId == workspaceId) {
-      await _presenceService.heartbeat(
-        workspaceId: workspaceId,
-        user: widget.user,
-        role: role,
-      );
+      _touchPresence(force: true);
       return;
     }
 
-    await _stopPresence(markOffline: true);
+    await _stopPresence(markOffline: true, closeReason: 'session_replaced');
     if (mounted) {
       setState(() {
         _presenceWorkspaceId = workspaceId;
@@ -320,42 +336,104 @@ class _AgroDataShellState extends State<AgroDataShell> {
     } else {
       _presenceWorkspaceId = workspaceId;
     }
-    await _presenceService.markOnline(
+    _lastPresenceActivityAt = DateTime.now();
+    final String? sessionId = await _presenceService.markOnline(
       workspaceId: workspaceId,
       user: widget.user,
       role: role,
     );
+    _presenceSessionId = sessionId;
+    _lastPresenceWriteAt = DateTime.now();
     _presenceHeartbeatTimer = Timer.periodic(
       _presenceHeartbeatInterval,
       (_) => _touchPresence(),
     );
   }
 
-  Future<void> _stopPresence({required bool markOffline, User? user}) async {
-    _presenceHeartbeatTimer?.cancel();
-    _presenceHeartbeatTimer = null;
-    final String? workspaceId = _presenceWorkspaceId;
-    _presenceWorkspaceId = null;
-    if (markOffline && workspaceId != null) {
-      await _presenceService.markOffline(
-        workspaceId: workspaceId,
-        user: user ?? widget.user,
-      );
+  Future<void> _refreshPresenceSession() async {
+    if (_presenceStartInFlight) {
+      return;
     }
-  }
-
-  void _touchPresence() {
     final String? workspaceId = _presenceWorkspaceId;
     if (workspaceId == null) {
       return;
     }
+    _presenceStartInFlight = true;
+    try {
+      final String? sessionId = await _presenceService.markOnline(
+        workspaceId: workspaceId,
+        user: widget.user,
+        role: _userRole,
+      );
+      if (sessionId != null) {
+        _presenceSessionId = sessionId;
+        _lastPresenceWriteAt = DateTime.now();
+      }
+    } finally {
+      _presenceStartInFlight = false;
+    }
+  }
+
+  Future<void> _stopPresence({
+    required bool markOffline,
+    required String closeReason,
+    User? user,
+  }) async {
+    _presenceHeartbeatTimer?.cancel();
+    _presenceHeartbeatTimer = null;
+    final String? workspaceId = _presenceWorkspaceId;
+    final String? sessionId = _presenceSessionId;
+    _presenceWorkspaceId = null;
+    _presenceSessionId = null;
+    if (markOffline && workspaceId != null) {
+      await _presenceService.markOffline(
+        workspaceId: workspaceId,
+        user: user ?? widget.user,
+        closeReason: closeReason,
+        sessionId: sessionId,
+      );
+    }
+  }
+
+  void _touchPresence({bool force = false}) {
+    final String? workspaceId = _presenceWorkspaceId;
+    final String? sessionId = _presenceSessionId;
+    if (workspaceId == null || sessionId == null) {
+      return;
+    }
+    final DateTime now = DateTime.now();
+    final bool recentlyActive =
+        now.difference(_lastPresenceActivityAt) <= _presenceActiveThreshold;
+    if (!force && (!_presenceVisible || !recentlyActive)) {
+      return;
+    }
+    final DateTime? lastWrite = _lastPresenceWriteAt;
+    if (!force &&
+        lastWrite != null &&
+        now.difference(lastWrite) < _presenceInteractionThrottle) {
+      return;
+    }
+    _lastPresenceWriteAt = now;
     unawaited(
       _presenceService.heartbeat(
         workspaceId: workspaceId,
         user: widget.user,
         role: _userRole,
+        sessionId: sessionId,
       ),
     );
+  }
+
+  void _recordPresenceActivity() {
+    final DateTime now = DateTime.now();
+    final bool wasInactive =
+        now.difference(_lastPresenceActivityAt) > _presenceActiveThreshold;
+    _lastPresenceActivityAt = now;
+    if (wasInactive || _presenceSessionId == null) {
+      unawaited(_refreshPresenceSession());
+      return;
+    }
+    _touchPresence();
   }
 
   void _scheduleMaintenanceExpiryTimer() {
@@ -454,7 +532,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
   void didUpdateWidget(covariant AgroDataShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.uid != widget.user.uid) {
-      unawaited(_stopPresence(markOffline: true, user: oldWidget.user));
+      unawaited(
+        _stopPresence(
+          markOffline: true,
+          closeReason: 'session_replaced',
+          user: oldWidget.user,
+        ),
+      );
       _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
     }
   }
@@ -462,7 +546,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   Future<_DashboardBootstrapResult> _createDashboardBootstrapFuture() async {
     final _DashboardBootstrapResult result = await _loadDashboardBootstrap();
     if (!result.canReadConfig) {
-      await _stopPresence(markOffline: true);
+      await _stopPresence(markOffline: true, closeReason: 'session_replaced');
       return result;
     }
 
@@ -1724,156 +1808,107 @@ class _AgroDataShellState extends State<AgroDataShell> {
       '[frontend-render] backendOnline=$_backendOnline snapshotStale=$_snapshotStale lastSuccessfulSnapshotAt=${_lastSuccessfulSnapshotAt?.toIso8601String()} munters1.configured=${munters1.configured} munters1.plcReachable=${munters1.plcReachable} munters1.dataFresh=${munters1.dataFresh} munters1.estadoEquipo=${munters1.estadoEquipo} munters2.configured=${munters2.configured} munters2.plcReachable=${munters2.plcReachable} munters2.dataFresh=${munters2.dataFresh} munters2.estadoEquipo=${munters2.estadoEquipo}',
     );
 
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (bool didPop, Object? result) async {
-        if (didPop) {
-          return;
-        }
-        final bool shouldExit = await _confirmExit();
-        if (!shouldExit) {
-          return;
-        }
-        await SystemNavigator.pop();
-      },
-      child: Scaffold(
-        body: SafeArea(
-          child: Column(
-            children: [
-              DashboardHeader(
-                selectedTab: _selectedTab,
-                screenTitle: screenTitle,
-                onSignOut: () async {
-                  final bool shouldSignOut = await _confirmSignOut();
-                  if (!shouldSignOut || !mounted) {
-                    return;
-                  }
-                  await _signOut();
-                },
-                onOpenSettings: _openSettings,
-                onSelectComparison: _goHomeDashboard,
-                onLogoTap: _goHomeDashboard,
-                userEmail: widget.user.email,
-                siteName: _activeSiteName,
-                activeSiteId: _activeSiteId,
-                availableSites: _availableSites,
-                onSiteChanged: _switchSite,
-                activeUsersIndicator:
-                    _userRole == UserAppRole.owner &&
-                        presenceWorkspaceId != null
-                    ? ActiveUsersEye(workspaceId: presenceWorkspaceId)
-                    : null,
-              ),
-              if (_snapshotStale)
-                _StaleSnapshotBanner(
-                  lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => _recordPresenceActivity(),
+      onPointerMove: (_) => _recordPresenceActivity(),
+      onPointerSignal: (_) => _recordPresenceActivity(),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (bool didPop, Object? result) async {
+          if (didPop) {
+            return;
+          }
+          final bool shouldExit = await _confirmExit();
+          if (!shouldExit) {
+            return;
+          }
+          await SystemNavigator.pop();
+        },
+        child: Scaffold(
+          body: SafeArea(
+            child: Column(
+              children: [
+                DashboardHeader(
+                  selectedTab: _selectedTab,
+                  screenTitle: screenTitle,
+                  onSignOut: () async {
+                    final bool shouldSignOut = await _confirmSignOut();
+                    if (!shouldSignOut || !mounted) {
+                      return;
+                    }
+                    await _signOut();
+                  },
+                  onOpenSettings: _openSettings,
+                  onSelectComparison: _goHomeDashboard,
+                  onLogoTap: _goHomeDashboard,
+                  userEmail: widget.user.email,
+                  siteName: _activeSiteName,
+                  activeSiteId: _activeSiteId,
+                  availableSites: _availableSites,
+                  onSiteChanged: _switchSite,
+                  activeUsersIndicator:
+                      _userRole == UserAppRole.owner &&
+                          presenceWorkspaceId != null
+                      ? ActiveUsersEye(workspaceId: presenceWorkspaceId)
+                      : null,
                 ),
-              Expanded(
-                child: PressMagnifierRegion(
-                  controller: _magnifierController,
-                  settings: _magnifierSettings,
-                  child: LayoutBuilder(
-                    builder: (context, constraints) {
-                      if (_selectedTab == 'comparativo') {
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                          child: ComparisonPage(
-                            munters1: munters1,
-                            munters2: munters2,
-                            doorEvents: _snapshot.doorEvents,
-                            tenantId: _historyTenantId,
-                            siteId: _historySiteId,
-                            showMunters1: _unitVisibilitySettings.showMunters1,
-                            showMunters2: _unitVisibilitySettings.showMunters2,
-                            snapshotStale: _snapshotStale,
-                            showSnapshotPulse: _showSnapshotPulse,
-                            rangeSettings: _rangeSettings,
-                            magnifierSettings: _magnifierSettings,
-                            moduleOrder: _comparisonModuleOrder,
-                            onModuleOrderChanged: _updateComparisonModuleOrder,
-                            homeGeneration: _dashboardHomeGeneration,
-                            plc1ColumnLabel: _plcConfigs.isNotEmpty
-                                ? _plcConfigs[0].columnLabel
-                                : null,
-                            plc2ColumnLabel: _plcConfigs.length > 1
-                                ? _plcConfigs[1].columnLabel
-                                : null,
-                            plc1MaintenanceMode: _maintenanceSettings.modeFor(
-                              _plcConfigs.isNotEmpty
-                                  ? _plcConfigs[0].plcId
-                                  : 'munters1',
-                            ),
-                            plc2MaintenanceMode: _maintenanceSettings.modeFor(
-                              _plcConfigs.length > 1
-                                  ? _plcConfigs[1].plcId
-                                  : 'munters2',
-                            ),
-                          ),
-                        );
-                      }
-
-                      if (_selectedTab == 'munters1' ||
-                          _selectedTab == 'munters2') {
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                          child: MuntersPage(
-                            data: selectedUnit,
-                            snapshotStale: _snapshotStale,
-                            showSnapshotPulse: _showSnapshotPulse,
-                            waterShortageSummary:
-                                visibleWaterShortageSummaries[selectedUnit
-                                    .historyPlcId],
-                          ),
-                        );
-                      }
-
-                      final bool desktop = constraints.maxWidth >= 1200;
-
-                      if (desktop) {
-                        return Padding(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              Expanded(
-                                flex: 5,
-                                child: DashboardPage(
-                                  units: units,
-                                  selectedUnitName: selectedUnit.name,
-                                  waterShortageSummaries:
-                                      visibleWaterShortageSummaries,
-                                ),
+                if (_snapshotStale)
+                  _StaleSnapshotBanner(
+                    lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
+                  ),
+                Expanded(
+                  child: PressMagnifierRegion(
+                    controller: _magnifierController,
+                    settings: _magnifierSettings,
+                    child: LayoutBuilder(
+                      builder: (context, constraints) {
+                        if (_selectedTab == 'comparativo') {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                            child: ComparisonPage(
+                              munters1: munters1,
+                              munters2: munters2,
+                              doorEvents: _snapshot.doorEvents,
+                              tenantId: _historyTenantId,
+                              siteId: _historySiteId,
+                              showMunters1:
+                                  _unitVisibilitySettings.showMunters1,
+                              showMunters2:
+                                  _unitVisibilitySettings.showMunters2,
+                              snapshotStale: _snapshotStale,
+                              showSnapshotPulse: _showSnapshotPulse,
+                              rangeSettings: _rangeSettings,
+                              magnifierSettings: _magnifierSettings,
+                              moduleOrder: _comparisonModuleOrder,
+                              onModuleOrderChanged:
+                                  _updateComparisonModuleOrder,
+                              homeGeneration: _dashboardHomeGeneration,
+                              plc1ColumnLabel: _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].columnLabel
+                                  : null,
+                              plc2ColumnLabel: _plcConfigs.length > 1
+                                  ? _plcConfigs[1].columnLabel
+                                  : null,
+                              plc1MaintenanceMode: _maintenanceSettings.modeFor(
+                                _plcConfigs.isNotEmpty
+                                    ? _plcConfigs[0].plcId
+                                    : 'munters1',
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                flex: 4,
-                                child: MuntersPage(
-                                  data: selectedUnit,
-                                  snapshotStale: _snapshotStale,
-                                  showSnapshotPulse: _showSnapshotPulse,
-                                  waterShortageSummary:
-                                      visibleWaterShortageSummaries[selectedUnit
-                                          .historyPlcId],
-                                ),
+                              plc2MaintenanceMode: _maintenanceSettings.modeFor(
+                                _plcConfigs.length > 1
+                                    ? _plcConfigs[1].plcId
+                                    : 'munters2',
                               ),
-                            ],
-                          ),
-                        );
-                      }
-
-                      return SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            DashboardPage(
-                              units: units,
-                              selectedUnitName: selectedUnit.name,
-                              waterShortageSummaries:
-                                  visibleWaterShortageSummaries,
                             ),
-                            const SizedBox(height: 12),
-                            MuntersPage(
+                          );
+                        }
+
+                        if (_selectedTab == 'munters1' ||
+                            _selectedTab == 'munters2') {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                            child: MuntersPage(
                               data: selectedUnit,
                               snapshotStale: _snapshotStale,
                               showSnapshotPulse: _showSnapshotPulse,
@@ -1881,14 +1916,72 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                   visibleWaterShortageSummaries[selectedUnit
                                       .historyPlcId],
                             ),
-                          ],
-                        ),
-                      );
-                    },
+                          );
+                        }
+
+                        final bool desktop = constraints.maxWidth >= 1200;
+
+                        if (desktop) {
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                Expanded(
+                                  flex: 5,
+                                  child: DashboardPage(
+                                    units: units,
+                                    selectedUnitName: selectedUnit.name,
+                                    waterShortageSummaries:
+                                        visibleWaterShortageSummaries,
+                                  ),
+                                ),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  flex: 4,
+                                  child: MuntersPage(
+                                    data: selectedUnit,
+                                    snapshotStale: _snapshotStale,
+                                    showSnapshotPulse: _showSnapshotPulse,
+                                    waterShortageSummary:
+                                        visibleWaterShortageSummaries[selectedUnit
+                                            .historyPlcId],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+
+                        return SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              DashboardPage(
+                                units: units,
+                                selectedUnitName: selectedUnit.name,
+                                waterShortageSummaries:
+                                    visibleWaterShortageSummaries,
+                              ),
+                              const SizedBox(height: 12),
+                              MuntersPage(
+                                data: selectedUnit,
+                                snapshotStale: _snapshotStale,
+                                showSnapshotPulse: _showSnapshotPulse,
+                                waterShortageSummary:
+                                    visibleWaterShortageSummaries[selectedUnit
+                                        .historyPlcId],
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

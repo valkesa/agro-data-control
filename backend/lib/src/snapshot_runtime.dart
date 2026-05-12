@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:agro_data_control_backend/src/door_openings_tracker.dart';
 import 'package:agro_data_control_backend/src/firestore_door_openings_repository.dart';
+import 'package:agro_data_control_backend/src/firestore_runtime_events_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_temperature_history_repository.dart';
 import 'package:agro_data_control_backend/src/modbus_tcp_client.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
+import 'package:agro_data_control_backend/src/runtime_tracker_service.dart';
 import 'package:agro_data_control_backend/src/temperature_history_service.dart';
 
 const List<List<String>> _diagnosticKeySignalGroups = <List<String>>[
@@ -38,6 +40,11 @@ class SnapshotRuntime {
       config: doorConfig,
       repository: FirestoreDoorOpeningsRepository(config: doorConfig),
     );
+    final RuntimeEventsConfig runtimeEventsConfig = config.runtimeEvents;
+    _runtimeTrackerService = RuntimeTrackerService(
+      config: runtimeEventsConfig,
+      repository: FirestoreRuntimeEventsRepository(config: runtimeEventsConfig),
+    );
     _state = SnapshotRuntimeState.initial(
       config: config,
       startedAt: _startedAt,
@@ -55,6 +62,7 @@ class SnapshotRuntime {
   final Completer<void> _stopCompleter = Completer<void>();
   late final List<TemperatureHistoryService> _temperatureHistoryServices;
   late final DoorOpeningsTracker _doorOpeningsTracker;
+  late final RuntimeTrackerService _runtimeTrackerService;
 
   bool get isHealthy => _state.backendOnline;
 
@@ -75,10 +83,12 @@ class SnapshotRuntime {
     if (loopFuture != null) {
       await loopFuture;
     }
-    for (final TemperatureHistoryService service in _temperatureHistoryServices) {
+    for (final TemperatureHistoryService service
+        in _temperatureHistoryServices) {
       await service.dispose();
     }
     await _doorOpeningsTracker.dispose();
+    await _runtimeTrackerService.dispose();
   }
 
   Map<String, Object?> snapshotJson() => _state.snapshotJson;
@@ -116,10 +126,13 @@ class SnapshotRuntime {
       return null;
     }
     try {
-      final ProcessResult result = await Process.run(
-        'ping',
-        ['-c', '1', '-W', '1', host],
-      ).timeout(const Duration(seconds: 3));
+      final ProcessResult result = await Process.run('ping', [
+        '-c',
+        '1',
+        '-W',
+        '1',
+        host,
+      ]).timeout(const Duration(seconds: 3));
       if (result.exitCode != 0) {
         _logPlc('router ping failed host=$host exitCode=${result.exitCode}');
         return null;
@@ -165,6 +178,10 @@ class SnapshotRuntime {
         unitsJson: unitsJson,
         observedAtUtc: pollStartedAt,
       );
+      _runtimeTrackerService.ingestSnapshot(
+        unitsJson: unitsJson,
+        observedAtUtc: pollStartedAt,
+      );
 
       stopwatch.stop();
       _state = SnapshotRuntimeState.success(
@@ -179,7 +196,8 @@ class SnapshotRuntime {
       _logSnapshotPayload(_state.snapshotJson);
       _logSnapshot('backendOnline=true');
       _logPlc('poll success elapsedMs=${stopwatch.elapsedMilliseconds}');
-      for (final TemperatureHistoryService service in _temperatureHistoryServices) {
+      for (final TemperatureHistoryService service
+          in _temperatureHistoryServices) {
         service.handleSnapshot(
           unitsJson: unitsJson,
           observedAtUtc: pollStartedAt,
@@ -1211,7 +1229,9 @@ void _logSnapshotPayload(Map<String, Object?> payload) {
       }
     });
   } else {
-    stdout.writeln('[doorEvents] not present or invalid type=${doorEventsRaw?.runtimeType}');
+    stdout.writeln(
+      '[doorEvents] not present or invalid type=${doorEventsRaw?.runtimeType}',
+    );
   }
 }
 

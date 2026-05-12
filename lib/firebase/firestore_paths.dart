@@ -9,6 +9,12 @@ class FirestorePaths {
   static String workspacePresenceDoc(String workspaceId, String uid) =>
       '${workspacePresenceCollection(workspaceId)}/$uid';
 
+  static String workspaceUserSessionsCollection(String workspaceId) =>
+      'workspaces/$workspaceId/userSessions';
+
+  static String workspaceUserSessionDoc(String workspaceId, String sessionId) =>
+      '${workspaceUserSessionsCollection(workspaceId)}/$sessionId';
+
   static String siteDoc(String tenantId, String siteId) =>
       'tenants/$tenantId/sites/$siteId';
 
