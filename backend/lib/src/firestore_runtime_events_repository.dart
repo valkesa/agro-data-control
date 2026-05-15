@@ -28,15 +28,18 @@ class FirestoreRuntimeEventsRepository {
     return 'unknown';
   }
 
-  Future<void> saveHeartbeat(RuntimeEvent event) async {
+  Future<void> saveHeartbeat(RuntimeEvent event, {String? docId}) async {
     final DateTime observedAt = event.endedAt ?? DateTime.now().toUtc();
+    final bool deviceIsOn = event.deviceIsOn ?? true;
     final Map<String, Object?> fields = <String, Object?>{
       'deviceType': _stringField(event.deviceType),
-      'startedAt': _timestampField(event.startedAt),
       'observedAt': _timestampField(observedAt),
-      'activeDurationSec': _intField(event.durationSec),
       'plcId': _stringField(event.plcId),
       'isOpen': _boolField(true),
+      'deviceIsOn': _boolField(deviceIsOn),
+      'startedAt': _timestampField(event.startedAt),
+      if (deviceIsOn)
+        'activeDurationSec': _intField(event.durationSec),
       if (event.powerPercent != null)
         'powerPercent': _intField(event.powerPercent!),
       if (event.powerWatts != null)
@@ -46,7 +49,7 @@ class FirestoreRuntimeEventsRepository {
 
     final String documentPath = _runtimeEventDocumentPath(
       event.plcId,
-      _heartbeatId(event, observedAt),
+      docId ?? _heartbeatId(event, observedAt),
     );
     await _commitDocument(documentPath, fields);
   }

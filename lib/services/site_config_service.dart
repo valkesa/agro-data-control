@@ -98,15 +98,16 @@ class SiteConfigService {
   Future<List<SiteDocument>> fetchActiveSitesForUser({
     required String tenantId,
     required List<String> allowedSiteIds,
+    bool ownerBypass = false,
   }) async {
-    if (allowedSiteIds.isEmpty) {
+    if (allowedSiteIds.isEmpty && !ownerBypass) {
       debugPrint(
         '[SiteConfig] no allowedSiteIds for tenant=$tenantId — access requires at least one assigned site',
       );
       return const <SiteDocument>[];
     }
     debugPrint(
-      '[SiteConfig] fetchActiveSitesForUser tenant=$tenantId sites=$allowedSiteIds',
+      '[SiteConfig] fetchActiveSitesForUser tenant=$tenantId sites=$allowedSiteIds ownerBypass=$ownerBypass',
     );
     try {
       final QuerySnapshot<Map<String, dynamic>> snap = await FirebaseFirestore
@@ -118,7 +119,7 @@ class SiteConfigService {
       final List<SiteDocument> sites = snap.docs
           .where(
             (DocumentSnapshot<Map<String, dynamic>> doc) =>
-                allowedSiteIds.contains(doc.id),
+                ownerBypass || allowedSiteIds.contains(doc.id),
           )
           .map((DocumentSnapshot<Map<String, dynamic>> doc) {
             final Map<String, dynamic> data =
@@ -134,20 +135,51 @@ class SiteConfigService {
           .toList();
 
       if (sites.isEmpty) {
-        final String fallbackSiteId = allowedSiteIds.first;
-        debugPrint(
-          '[SiteConfig] no valid active site docs for tenant=$tenantId — using explicit single-site fallback siteId=$fallbackSiteId',
-        );
-        return <SiteDocument>[fallbackSingleSite(siteId: fallbackSiteId)];
+        if (allowedSiteIds.isNotEmpty) {
+          final String fallbackSiteId = allowedSiteIds.first;
+          debugPrint(
+            '[SiteConfig] no valid active site docs for tenant=$tenantId — using explicit single-site fallback siteId=$fallbackSiteId',
+          );
+          return <SiteDocument>[fallbackSingleSite(siteId: fallbackSiteId)];
+        }
+        if (ownerBypass && snap.docs.isNotEmpty) {
+          final String fallbackSiteId = snap.docs.first.id;
+          debugPrint(
+            '[SiteConfig] owner bypass: no valid active site docs for tenant=$tenantId — using any available siteId=$fallbackSiteId',
+          );
+          return <SiteDocument>[fallbackSingleSite(siteId: fallbackSiteId)];
+        }
       }
 
       return sites;
     } catch (error) {
-      final String fallbackSiteId = allowedSiteIds.first;
+      if (allowedSiteIds.isNotEmpty) {
+        final String fallbackSiteId = allowedSiteIds.first;
+        debugPrint(
+          '[SiteConfig] fetchActiveSitesForUser error tenant=$tenantId error=$error — using explicit single-site fallback siteId=$fallbackSiteId',
+        );
+        return <SiteDocument>[fallbackSingleSite(siteId: fallbackSiteId)];
+      }
       debugPrint(
-        '[SiteConfig] fetchActiveSitesForUser error tenant=$tenantId error=$error — using explicit single-site fallback siteId=$fallbackSiteId',
+        '[SiteConfig] fetchActiveSitesForUser error tenant=$tenantId error=$error',
       );
-      return <SiteDocument>[fallbackSingleSite(siteId: fallbackSiteId)];
+      return const <SiteDocument>[];
+    }
+  }
+
+  Future<List<String>> fetchAllActiveTenantIds() async {
+    debugPrint('[SiteConfig] fetchAllActiveTenantIds');
+    try {
+      final QuerySnapshot<Map<String, dynamic>> snap = await FirebaseFirestore
+          .instance
+          .collection(FirestorePaths.tenantsCollection())
+          .get();
+      return snap.docs
+          .map((QueryDocumentSnapshot<Map<String, dynamic>> doc) => doc.id)
+          .toList();
+    } catch (error) {
+      debugPrint('[SiteConfig] fetchAllActiveTenantIds error=$error');
+      return const <String>[];
     }
   }
 }

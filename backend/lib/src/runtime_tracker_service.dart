@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:agro_data_control_backend/src/firestore_runtime_events_repository.dart';
@@ -21,6 +20,7 @@ class RuntimeTrackerService {
           .join(', ');
       _log(
         'enabled plcs=[$plcIds] '
+        'hbGapThresholdMs=${config.hbGapThresholdMs} '
         'path=tenants/${config.tenantId}/sites/${config.siteId}/plcs/{plcId}/runtimeEvents/{eventId}',
       );
     }
@@ -34,13 +34,6 @@ class RuntimeTrackerService {
           _BinaryRuntimeState();
       _fanStates[plc.plcId] = _FanRuntimeState();
     }
-
-    if (config.enabled && config.plcs.isNotEmpty) {
-      _heartbeatTimer = Timer.periodic(
-        const Duration(hours: 1),
-        (_) => _scheduleHeartbeats(),
-      );
-    }
   }
 
   final RuntimeEventsConfig _config;
@@ -48,7 +41,6 @@ class RuntimeTrackerService {
   final Map<String, _BinaryRuntimeState> _states =
       <String, _BinaryRuntimeState>{};
   final Map<String, _FanRuntimeState> _fanStates = <String, _FanRuntimeState>{};
-  Timer? _heartbeatTimer;
 
   bool _initialized = false;
   Future<void> _queue = Future<void>.value();
@@ -61,20 +53,31 @@ class RuntimeTrackerService {
     required Map<String, Object?> unitsJson,
     required DateTime observedAtUtc,
   }) {
-    if (!isTrackingEnabled) {
-      return;
-    }
+    if (!isTrackingEnabled) return;
 
     if (!_initialized) {
-      _seedStateFromSnapshot(
+      final List<RuntimeEvent> seedHbs = _seedStateFromSnapshot(
         unitsJson: unitsJson,
         observedAtUtc: observedAtUtc,
       );
       _initialized = true;
+      if (isPersistenceEnabled && seedHbs.isNotEmpty) {
+        final List<_HbSaveTask> tasks = seedHbs
+            .map((RuntimeEvent hb) => _resolveHbTask(hb, _trackingFor(hb)))
+            .toList();
+        _queue = _queue
+            .then<void>((_) => _saveHeartbeats(tasks))
+            .catchError((Object error, StackTrace stackTrace) {
+              _log('error processing initial heartbeats error=$error');
+              _log('error stack=$stackTrace');
+            });
+      }
       return;
     }
 
     final List<RuntimeEvent> closedEvents = <RuntimeEvent>[];
+    final List<_HbSaveTask> hbTasks = <_HbSaveTask>[];
+
     for (final RuntimePlcConfig plc in _config.plcs) {
       final Object? unitRaw = unitsJson[plc.unitKey];
       if (unitRaw is! Map) {
@@ -82,7 +85,8 @@ class RuntimeTrackerService {
         continue;
       }
       final Map<Object?, Object?> unit = unitRaw as Map<Object?, Object?>;
-      closedEvents.addAll(
+
+      _collectChanges(
         _processBinaryDevice(
           plc: plc,
           unit: unit,
@@ -90,8 +94,12 @@ class RuntimeTrackerService {
           signalKey: plc.humidifierPumpSignal,
           now: observedAtUtc,
         ),
+        tracking: _states[_stateKey(plc.plcId, _DeviceType.humidifierPump)]!
+            .hbTracking,
+        closedEvents: closedEvents,
+        hbTasks: hbTasks,
       );
-      closedEvents.addAll(
+      _collectChanges(
         _processBinaryDevice(
           plc: plc,
           unit: unit,
@@ -99,8 +107,12 @@ class RuntimeTrackerService {
           signalKey: plc.heater1Signal,
           now: observedAtUtc,
         ),
+        tracking: _states[_stateKey(plc.plcId, _DeviceType.heater1)]!
+            .hbTracking,
+        closedEvents: closedEvents,
+        hbTasks: hbTasks,
       );
-      closedEvents.addAll(
+      _collectChanges(
         _processBinaryDevice(
           plc: plc,
           unit: unit,
@@ -108,23 +120,27 @@ class RuntimeTrackerService {
           signalKey: plc.heater2Signal,
           now: observedAtUtc,
         ),
+        tracking: _states[_stateKey(plc.plcId, _DeviceType.heater2)]!
+            .hbTracking,
+        closedEvents: closedEvents,
+        hbTasks: hbTasks,
       );
-      final RuntimeEvent? fanEvent = _processFans(
-        plc: plc,
-        unit: unit,
-        now: observedAtUtc,
+      _collectChanges(
+        _processFans(plc: plc, unit: unit, now: observedAtUtc),
+        tracking: _fanStates[plc.plcId]!.hbTracking,
+        closedEvents: closedEvents,
+        hbTasks: hbTasks,
       );
-      if (fanEvent != null) {
-        closedEvents.add(fanEvent);
-      }
     }
 
-    if (!isPersistenceEnabled || closedEvents.isEmpty) {
+    if (!isPersistenceEnabled ||
+        (closedEvents.isEmpty && hbTasks.isEmpty)) {
       return;
     }
 
     _queue = _queue
         .then<void>((_) async {
+          await _saveHeartbeats(hbTasks);
           for (final RuntimeEvent event in closedEvents) {
             await _repository.saveClosed(event);
             _log(
@@ -138,93 +154,60 @@ class RuntimeTrackerService {
         });
   }
 
-  Future<void> dispose() {
-    _heartbeatTimer?.cancel();
-    return _queue;
-  }
-
-  void _scheduleHeartbeats() {
-    if (!isPersistenceEnabled || !_initialized) return;
-
-    final DateTime now = DateTime.now().toUtc();
-    final List<RuntimeEvent> heartbeats = <RuntimeEvent>[];
-
-    for (final RuntimePlcConfig plc in _config.plcs) {
-      _collectBinaryHeartbeat(
-        heartbeats, plc, _DeviceType.humidifierPump, now,
-      );
-      _collectBinaryHeartbeat(heartbeats, plc, _DeviceType.heater1, now);
-      _collectBinaryHeartbeat(heartbeats, plc, _DeviceType.heater2, now);
-      _collectFanHeartbeat(heartbeats, plc, now);
+  void _collectChanges(
+    _RuntimeTrackerChanges changes, {
+    required _HbTracking tracking,
+    required List<RuntimeEvent> closedEvents,
+    required List<_HbSaveTask> hbTasks,
+  }) {
+    closedEvents.addAll(changes.closedEvents);
+    for (final RuntimeEvent hb in changes.heartbeatEvents) {
+      hbTasks.add(_resolveHbTask(hb, tracking));
     }
-
-    _log('heartbeat tick activeDevices=${heartbeats.length}');
-    if (heartbeats.isEmpty) return;
-
-    _queue = _queue
-        .then<void>((_) async {
-          for (final RuntimeEvent hb in heartbeats) {
-            await _repository.saveHeartbeat(hb);
-            _log(
-              'heartbeat saved device=${hb.deviceType} plc=${hb.plcId}'
-              ' activeDurationSec=${hb.durationSec}',
-            );
-          }
-        })
-        .catchError((Object error, StackTrace stackTrace) {
-          _log('error saving heartbeats error=$error');
-          _log('error stack=$stackTrace');
-        });
   }
 
-  void _collectBinaryHeartbeat(
-    List<RuntimeEvent> out,
-    RuntimePlcConfig plc,
-    String deviceType,
-    DateTime now,
-  ) {
-    final _BinaryRuntimeState? state = _states[_stateKey(plc.plcId, deviceType)];
-    if (state == null || state.isOn != true || state.startedAt == null) return;
-    out.add(
-      RuntimeEvent.heartbeat(
-        deviceType: deviceType,
-        startedAt: state.startedAt!,
-        observedAt: now,
-        plcId: plc.plcId,
-        powerWatts: _nominalPowerWatts(plc, deviceType),
-      ),
-    );
+  // Decides whether to reuse the previous HB document (within gap threshold)
+  // or create a new one. Updates tracking in-place.
+  _HbSaveTask _resolveHbTask(RuntimeEvent hb, _HbTracking tracking) {
+    final DateTime observedAt = hb.endedAt ?? DateTime.now().toUtc();
+    final String docId;
+    if (tracking.lastDocId != null &&
+        tracking.lastObservedAt != null &&
+        observedAt
+                .difference(tracking.lastObservedAt!)
+                .inMilliseconds
+                .abs() <=
+            _config.hbGapThresholdMs) {
+      docId = tracking.lastDocId!; // reuse → overwrites same Firestore doc
+    } else {
+      docId = _makeHbDocId(hb, observedAt); // gap or first HB → new doc
+    }
+    tracking
+      ..lastDocId = docId
+      ..lastObservedAt = observedAt;
+    return _HbSaveTask(event: hb, docId: docId);
   }
 
-  void _collectFanHeartbeat(
-    List<RuntimeEvent> out,
-    RuntimePlcConfig plc,
-    DateTime now,
-  ) {
-    final _FanRuntimeState? fanState = _fanStates[plc.plcId];
-    final int? power = fanState?.lastPowerPercent;
-    if (fanState?.startedAt == null || power == null || power <= 0) return;
-    out.add(
-      RuntimeEvent.heartbeat(
-        deviceType: _DeviceType.fans,
-        startedAt: fanState!.startedAt!,
-        observedAt: now,
-        plcId: plc.plcId,
-        powerPercent: power,
-        powerWatts: _fansPowerWatts(plc, power),
-      ),
-    );
+  Future<void> _saveHeartbeats(List<_HbSaveTask> tasks) async {
+    for (final _HbSaveTask task in tasks) {
+      await _repository.saveHeartbeat(task.event, docId: task.docId);
+      _log(
+        'heartbeat device=${task.event.deviceType} plc=${task.event.plcId}'
+        ' activeDurationSec=${task.event.durationSec} doc=${task.docId}',
+      );
+    }
   }
 
-  void _seedStateFromSnapshot({
+  Future<void> dispose() => _queue;
+
+  List<RuntimeEvent> _seedStateFromSnapshot({
     required Map<String, Object?> unitsJson,
     required DateTime observedAtUtc,
   }) {
+    final List<RuntimeEvent> heartbeatEvents = <RuntimeEvent>[];
     for (final RuntimePlcConfig plc in _config.plcs) {
       final Object? unitRaw = unitsJson[plc.unitKey];
-      if (unitRaw is! Map) {
-        continue;
-      }
+      if (unitRaw is! Map) continue;
       final Map<Object?, Object?> unit = unitRaw as Map<Object?, Object?>;
       _seedBinaryDevice(
         plc: plc,
@@ -232,6 +215,7 @@ class RuntimeTrackerService {
         deviceType: _DeviceType.humidifierPump,
         signalKey: plc.humidifierPumpSignal,
         now: observedAtUtc,
+        heartbeatEvents: heartbeatEvents,
       );
       _seedBinaryDevice(
         plc: plc,
@@ -239,6 +223,7 @@ class RuntimeTrackerService {
         deviceType: _DeviceType.heater1,
         signalKey: plc.heater1Signal,
         now: observedAtUtc,
+        heartbeatEvents: heartbeatEvents,
       );
       _seedBinaryDevice(
         plc: plc,
@@ -246,6 +231,7 @@ class RuntimeTrackerService {
         deviceType: _DeviceType.heater2,
         signalKey: plc.heater2Signal,
         now: observedAtUtc,
+        heartbeatEvents: heartbeatEvents,
       );
       final int? powerPercent = _extractFansPowerPercent(plc, unit);
       final _FanRuntimeState fanState = _fanStates[plc.plcId]!;
@@ -255,9 +241,23 @@ class RuntimeTrackerService {
         _log(
           'seed open fan segment plc=${plc.plcId} powerPercent=$powerPercent',
         );
+        heartbeatEvents.add(
+          _fanHeartbeat(plc, powerPercent, observedAtUtc, observedAtUtc),
+        );
+      } else {
+        _log('seed off fan segment plc=${plc.plcId}');
+        heartbeatEvents.add(
+          RuntimeEvent.offHeartbeat(
+            deviceType: _DeviceType.fans,
+            observedAt: observedAtUtc,
+            plcId: plc.plcId,
+            powerPercent: 0,
+          ),
+        );
       }
     }
     _log('initialized from first snapshot');
+    return heartbeatEvents;
   }
 
   void _seedBinaryDevice({
@@ -266,21 +266,30 @@ class RuntimeTrackerService {
     required String deviceType,
     required String signalKey,
     required DateTime now,
+    required List<RuntimeEvent> heartbeatEvents,
   }) {
     final bool? current = _extractBool(unit[signalKey]);
-    if (current == null) {
-      return;
-    }
+    if (current == null) return;
     final _BinaryRuntimeState state =
         _states[_stateKey(plc.plcId, deviceType)]!;
     state.isOn = current;
     state.startedAt = current ? now : null;
     if (current) {
       _log('seed open binary event plc=${plc.plcId} device=$deviceType');
+      heartbeatEvents.add(_binaryHeartbeat(plc, deviceType, now, now));
+    } else {
+      _log('seed off binary event plc=${plc.plcId} device=$deviceType');
+      heartbeatEvents.add(
+        RuntimeEvent.offHeartbeat(
+          deviceType: deviceType,
+          observedAt: now,
+          plcId: plc.plcId,
+        ),
+      );
     }
   }
 
-  List<RuntimeEvent> _processBinaryDevice({
+  _RuntimeTrackerChanges _processBinaryDevice({
     required RuntimePlcConfig plc,
     required Map<Object?, Object?> unit,
     required String deviceType,
@@ -292,7 +301,7 @@ class RuntimeTrackerService {
       _log(
         'signal not found plc=${plc.plcId} device=$deviceType signal=$signalKey',
       );
-      return const <RuntimeEvent>[];
+      return const _RuntimeTrackerChanges.empty();
     }
 
     final _BinaryRuntimeState state =
@@ -300,20 +309,40 @@ class RuntimeTrackerService {
     if (state.isOn == null) {
       state.isOn = current;
       state.startedAt = current ? now : null;
-      return const <RuntimeEvent>[];
-    }
-    if (state.isOn == current) {
-      return const <RuntimeEvent>[];
+      if (!current) return const _RuntimeTrackerChanges.empty();
+      return _RuntimeTrackerChanges(
+        heartbeatEvents: <RuntimeEvent>[
+          _binaryHeartbeat(plc, deviceType, now, now),
+        ],
+      );
     }
 
+    if (state.isOn == current) {
+      // State unchanged: emit a HB while device is ON so observedAt stays fresh.
+      if (current && state.startedAt != null) {
+        return _RuntimeTrackerChanges(
+          heartbeatEvents: <RuntimeEvent>[
+            _binaryHeartbeat(plc, deviceType, state.startedAt!, now),
+          ],
+        );
+      }
+      return const _RuntimeTrackerChanges.empty();
+    }
+
+    // State changed: OFF → ON
     if (!state.isOn! && current) {
       state
         ..isOn = true
         ..startedAt = now;
       _log('transition off→on plc=${plc.plcId} device=$deviceType');
-      return const <RuntimeEvent>[];
+      return _RuntimeTrackerChanges(
+        heartbeatEvents: <RuntimeEvent>[
+          _binaryHeartbeat(plc, deviceType, now, now),
+        ],
+      );
     }
 
+    // State changed: ON → OFF
     final DateTime startedAt = state.startedAt ?? now;
     final double? powerWatts = _nominalPowerWatts(plc, deviceType);
     final RuntimeEvent event = RuntimeEvent.closed(
@@ -329,10 +358,10 @@ class RuntimeTrackerService {
     _log(
       'transition on→off plc=${plc.plcId} device=$deviceType durationSec=${event.durationSec}',
     );
-    return <RuntimeEvent>[event];
+    return _RuntimeTrackerChanges(closedEvents: <RuntimeEvent>[event]);
   }
 
-  RuntimeEvent? _processFans({
+  _RuntimeTrackerChanges _processFans({
     required RuntimePlcConfig plc,
     required Map<Object?, Object?> unit,
     required DateTime now,
@@ -342,7 +371,7 @@ class RuntimeTrackerService {
       _log(
         'signal not found plc=${plc.plcId} device=${_DeviceType.fans} signal=${plc.fansPowerSignal}',
       );
-      return null;
+      return const _RuntimeTrackerChanges.empty();
     }
 
     final _FanRuntimeState state = _fanStates[plc.plcId]!;
@@ -350,16 +379,32 @@ class RuntimeTrackerService {
     if (previousPower == null) {
       state.lastPowerPercent = currentPower;
       state.startedAt = currentPower > 0 ? now : null;
-      return null;
-    }
-    if (previousPower == currentPower) {
-      return null;
+      if (currentPower <= 0) return const _RuntimeTrackerChanges.empty();
+      return _RuntimeTrackerChanges(
+        heartbeatEvents: <RuntimeEvent>[
+          _fanHeartbeat(plc, currentPower, now, now),
+        ],
+      );
     }
 
-    RuntimeEvent? closedEvent;
+    if (previousPower == currentPower) {
+      // Power unchanged: emit a HB while fans are ON so observedAt stays fresh.
+      if (currentPower > 0 && state.startedAt != null) {
+        return _RuntimeTrackerChanges(
+          heartbeatEvents: <RuntimeEvent>[
+            _fanHeartbeat(plc, currentPower, state.startedAt!, now),
+          ],
+        );
+      }
+      return const _RuntimeTrackerChanges.empty();
+    }
+
+    // Power changed
+    final List<RuntimeEvent> closedEvents = <RuntimeEvent>[];
+    final List<RuntimeEvent> heartbeatEvents = <RuntimeEvent>[];
     if (previousPower > 0 && state.startedAt != null) {
       final double? powerWatts = _fansPowerWatts(plc, previousPower);
-      closedEvent = RuntimeEvent.closed(
+      final RuntimeEvent closedEvent = RuntimeEvent.closed(
         deviceType: _DeviceType.fans,
         startedAt: state.startedAt!,
         endedAt: now,
@@ -367,6 +412,7 @@ class RuntimeTrackerService {
         powerPercent: previousPower,
         powerWatts: powerWatts,
       );
+      closedEvents.add(closedEvent);
       _log(
         'fan segment closed plc=${plc.plcId} powerPercent=$previousPower durationSec=${closedEvent.durationSec}',
       );
@@ -376,9 +422,57 @@ class RuntimeTrackerService {
     state.startedAt = currentPower > 0 ? now : null;
     if (currentPower > 0) {
       _log('fan segment opened plc=${plc.plcId} powerPercent=$currentPower');
+      heartbeatEvents.add(_fanHeartbeat(plc, currentPower, now, now));
     }
-    return closedEvent;
+    return _RuntimeTrackerChanges(
+      closedEvents: closedEvents,
+      heartbeatEvents: heartbeatEvents,
+    );
   }
+
+  // ── Lookup helpers ────────────────────────────────────────────────────────
+
+  _HbTracking _trackingFor(RuntimeEvent hb) {
+    if (hb.deviceType == _DeviceType.fans) {
+      return _fanStates[hb.plcId]!.hbTracking;
+    }
+    return _states[_stateKey(hb.plcId, hb.deviceType)]!.hbTracking;
+  }
+
+  // ── Event builders ────────────────────────────────────────────────────────
+
+  RuntimeEvent _binaryHeartbeat(
+    RuntimePlcConfig plc,
+    String deviceType,
+    DateTime startedAt,
+    DateTime observedAt,
+  ) {
+    return RuntimeEvent.heartbeat(
+      deviceType: deviceType,
+      startedAt: startedAt,
+      observedAt: observedAt,
+      plcId: plc.plcId,
+      powerWatts: _nominalPowerWatts(plc, deviceType),
+    );
+  }
+
+  RuntimeEvent _fanHeartbeat(
+    RuntimePlcConfig plc,
+    int powerPercent,
+    DateTime startedAt,
+    DateTime observedAt,
+  ) {
+    return RuntimeEvent.heartbeat(
+      deviceType: _DeviceType.fans,
+      startedAt: startedAt,
+      observedAt: observedAt,
+      plcId: plc.plcId,
+      powerPercent: powerPercent,
+      powerWatts: _fansPowerWatts(plc, powerPercent),
+    );
+  }
+
+  // ── Signal extractors ─────────────────────────────────────────────────────
 
   int? _extractFansPowerPercent(
     RuntimePlcConfig plc,
@@ -386,40 +480,26 @@ class RuntimeTrackerService {
   ) {
     final Object? raw = unit[plc.fansPowerSignal];
     final double? value = _extractNum(raw);
-    if (value == null || !value.isFinite) {
-      return null;
-    }
+    if (value == null || !value.isFinite) return null;
     final int normalized =
         ((value * plc.fansPowerMultiplier) + plc.fansPowerOffset).round();
     return normalized.clamp(0, 100);
   }
 
   bool? _extractBool(Object? raw) {
-    if (raw is bool) {
-      return raw;
-    }
-    if (raw is num) {
-      return raw != 0;
-    }
+    if (raw is bool) return raw;
+    if (raw is num) return raw != 0;
     if (raw is String) {
-      final String normalized = raw.trim().toLowerCase();
-      if (normalized == 'true' || normalized == '1' || normalized == 'on') {
-        return true;
-      }
-      if (normalized == 'false' || normalized == '0' || normalized == 'off') {
-        return false;
-      }
+      final String n = raw.trim().toLowerCase();
+      if (n == 'true' || n == '1' || n == 'on') return true;
+      if (n == 'false' || n == '0' || n == 'off') return false;
     }
     return null;
   }
 
   double? _extractNum(Object? raw) {
-    if (raw is num) {
-      return raw.toDouble();
-    }
-    if (raw is String) {
-      return double.tryParse(raw.trim());
-    }
+    if (raw is num) return raw.toDouble();
+    if (raw is String) return double.tryParse(raw.trim());
     return null;
   }
 
@@ -430,23 +510,68 @@ class RuntimeTrackerService {
 
   double? _fansPowerWatts(RuntimePlcConfig plc, int powerPercent) {
     final double? maxWatts = _nominalPowerWatts(plc, _DeviceType.fans);
-    if (maxWatts == null) {
-      return null;
-    }
+    if (maxWatts == null) return null;
     return maxWatts * (powerPercent / 100);
   }
 
   String _stateKey(String plcId, String deviceType) => '$plcId::$deviceType';
 }
 
+// ── Doc ID generation ─────────────────────────────────────────────────────────
+
+String _makeHbDocId(RuntimeEvent event, DateTime observedAt) {
+  final DateTime t = observedAt.toUtc();
+  final String y = t.year.toString().padLeft(4, '0');
+  final String mo = t.month.toString().padLeft(2, '0');
+  final String d = t.day.toString().padLeft(2, '0');
+  final String h = t.hour.toString().padLeft(2, '0');
+  final String mi = t.minute.toString().padLeft(2, '0');
+  final String s = t.second.toString().padLeft(2, '0');
+  final String ms = t.millisecond.toString().padLeft(3, '0');
+  final String safeDeviceType = event.deviceType.replaceAll(
+    RegExp(r'[^A-Za-z0-9_-]'),
+    '_',
+  );
+  return '${y}${mo}${d}_${h}${mi}${s}_${ms}_${safeDeviceType}_hb';
+}
+
+// ── State classes ─────────────────────────────────────────────────────────────
+
+class _HbTracking {
+  String? lastDocId;
+  DateTime? lastObservedAt;
+}
+
+class _HbSaveTask {
+  _HbSaveTask({required this.event, required this.docId});
+  final RuntimeEvent event;
+  final String docId;
+}
+
 class _BinaryRuntimeState {
   bool? isOn;
   DateTime? startedAt;
+  final _HbTracking hbTracking = _HbTracking();
 }
 
 class _FanRuntimeState {
   int? lastPowerPercent;
   DateTime? startedAt;
+  final _HbTracking hbTracking = _HbTracking();
+}
+
+class _RuntimeTrackerChanges {
+  const _RuntimeTrackerChanges({
+    this.closedEvents = const <RuntimeEvent>[],
+    this.heartbeatEvents = const <RuntimeEvent>[],
+  });
+
+  const _RuntimeTrackerChanges.empty()
+    : closedEvents = const <RuntimeEvent>[],
+      heartbeatEvents = const <RuntimeEvent>[];
+
+  final List<RuntimeEvent> closedEvents;
+  final List<RuntimeEvent> heartbeatEvents;
 }
 
 class _DeviceType {

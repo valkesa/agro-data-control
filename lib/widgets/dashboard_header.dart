@@ -17,6 +17,7 @@ class DashboardHeader extends StatelessWidget {
     this.availableSites = const <SiteDocument>[],
     this.onSiteChanged,
     this.activeUsersIndicator,
+    this.onRuntimeEvents,
   });
 
   final String selectedTab;
@@ -31,6 +32,7 @@ class DashboardHeader extends StatelessWidget {
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
   final Widget? activeUsersIndicator;
+  final VoidCallback? onRuntimeEvents;
 
   @override
   Widget build(BuildContext context) {
@@ -65,6 +67,12 @@ class DashboardHeader extends StatelessWidget {
               spacing: narrow ? 8 : 12,
               runSpacing: 8,
               children: [
+                if (onRuntimeEvents != null)
+                  _NavButton(
+                    label: 'Consumos',
+                    selected: selectedTab == 'runtimeEvents',
+                    onPressed: onRuntimeEvents!,
+                  ),
                 if (selectedTab != 'comparativo')
                   _NavButton(
                     label: 'Home',

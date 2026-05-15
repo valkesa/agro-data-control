@@ -22,11 +22,13 @@ import 'models/water_shortage_summary.dart';
 import 'pages/comparison_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/munters_page.dart';
+import 'pages/runtime_events_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
 import 'services/control_dashboard_config_service.dart';
 import 'services/door_openings_repository.dart';
 import 'services/electric_consumption_settings_service.dart';
+import 'services/electrical_cost_service.dart';
 import 'services/firebase_email_auth_service.dart';
 import 'services/plc_dashboard_service.dart';
 import 'services/presence_service.dart';
@@ -184,6 +186,8 @@ class _AgroDataShellState extends State<AgroDataShell>
       const ControlDashboardConfigService();
   final ElectricConsumptionSettingsService _electricConsumptionSettingsService =
       const ElectricConsumptionSettingsService();
+  final ElectricalCostService _electricalCostService =
+      const ElectricalCostService();
   final PresenceService _presenceService = const PresenceService();
   PlcDashboardService _service = const PlcDashboardService();
   String? _activeSiteId;
@@ -310,6 +314,13 @@ class _AgroDataShellState extends State<AgroDataShell>
     setState(() {
       _selectedTab = 'comparativo';
       _dashboardHomeGeneration += 1;
+    });
+    _touchPresence();
+  }
+
+  void _goRuntimeEvents() {
+    setState(() {
+      _selectedTab = 'runtimeEvents';
     });
     _touchPresence();
   }
@@ -586,7 +597,7 @@ class _AgroDataShellState extends State<AgroDataShell>
     }
     if (mounted) {
       setState(() {
-        _historyTenantId = result.userContext.activeTenantId;
+        _historyTenantId = result.effectiveTenantId;
         _historySiteId = result.siteId;
         _userRole = result.userContext.role;
         _activeSiteId = result.siteId.isNotEmpty ? result.siteId : null;
@@ -602,19 +613,21 @@ class _AgroDataShellState extends State<AgroDataShell>
           },
         );
       });
-      final String? tenantId = result.userContext.activeTenantId;
+      final String? tenantId = result.effectiveTenantId;
       if (tenantId != null) {
         unawaited(
           _startPresence(workspaceId: tenantId, role: result.userContext.role),
         );
-        _startConfigStream(tenantId: tenantId, siteId: result.siteId);
-        unawaited(
-          _loadWaterShortageSummaries(
-            tenantId: tenantId,
-            siteId: result.siteId,
-          ),
-        );
-        unawaited(_refreshLiveSnapshot());
+        if (result.siteId.isNotEmpty) {
+          _startConfigStream(tenantId: tenantId, siteId: result.siteId);
+          unawaited(
+            _loadWaterShortageSummaries(
+              tenantId: tenantId,
+              siteId: result.siteId,
+            ),
+          );
+          unawaited(_refreshLiveSnapshot());
+        }
       }
     }
     return result;
@@ -634,11 +647,19 @@ class _AgroDataShellState extends State<AgroDataShell>
         userContext.defaultSiteId?.isNotEmpty == true &&
         (isOwner ||
             userContext.allowedSiteIds.contains(userContext.defaultSiteId));
-    final String? resolvedSiteId = defaultSiteAllowed
+    String? resolvedSiteId = defaultSiteAllowed
         ? userContext.defaultSiteId
         : (userContext.allowedSiteIds.isNotEmpty
               ? userContext.allowedSiteIds.first
               : null);
+
+    // Owners bypass missing activeTenantId/siteId — resolve from Firestore.
+    String? resolvedTenantId = userContext.activeTenantId;
+    if (isOwner && resolvedTenantId == null) {
+      final List<String> allTenants =
+          await _siteConfigService.fetchAllActiveTenantIds();
+      resolvedTenantId = allTenants.isNotEmpty ? allTenants.first : null;
+    }
 
     // Global Valke roles bypass tenant membership checks. Owner is the only
     // role allowed through inactive/pending user state.
@@ -646,19 +667,44 @@ class _AgroDataShellState extends State<AgroDataShell>
         !userContext.exists ||
         (!isOwner && userContext.isPendingActivation) ||
         (!isOwner && !userContext.active) ||
-        userContext.activeTenantId == null ||
-        resolvedSiteId == null) {
+        resolvedTenantId == null ||
+        (!isOwner && resolvedSiteId == null)) {
       return _DashboardBootstrapResult(
         userContext: userContext,
         membership: const TenantMembershipLookupResult.notFound(),
         config: null,
         siteId: resolvedSiteId ?? '',
+        resolvedTenantId: resolvedTenantId,
       );
     }
 
-    final String tenantId = userContext.activeTenantId!;
+    final String tenantId = resolvedTenantId;
 
     // Fetch site document and available sites list in parallel.
+    // Owners with no allowedSiteIds see all sites for the tenant.
+    final List<SiteDocument> availableSites = await _siteConfigService
+        .fetchActiveSitesForUser(
+          tenantId: tenantId,
+          allowedSiteIds: userContext.allowedSiteIds,
+          ownerBypass: isOwner,
+        );
+
+    // For owners with no resolvedSiteId, default to the first available site.
+    if (resolvedSiteId == null && isOwner && availableSites.isNotEmpty) {
+      resolvedSiteId = availableSites.first.siteId;
+    }
+
+    if (resolvedSiteId == null) {
+      return _DashboardBootstrapResult(
+        userContext: userContext,
+        membership: const TenantMembershipLookupResult.notFound(),
+        config: null,
+        siteId: '',
+        resolvedTenantId: resolvedTenantId,
+        availableSites: availableSites,
+      );
+    }
+
     final SiteDocument? fetchedSiteDoc = await _siteConfigService.fetchSite(
       tenantId: tenantId,
       siteId: resolvedSiteId,
@@ -666,11 +712,6 @@ class _AgroDataShellState extends State<AgroDataShell>
     final SiteDocument siteDoc =
         fetchedSiteDoc ??
         _siteConfigService.fallbackSingleSite(siteId: resolvedSiteId);
-    final List<SiteDocument> availableSites = await _siteConfigService
-        .fetchActiveSitesForUser(
-          tenantId: tenantId,
-          allowedSiteIds: userContext.allowedSiteIds,
-        );
 
     // Load PLC display config (safe fallback: empty list if collection missing).
     final List<PlcDisplayConfig> plcConfigs = await _sitePlcConfigService
@@ -690,6 +731,7 @@ class _AgroDataShellState extends State<AgroDataShell>
           membership: membership,
           config: null,
           siteId: resolvedSiteId,
+          resolvedTenantId: resolvedTenantId,
           siteDocument: siteDoc,
           availableSites: availableSites,
         );
@@ -703,6 +745,7 @@ class _AgroDataShellState extends State<AgroDataShell>
         membership: membership,
         config: config,
         siteId: resolvedSiteId,
+        resolvedTenantId: resolvedTenantId,
         siteDocument: siteDoc,
         availableSites: availableSites,
         plcConfigs: plcConfigs,
@@ -718,6 +761,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       membership: const TenantMembershipLookupResult.notFound(),
       config: config,
       siteId: resolvedSiteId,
+      resolvedTenantId: resolvedTenantId,
       siteDocument: siteDoc,
       availableSites: availableSites,
       plcConfigs: plcConfigs,
@@ -776,6 +820,9 @@ class _AgroDataShellState extends State<AgroDataShell>
           continue;
         case _SettingsMenuAction.electricConsumptionSettings:
           await _openElectricConsumptionSettings();
+          continue;
+        case _SettingsMenuAction.electricCostSettings:
+          await _openElectricCostSettings();
           continue;
         case _SettingsMenuAction.visualConfig:
           await _openVisualConfig();
@@ -1114,16 +1161,16 @@ class _AgroDataShellState extends State<AgroDataShell>
 
   Future<void> _openElectricConsumptionSettings() async {
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
-    if (!mounted) {
-      return;
-    }
-    final String? tenantId = bootstrap.userContext.activeTenantId;
-    final String siteId = bootstrap.siteId;
+    if (!mounted) return;
+
+    String? tenantId = bootstrap.effectiveTenantId;
+    String siteId = bootstrap.siteId;
+
     if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No hay tenant/sitio activo.')),
-      );
-      return;
+      final _TenantSiteSelection? picked = await _pickTenantAndSite();
+      if (!mounted || picked == null) return;
+      tenantId = picked.tenantId;
+      siteId = picked.siteId;
     }
 
     final List<PlcDisplayConfig> plcConfigs = _effectivePlcConfigs(
@@ -1133,13 +1180,94 @@ class _AgroDataShellState extends State<AgroDataShell>
     await showDialog<void>(
       context: context,
       builder: (context) => _ElectricConsumptionSettingsDialog(
-        tenantId: tenantId,
+        tenantId: tenantId!,
         siteId: siteId,
         userUid: widget.user.uid,
         plcConfigs: plcConfigs,
         service: _electricConsumptionSettingsService,
       ),
     );
+  }
+
+  Future<void> _openElectricCostSettings() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) return;
+
+    String? tenantId = bootstrap.effectiveTenantId;
+    String siteId = bootstrap.siteId;
+
+    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) {
+      final _TenantSiteSelection? picked = await _pickTenantAndSite();
+      if (!mounted || picked == null) return;
+      tenantId = picked.tenantId;
+      siteId = picked.siteId;
+    }
+
+    final String siteName =
+        bootstrap.siteDocument?.name.isNotEmpty == true
+        ? bootstrap.siteDocument!.name
+        : siteId;
+
+    await showDialog<void>(
+      // ignore: use_build_context_synchronously
+      context: context,
+      builder: (context) => _ElectricCostSettingsDialog(
+        tenantId: tenantId!,
+        siteId: siteId,
+        siteName: siteName,
+        userUid: widget.user.uid,
+        service: _electricalCostService,
+      ),
+    );
+  }
+
+  Future<_TenantSiteSelection?> _pickTenantAndSite() async {
+    final List<String> tenants =
+        await _siteConfigService.fetchAllActiveTenantIds();
+    if (!mounted) return null;
+    if (tenants.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active tenants found.')),
+      );
+      return null;
+    }
+
+    String? selectedTenant;
+    if (tenants.length == 1) {
+      selectedTenant = tenants.first;
+    } else {
+      selectedTenant = await showDialog<String>(
+        context: context,
+        builder: (context) => _TenantPickerDialog(tenantIds: tenants),
+      );
+    }
+    if (!mounted || selectedTenant == null) return null;
+
+    final List<SiteDocument> sites = await _siteConfigService
+        .fetchActiveSitesForUser(
+          tenantId: selectedTenant,
+          allowedSiteIds: const <String>[],
+          ownerBypass: true,
+        );
+    if (!mounted) return null;
+    if (sites.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No active sites found for this tenant.')),
+      );
+      return null;
+    }
+
+    String? selectedSite;
+    if (sites.length == 1) {
+      selectedSite = sites.first.siteId;
+    } else {
+      selectedSite = await showDialog<String>(
+        context: context,
+        builder: (context) => _SitePickerDialog(sites: sites),
+      );
+    }
+    if (selectedSite == null) return null;
+    return _TenantSiteSelection(tenantId: selectedTenant, siteId: selectedSite);
   }
 
   List<PlcDisplayConfig> _effectivePlcConfigs(List<PlcDisplayConfig> configs) {
@@ -1852,9 +1980,15 @@ class _AgroDataShellState extends State<AgroDataShell>
                           presenceWorkspaceId != null
                       ? ActiveUsersEye(workspaceId: presenceWorkspaceId)
                       : null,
+                  onRuntimeEvents: _userRole == UserAppRole.owner &&
+                          _historyTenantId != null &&
+                          _historySiteId?.isNotEmpty == true
+                      ? _goRuntimeEvents
+                      : null,
                 ),
                 if (_snapshotStale)
                   _StaleSnapshotBanner(
+                    backendOnline: _backendOnline,
                     lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
                   ),
                 Expanded(
@@ -1863,6 +1997,22 @@ class _AgroDataShellState extends State<AgroDataShell>
                     settings: _magnifierSettings,
                     child: LayoutBuilder(
                       builder: (context, constraints) {
+                        if (_selectedTab == 'runtimeEvents') {
+                          final String tenantId = _historyTenantId ?? '';
+                          final String siteId = _historySiteId ?? '';
+                          final List<String> plcIds = _plcConfigs.isNotEmpty
+                              ? _plcConfigs
+                                    .map((c) => c.plcId)
+                                    .toList()
+                              : <String>['munters1', 'munters2'];
+                          return RuntimeEventsPage(
+                            tenantId: tenantId,
+                            siteId: siteId,
+                            plcIds: plcIds,
+                            onBack: _goHomeDashboard,
+                          );
+                        }
+
                         if (_selectedTab == 'comparativo') {
                           return Padding(
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
@@ -2451,6 +2601,7 @@ class _DashboardBootstrapResult {
     required this.membership,
     required this.config,
     required this.siteId,
+    this.resolvedTenantId,
     this.siteDocument,
     this.availableSites = const <SiteDocument>[],
     this.plcConfigs = const <PlcDisplayConfig>[],
@@ -2460,9 +2611,15 @@ class _DashboardBootstrapResult {
   final TenantMembershipLookupResult membership;
   final ControlDashboardConfigResult? config;
   final String siteId;
+  // Effective tenantId — may differ from userContext.activeTenantId when an
+  // owner user has no activeTenantId set and we resolved one from Firestore.
+  final String? resolvedTenantId;
   final SiteDocument? siteDocument;
   final List<SiteDocument> availableSites;
   final List<PlcDisplayConfig> plcConfigs;
+
+  String? get effectiveTenantId =>
+      resolvedTenantId ?? userContext.activeTenantId;
 
   bool get bypassesMembership =>
       userContext.role == UserAppRole.owner ||
@@ -2726,15 +2883,27 @@ String _formatClockTime(DateTime value) {
 }
 
 class _StaleSnapshotBanner extends StatelessWidget {
-  const _StaleSnapshotBanner({required this.lastSuccessfulSnapshotAt});
+  const _StaleSnapshotBanner({
+    required this.backendOnline,
+    required this.lastSuccessfulSnapshotAt,
+  });
 
+  final bool backendOnline;
   final DateTime? lastSuccessfulSnapshotAt;
 
   @override
   Widget build(BuildContext context) {
-    final String message = lastSuccessfulSnapshotAt == null
-        ? 'ATENCION: Datos desactualizados: Sin datos del backend.'
-        : 'ATENCION: Datos desactualizados: Ultimos datos: ${_formatStaleDateTime(lastSuccessfulSnapshotAt!)}';
+    final String title;
+    final String? subtitle;
+    if (!backendOnline) {
+      title = 'Backend Unreachable';
+      subtitle = null;
+    } else {
+      title = 'PLC Unreachable';
+      subtitle = lastSuccessfulSnapshotAt == null
+          ? 'Last data received: never'
+          : 'Last data received: ${_formatStaleDateTime(lastSuccessfulSnapshotAt!)}';
+    }
 
     return Container(
       width: double.infinity,
@@ -2747,24 +2916,26 @@ class _StaleSnapshotBanner extends StatelessWidget {
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
+        children: <Widget>[
           Text(
-            message,
+            title,
             style: const TextStyle(
               color: Color(0xFFFCA5A5),
               fontSize: 12,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 4),
-          const Text(
-            'DATOS VIEJOS: Los datos mostrados no representan la realidad',
-            style: TextStyle(
-              color: Color(0xFFFCA5A5),
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
+          if (subtitle != null) ...<Widget>[
+            const SizedBox(height: 4),
+            Text(
+              subtitle,
+              style: const TextStyle(
+                color: Color(0xFFFCA5A5),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -2781,6 +2952,7 @@ enum _SettingsMenuAction {
   manualFanStatusSettings,
   maintenanceSettings,
   electricConsumptionSettings,
+  electricCostSettings,
   manageUsers,
   doorOpeningsCleanup,
   rolesHelp,
@@ -2929,6 +3101,17 @@ class _SettingsMenuDialog extends StatelessWidget {
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                         ),
                         child: const Text('Consumos Eléctricos'),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.tonal(
+                        onPressed: () => Navigator.of(
+                          context,
+                        ).pop(_SettingsMenuAction.electricCostSettings),
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 42),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        child: const Text('Costo Eléctrico'),
                       ),
                     ],
                   ],
@@ -4008,6 +4191,10 @@ class _ElectricConsumptionSettingsDialogState
       settingsByPlc[plc.plcId] = settings;
     }
 
+    // Capture before any await — context may be deactivated by the time
+    // the saves complete if the user closes the dialog mid-flight.
+    final ScaffoldMessengerState messenger = ScaffoldMessenger.of(context);
+
     setState(() {
       _saving = true;
       _errorText = null;
@@ -4022,18 +4209,15 @@ class _ElectricConsumptionSettingsDialogState
           userUid: widget.userUid,
           settings: entry.value,
         );
+        if (!mounted) return;
         _controllersByPlc[entry.key]?.applySettings(entry.value, format: _fmt);
       }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
+      if (!mounted) return;
+      messenger.showSnackBar(
         const SnackBar(content: Text('Consumos eléctricos guardados.')),
       );
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _errorText = 'No se pudo guardar en Firebase: $error';
       });
@@ -4507,6 +4691,192 @@ class _FilterSettingsDialogState extends State<_FilterSettingsDialog> {
           child: const Text('Cancelar'),
         ),
         FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+
+class _ElectricCostSettingsDialog extends StatefulWidget {
+  const _ElectricCostSettingsDialog({
+    required this.tenantId,
+    required this.siteId,
+    required this.siteName,
+    required this.userUid,
+    required this.service,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final String siteName;
+  final String userUid;
+  final ElectricalCostService service;
+
+  @override
+  State<_ElectricCostSettingsDialog> createState() =>
+      _ElectricCostSettingsDialogState();
+}
+
+class _ElectricCostSettingsDialogState
+    extends State<_ElectricCostSettingsDialog> {
+  late final TextEditingController _costController;
+  bool _loading = true;
+  bool _saving = false;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    _costController = TextEditingController();
+    _loadCost();
+  }
+
+  @override
+  void dispose() {
+    _costController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCost() async {
+    try {
+      final double? cost = await widget.service.readCost(
+        tenantId: widget.tenantId,
+        siteId: widget.siteId,
+      );
+      if (mounted) {
+        setState(() {
+          _costController.text = cost != null ? cost.toString() : '';
+          _loading = false;
+        });
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _errorText = 'No se pudo cargar la configuración: $error';
+          _loading = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _submit() async {
+    final double? cost = double.tryParse(
+      _costController.text.trim().replaceAll(',', '.'),
+    );
+    if (cost == null) {
+      setState(() {
+        _errorText = 'Ingresá un número válido.';
+      });
+      return;
+    }
+    if (cost < 0) {
+      setState(() {
+        _errorText = 'El costo debe ser mayor o igual a 0.';
+      });
+      return;
+    }
+
+    setState(() {
+      _saving = true;
+      _errorText = null;
+    });
+
+    try {
+      await widget.service.saveCost(
+        tenantId: widget.tenantId,
+        siteId: widget.siteId,
+        userUid: widget.userUid,
+        costPerKw: cost,
+      );
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _errorText = 'No se pudo guardar: $error';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Costo Eléctrico',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: 420,
+        child: _loading
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(),
+                ),
+              )
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Tenant: ${widget.tenantId}',
+                    style: const TextStyle(
+                      color: Color(0xFF38BDF8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    'Site: ${widget.siteName}',
+                    style: const TextStyle(
+                      color: Color(0xFF38BDF8),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Costo de la energía eléctrica consumida.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                  ),
+                  const SizedBox(height: 16),
+                  _RangeField(
+                    controller: _costController,
+                    label: 'Costo eléctrico',
+                    suffix: r'$ / kW',
+                  ),
+                  if (_errorText != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      _errorText!,
+                      style: const TextStyle(
+                        color: Color(0xFFFCA5A5),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _saving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: _loading || _saving ? null : _submit,
+          child: _saving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Guardar'),
+        ),
       ],
     );
   }
@@ -6056,6 +6426,91 @@ class _RangeField extends StatelessWidget {
           borderSide: const BorderSide(color: Color(0xFF38BDF8)),
         ),
       ),
+    );
+  }
+}
+
+class _TenantSiteSelection {
+  const _TenantSiteSelection({required this.tenantId, required this.siteId});
+  final String tenantId;
+  final String siteId;
+}
+
+class _TenantPickerDialog extends StatelessWidget {
+  const _TenantPickerDialog({required this.tenantIds});
+  final List<String> tenantIds;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E293B),
+      title: const Text(
+        'Select Tenant',
+        style: TextStyle(color: Color(0xFFF1F5F9)),
+      ),
+      content: SizedBox(
+        width: 320,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: tenantIds.length,
+          itemBuilder: (context, index) {
+            final String id = tenantIds[index];
+            return ListTile(
+              title: Text(id, style: const TextStyle(color: Color(0xFFF1F5F9))),
+              onTap: () => Navigator.of(context).pop(id),
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+        ),
+      ],
+    );
+  }
+}
+
+class _SitePickerDialog extends StatelessWidget {
+  const _SitePickerDialog({required this.sites});
+  final List<SiteDocument> sites;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E293B),
+      title: const Text(
+        'Select Site',
+        style: TextStyle(color: Color(0xFFF1F5F9)),
+      ),
+      content: SizedBox(
+        width: 320,
+        child: ListView.builder(
+          shrinkWrap: true,
+          itemCount: sites.length,
+          itemBuilder: (context, index) {
+            final SiteDocument site = sites[index];
+            return ListTile(
+              title: Text(
+                site.name.isNotEmpty ? site.name : site.siteId,
+                style: const TextStyle(color: Color(0xFFF1F5F9)),
+              ),
+              subtitle: Text(
+                site.siteId,
+                style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+              ),
+              onTap: () => Navigator.of(context).pop(site.siteId),
+            );
+          },
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+        ),
+      ],
     );
   }
 }

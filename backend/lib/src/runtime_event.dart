@@ -5,6 +5,7 @@ class RuntimeEvent {
     required this.endedAt,
     required this.durationSec,
     required this.plcId,
+    this.deviceIsOn,
     this.powerPercent,
     this.powerWatts,
     this.energyKwh,
@@ -34,6 +35,7 @@ class RuntimeEvent {
     );
   }
 
+  // Heartbeat for an active (ON) device — records ongoing segment duration.
   factory RuntimeEvent.heartbeat({
     required String deviceType,
     required DateTime startedAt,
@@ -52,9 +54,29 @@ class RuntimeEvent {
       endedAt: observedAt,
       durationSec: durationSec,
       plcId: plcId,
+      deviceIsOn: true,
       powerPercent: powerPercent,
       powerWatts: powerWatts,
       energyKwh: energyKwh,
+    );
+  }
+
+  // Status heartbeat for an OFF device — records that the device is off at
+  // this moment. startedAt == observedAt, durationSec == 0.
+  factory RuntimeEvent.offHeartbeat({
+    required String deviceType,
+    required DateTime observedAt,
+    required String plcId,
+    int? powerPercent,
+  }) {
+    return RuntimeEvent(
+      deviceType: deviceType,
+      startedAt: observedAt,
+      endedAt: observedAt,
+      durationSec: 0,
+      plcId: plcId,
+      deviceIsOn: false,
+      powerPercent: powerPercent,
     );
   }
 
@@ -63,6 +85,8 @@ class RuntimeEvent {
   final DateTime? endedAt;
   final int durationSec;
   final String plcId;
+  // Explicit ON/OFF state at heartbeat time. Null for closed events.
+  final bool? deviceIsOn;
   final int? powerPercent;
   final double? powerWatts;
   final double? energyKwh;

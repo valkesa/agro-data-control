@@ -210,6 +210,17 @@ service cloud.firestore {
         || request.resource.data[field] is number;
     }
 
+    function isValidElectricalCostSettings() {
+      return request.resource.data.keys().hasOnly(['costPerKw', 'updatedAt', 'updatedBy'])
+        && request.resource.data.costPerKw is number
+        && request.resource.data.costPerKw >= 0
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          !('updatedAt' in request.resource.data)
+          || request.resource.data.updatedAt is timestamp
+        );
+    }
+
     function isValidElectricalConsumptionSettings() {
       return request.resource.data.keys().hasOnly([
           'fanLevels',
@@ -416,6 +427,7 @@ service cloud.firestore {
     }
 
     match /tenants/{tenantId} {
+      allow list: if isOwner();
       allow read: if canReadTenant(tenantId);
 
       match /members/{uid} {
@@ -472,12 +484,20 @@ service cloud.firestore {
               && isValidElectricalConsumptionSettings();
             allow delete: if false;
           }
+
+          match /runtimeEvents/{eventId} {
+            allow read: if canReadTenant(tenantId);
+            allow create, update, delete: if false;
+          }
         }
 
         match /settings/{docId} {
           allow read: if canReadTenant(tenantId);
           allow create, update: if docId == 'controlDashboard'
             && (canEditTenantConfig(tenantId) || isOwner());
+          allow create, update: if docId == 'electricalCost'
+            && (canEditTenantConfig(tenantId) || isOwner())
+            && isValidElectricalCostSettings();
           allow create: if docId == 'controlDashboard'
             && canWriteManualFanStatus(tenantId)
             && isManualFanStatusCreate();

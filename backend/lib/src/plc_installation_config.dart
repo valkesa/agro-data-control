@@ -65,6 +65,8 @@ class PlcInstallationConfig {
         fallbackTenantId: fallbackTenantId,
         fallbackSiteId: fallbackSiteId,
         fallbackPlcId: fallbackPlcId,
+        fallbackPollingIntervalMs:
+            (json['pollingIntervalMs'] as num?)?.toInt() ?? 5000,
       ),
       routerHost: json['routerHost'] as String?,
     );
@@ -219,6 +221,7 @@ class RuntimeEventsConfig {
     required this.firestoreProjectId,
     required this.firestoreDatabaseId,
     required this.firestoreServiceAccountPath,
+    required this.hbGapThresholdMs,
   });
 
   factory RuntimeEventsConfig.fromJson(
@@ -226,9 +229,13 @@ class RuntimeEventsConfig {
     required String fallbackTenantId,
     required String fallbackSiteId,
     required String fallbackPlcId,
+    int fallbackPollingIntervalMs = 5000,
   }) {
     final List<dynamic> plcsRaw =
         json?['plcs'] as List<dynamic>? ?? <dynamic>[];
+    // Default gap threshold = 3 × polling interval. A gap larger than this
+    // means the backend or connection was down, so a new HB doc is created.
+    final int defaultGapThresholdMs = fallbackPollingIntervalMs * 3;
     return RuntimeEventsConfig(
       enabled: json?['enabled'] as bool? ?? false,
       tenantId:
@@ -250,6 +257,8 @@ class RuntimeEventsConfig {
           json?['firestoreDatabaseId'] as String? ?? '(default)',
       firestoreServiceAccountPath:
           json?['firestoreServiceAccountPath'] as String? ?? '',
+      hbGapThresholdMs:
+          json?['hbGapThresholdMs'] as int? ?? defaultGapThresholdMs,
     );
   }
 
@@ -259,6 +268,10 @@ class RuntimeEventsConfig {
   final List<RuntimePlcConfig> plcs;
   final String? firestoreProjectId;
   final String firestoreDatabaseId;
+  // If two consecutive HBs for the same event are more than this apart, a new
+  // Firestore document is created (gap marker). Otherwise the previous doc is
+  // overwritten in-place (deduplication). Defaults to 3 × pollingIntervalMs.
+  final int hbGapThresholdMs;
 
   /// Ruta al archivo JSON del Service Account de Google.
   final String firestoreServiceAccountPath;

@@ -3,7 +3,9 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../models/runtime_event_record.dart';
 import '../models/temperature_history_point.dart';
+import '../services/runtime_events_service.dart';
 import '../services/temperature_history_repository.dart';
 
 class TemperatureHistoryMiniChartsCard extends StatefulWidget {
@@ -16,6 +18,7 @@ class TemperatureHistoryMiniChartsCard extends StatefulWidget {
     this.siteId,
     this.plcId,
     this.repository,
+    this.runtimeEventsService,
     this.horizontalMargin = 0,
   });
 
@@ -26,6 +29,7 @@ class TemperatureHistoryMiniChartsCard extends StatefulWidget {
   final String? siteId;
   final String? plcId;
   final TemperatureHistoryRepository? repository;
+  final RuntimeEventsService? runtimeEventsService;
   final double horizontalMargin;
 
   @override
@@ -39,11 +43,14 @@ class _TemperatureHistoryMiniChartsCardState
   _ChartMode _mode = _ChartMode.hourly;
   int? _selectedIndex;
   late final TemperatureHistoryRepository _repository;
+  late final RuntimeEventsService _runtimeEventsService;
 
   @override
   void initState() {
     super.initState();
     _repository = widget.repository ?? TemperatureHistoryRepository();
+    _runtimeEventsService =
+        widget.runtimeEventsService ?? const RuntimeEventsService();
     _historyFuture = _loadHistory();
   }
 
@@ -83,10 +90,24 @@ class _TemperatureHistoryMiniChartsCardState
         siteId: siteId,
         plcId: plcId,
       ),
+      _runtimeEventsService.fetchRecent(
+        tenantId: tenantId,
+        siteId: siteId,
+        plcId: plcId,
+        limit: 400,
+      ),
     ]);
+    final List<RuntimeEventRecord> heaterRecords =
+        (results[2] as List<RuntimeEventRecord>)
+            .where(
+              (RuntimeEventRecord r) =>
+                  r.deviceType == 'heater1' || r.deviceType == 'heater2',
+            )
+            .toList(growable: false);
     return _TemperatureHistoryBundle(
       hourly: results[0] as List<TemperatureHourlyPoint>,
       daily: results[1] as List<TemperatureDailyPoint>,
+      heaterRecords: heaterRecords,
     );
   }
 
@@ -209,6 +230,7 @@ class _TemperatureHistoryMiniChartsCardState
                     selectedIndex: effectiveIndex,
                     lowerLimit: widget.lowerLimit,
                     upperLimit: widget.upperLimit,
+                    heaterRecords: bundle.heaterRecords,
                     onTap: () => _openExpandedChart(context, bundle),
                     onIndexChanged: (int? index) {
                       setState(() {
@@ -218,7 +240,6 @@ class _TemperatureHistoryMiniChartsCardState
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Legend at the bottom.
                 Wrap(
                   spacing: 12,
                   runSpacing: 4,
@@ -231,6 +252,16 @@ class _TemperatureHistoryMiniChartsCardState
                       _LegendDot(
                         color: const Color(0xFFF59E0B),
                         label: 'Exterior',
+                      ),
+                    if (_hasHeaterType(bundle.heaterRecords, 'heater1'))
+                      const _LegendBar(
+                        color: Color(0xFFF97316),
+                        label: 'Resist. 1',
+                      ),
+                    if (_hasHeaterType(bundle.heaterRecords, 'heater2'))
+                      const _LegendBar(
+                        color: Color(0xFFEF4444),
+                        label: 'Resist. 2',
                       ),
                   ],
                 ),
@@ -251,6 +282,7 @@ class _MiniLineChart extends StatefulWidget {
     required this.lowerLimit,
     required this.upperLimit,
     required this.onIndexChanged,
+    this.heaterRecords = const <RuntimeEventRecord>[],
     this.onTap,
   });
 
@@ -259,6 +291,7 @@ class _MiniLineChart extends StatefulWidget {
   final int selectedIndex;
   final double lowerLimit;
   final double upperLimit;
+  final List<RuntimeEventRecord> heaterRecords;
   final ValueChanged<int?> onIndexChanged;
   final VoidCallback? onTap;
 
@@ -349,6 +382,7 @@ class _MiniLineChartState extends State<_MiniLineChart> {
                       mode: widget.mode,
                       lowerLimit: widget.lowerLimit,
                       upperLimit: widget.upperLimit,
+                      heaterRecords: widget.heaterRecords,
                     ),
                   ),
                 ),
@@ -512,6 +546,7 @@ class _ExpandedTemperatureHistoryDialogState
                 selectedIndex: effectiveIndex,
                 lowerLimit: widget.lowerLimit,
                 upperLimit: widget.upperLimit,
+                heaterRecords: widget.bundle.heaterRecords,
                 onIndexChanged: (int? index) {
                   setState(() {
                     _selectedIndex = index;
@@ -527,6 +562,10 @@ class _ExpandedTemperatureHistoryDialogState
                 const _LegendDot(color: Color(0xFF38BDF8), label: 'Interior'),
                 if (hasExterior)
                   const _LegendDot(color: Color(0xFFF59E0B), label: 'Exterior'),
+                if (_hasHeaterType(widget.bundle.heaterRecords, 'heater1'))
+                  const _LegendBar(color: Color(0xFFF97316), label: 'Resist. 1'),
+                if (_hasHeaterType(widget.bundle.heaterRecords, 'heater2'))
+                  const _LegendBar(color: Color(0xFFEF4444), label: 'Resist. 2'),
               ],
             ),
           ],
@@ -537,12 +576,13 @@ class _ExpandedTemperatureHistoryDialogState
 }
 
 class _MiniChartPainter extends CustomPainter {
-  const _MiniChartPainter({
+  _MiniChartPainter({
     required this.points,
     required this.selectedIndex,
     required this.mode,
     required this.lowerLimit,
     required this.upperLimit,
+    this.heaterRecords = const <RuntimeEventRecord>[],
   });
 
   final List<TemperatureHistoryPointBase> points;
@@ -550,6 +590,7 @@ class _MiniChartPainter extends CustomPainter {
   final _ChartMode mode;
   final double lowerLimit;
   final double upperLimit;
+  final List<RuntimeEventRecord> heaterRecords;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -633,6 +674,8 @@ class _MiniChartPainter extends CustomPainter {
     final double chartMax = effectiveMaxValue + verticalPadding;
     final double safeRange = math.max(1, chartMax - chartMin);
     final double stepX = chartRect.width / (points.length - 1);
+
+    _paintHeaterBars(canvas, chartRect);
 
     final double lowerLimitY =
         chartRect.bottom -
@@ -837,6 +880,89 @@ class _MiniChartPainter extends CustomPainter {
     }
   }
 
+  void _paintHeaterBars(Canvas canvas, Rect chartRect) {
+    if (heaterRecords.isEmpty || points.length < 2) return;
+    final DateTime firstTs = points.first.timestamp;
+    final DateTime lastTs = points.last.timestamp;
+    final int totalMs = lastTs.difference(firstTs).inMilliseconds;
+    if (totalMs <= 0) return;
+
+    _paintBarsForDevice(
+      canvas, chartRect, firstTs, totalMs, 'heater1',
+      const Color(0x66F97316),
+      chartRect.bottom - chartRect.height * 0.25,
+      chartRect.bottom,
+    );
+    _paintBarsForDevice(
+      canvas, chartRect, firstTs, totalMs, 'heater2',
+      const Color(0x55EF4444),
+      chartRect.bottom - chartRect.height * 0.50,
+      chartRect.bottom - chartRect.height * 0.25,
+    );
+  }
+
+  void _paintBarsForDevice(
+    Canvas canvas,
+    Rect chartRect,
+    DateTime firstTs,
+    int totalMs,
+    String deviceType,
+    Color color,
+    double top,
+    double bottom,
+  ) {
+    final List<({DateTime start, DateTime end})> intervals =
+        _heaterIntervalsForDevice(deviceType);
+    final Paint paint = Paint()..color = color;
+    for (final ({DateTime start, DateTime end}) iv in intervals) {
+      final double x1 = (chartRect.left +
+              (iv.start.difference(firstTs).inMilliseconds / totalMs) *
+                  chartRect.width)
+          .clamp(chartRect.left, chartRect.right);
+      final double x2 = (chartRect.left +
+              (iv.end.difference(firstTs).inMilliseconds / totalMs) *
+                  chartRect.width)
+          .clamp(chartRect.left, chartRect.right);
+      if (x2 <= x1 + 0.5) continue;
+      canvas.drawRect(Rect.fromLTRB(x1, top, x2, bottom), paint);
+    }
+  }
+
+  List<({DateTime start, DateTime end})> _heaterIntervalsForDevice(
+    String deviceType,
+  ) {
+    final Map<String, RuntimeEventRecord> bySession =
+        <String, RuntimeEventRecord>{};
+    for (final RuntimeEventRecord r in heaterRecords) {
+      if (r.deviceType != deviceType) continue;
+      final String key = r.startedAt.toUtc().toIso8601String();
+      final RuntimeEventRecord? existing = bySession[key];
+      if (existing == null) {
+        bySession[key] = r;
+      } else if (!r.isHeartbeat) {
+        bySession[key] = r;
+      } else if (existing.isHeartbeat) {
+        final DateTime rTime = r.observedAt ?? r.startedAt;
+        final DateTime existingTime = existing.observedAt ?? existing.startedAt;
+        if (rTime.isAfter(existingTime)) bySession[key] = r;
+      }
+    }
+    return bySession.values
+        .where(
+          (RuntimeEventRecord r) => !r.isHeartbeat || r.deviceIsOn == true,
+        )
+        .map(
+          (RuntimeEventRecord r) => (
+            start: r.startedAt,
+            end: r.endedAt ?? r.observedAt ?? r.startedAt,
+          ),
+        )
+        .where(
+          (({DateTime start, DateTime end}) iv) => iv.end.isAfter(iv.start),
+        )
+        .toList(growable: false);
+  }
+
   void _paintXAxisLabels(Canvas canvas, Size size, Rect chartRect) {
     final TextStyle style = const TextStyle(
       color: Color(0xFF94A3B8),
@@ -903,7 +1029,8 @@ class _MiniChartPainter extends CustomPainter {
         oldDelegate.selectedIndex != selectedIndex ||
         oldDelegate.mode != mode ||
         oldDelegate.lowerLimit != lowerLimit ||
-        oldDelegate.upperLimit != upperLimit;
+        oldDelegate.upperLimit != upperLimit ||
+        oldDelegate.heaterRecords != heaterRecords;
   }
 }
 
@@ -949,6 +1076,35 @@ class _LegendDot extends StatelessWidget {
           width: 8,
           height: 8,
           decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          label,
+          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+        ),
+      ],
+    );
+  }
+}
+
+class _LegendBar extends StatelessWidget {
+  const _LegendBar({required this.color, required this.label});
+
+  final Color color;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 12,
+          height: 6,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(2),
+          ),
         ),
         const SizedBox(width: 4),
         Text(
@@ -1069,21 +1225,27 @@ class _HistoryState extends StatelessWidget {
 }
 
 class _TemperatureHistoryBundle {
-  const _TemperatureHistoryBundle({required this.hourly, required this.daily})
-    : notConfigured = false;
+  const _TemperatureHistoryBundle({
+    required this.hourly,
+    required this.daily,
+    this.heaterRecords = const <RuntimeEventRecord>[],
+  }) : notConfigured = false;
 
   const _TemperatureHistoryBundle.empty()
     : hourly = const <TemperatureHourlyPoint>[],
       daily = const <TemperatureDailyPoint>[],
+      heaterRecords = const <RuntimeEventRecord>[],
       notConfigured = false;
 
   const _TemperatureHistoryBundle.notConfigured()
     : hourly = const <TemperatureHourlyPoint>[],
       daily = const <TemperatureDailyPoint>[],
+      heaterRecords = const <RuntimeEventRecord>[],
       notConfigured = true;
 
   final List<TemperatureHourlyPoint> hourly;
   final List<TemperatureDailyPoint> daily;
+  final List<RuntimeEventRecord> heaterRecords;
   final bool notConfigured;
 }
 
@@ -1118,6 +1280,13 @@ double? _pointExteriorMax(TemperatureHistoryPointBase p) {
   if (p is TemperatureDailyPoint) return p.maxExteriorTemp;
   return null;
 }
+
+bool _hasHeaterType(List<RuntimeEventRecord> records, String deviceType) =>
+    records.any(
+      (RuntimeEventRecord r) =>
+          r.deviceType == deviceType &&
+          (!r.isHeartbeat || r.deviceIsOn == true),
+    );
 
 // Tooltip: first line is the timestamp (bold).
 String _tooltipAvgLabel(TemperatureHistoryPointBase point, _ChartMode mode) =>
