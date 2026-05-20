@@ -44,6 +44,20 @@ class FirestorePaths {
   }) =>
       '${temperatureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/daily';
 
+  static String differentialPressureMetricsRoot({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) =>
+      'tenants/$tenantId/sites/$siteId/plcs/$plcId/metrics/differentialPressure';
+
+  static String differentialPressureDailyHistoryCollection({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) =>
+      '${differentialPressureMetricsRoot(tenantId: tenantId, siteId: siteId, plcId: plcId)}/daily';
+
   static String waterShortageMetricsRoot({
     required String tenantId,
     required String siteId,
@@ -103,4 +117,21 @@ class FirestorePaths {
 
   static String electricalCostSettings(String tenantId, String siteId) =>
       'tenants/$tenantId/sites/$siteId/settings/electricalCost';
+
+  static String pigStatsDoc({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) => 'tenants/$tenantId/sites/$siteId/plcs/$plcId/plcStats/pigs';
+
+  static String pigMovementsCollection({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) => 'tenants/$tenantId/sites/$siteId/plcs/$plcId/pigMovements';
+
+  static String pigExitReasonsCollection({
+    required String tenantId,
+    required String siteId,
+  }) => 'tenants/$tenantId/sites/$siteId/pigExitReasons';
 }

@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:agro_data_control_backend/src/door_openings_tracker.dart';
+import 'package:agro_data_control_backend/src/differential_pressure_history_service.dart';
+import 'package:agro_data_control_backend/src/firestore_differential_pressure_history_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_door_openings_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_runtime_events_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_temperature_history_repository.dart';
@@ -35,6 +37,17 @@ class SnapshotRuntime {
           ),
         )
         .toList();
+    _differentialPressureHistoryServices = config.differentialPressureHistories
+        .map(
+          (DifferentialPressureHistoryConfig historyConfig) =>
+              DifferentialPressureHistoryService(
+                config: historyConfig,
+                repository: FirestoreDifferentialPressureHistoryRepository(
+                  config: historyConfig,
+                ),
+              ),
+        )
+        .toList();
     final DoorOpeningsConfig doorConfig = config.doorOpenings;
     _doorOpeningsTracker = DoorOpeningsTracker(
       config: doorConfig,
@@ -61,6 +74,8 @@ class SnapshotRuntime {
   bool _disposed = false;
   final Completer<void> _stopCompleter = Completer<void>();
   late final List<TemperatureHistoryService> _temperatureHistoryServices;
+  late final List<DifferentialPressureHistoryService>
+  _differentialPressureHistoryServices;
   late final DoorOpeningsTracker _doorOpeningsTracker;
   late final RuntimeTrackerService _runtimeTrackerService;
 
@@ -85,6 +100,10 @@ class SnapshotRuntime {
     }
     for (final TemperatureHistoryService service
         in _temperatureHistoryServices) {
+      await service.dispose();
+    }
+    for (final DifferentialPressureHistoryService service
+        in _differentialPressureHistoryServices) {
       await service.dispose();
     }
     await _doorOpeningsTracker.dispose();
@@ -198,6 +217,13 @@ class SnapshotRuntime {
       _logPlc('poll success elapsedMs=${stopwatch.elapsedMilliseconds}');
       for (final TemperatureHistoryService service
           in _temperatureHistoryServices) {
+        service.handleSnapshot(
+          unitsJson: unitsJson,
+          observedAtUtc: pollStartedAt,
+        );
+      }
+      for (final DifferentialPressureHistoryService service
+          in _differentialPressureHistoryServices) {
         service.handleSnapshot(
           unitsJson: unitsJson,
           observedAtUtc: pollStartedAt,

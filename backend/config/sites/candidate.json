@@ -9,6 +9,28 @@
   "timeoutMs": 1500,
   "httpHost": "0.0.0.0",
   "httpPort": 8081,
+  "differentialPressureHistories": [
+    {
+      "enabled": true,
+      "pressureDifferentialSource": "munters1.presionDiferencial",
+      "tenantId": "cliente-demo",
+      "siteId": "sitio-demo",
+      "plcId": "munters1",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+    },
+    {
+      "enabled": true,
+      "pressureDifferentialSource": "munters2.presionDiferencial",
+      "tenantId": "cliente-demo",
+      "siteId": "sitio-demo",
+      "plcId": "munters2",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+    }
+  ],
   "doorOpenings": {
     "enabled": true,
     "tenantId": "cliente-demo",

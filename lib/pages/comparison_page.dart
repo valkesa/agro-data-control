@@ -9,6 +9,8 @@ import '../models/magnifier_settings.dart';
 import '../models/munters_model.dart';
 import '../models/plc_maintenance_settings.dart';
 import '../models/plc_unit_diagnostics.dart';
+import '../widgets/cerdas_module.dart';
+import '../widgets/differential_pressure_history_card.dart';
 import '../widgets/door_openings_module.dart';
 import '../widgets/status_indicator.dart';
 import '../widgets/temperature_history_mini_charts_card.dart';
@@ -49,9 +51,11 @@ class ComparisonPage extends StatefulWidget {
   static const String sectionEnergiaE = 'EnergiaE';
   static const String sectionOee = 'Oee';
   static const String sectionProduccion = 'Produccion';
+  static const String sectionCerdas = 'Cerdas';
 
   static const List<String> defaultModuleOrder = <String>[
     sectionEstado,
+    sectionCerdas,
     sectionAmbiente,
     sectionFiltros,
     sectionVentilacion,
@@ -133,6 +137,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
   static const String _sectionEnergiaE = ComparisonPage.sectionEnergiaE;
   static const String _sectionOee = ComparisonPage.sectionOee;
   static const String _sectionProduccion = ComparisonPage.sectionProduccion;
+  static const String _sectionCerdas = ComparisonPage.sectionCerdas;
 
   Timer? _technicalDataAutoCollapseTimer;
   Timer? _sectionsAutoCollapseTimer;
@@ -157,6 +162,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     _sectionEnergiaE: GlobalKey(),
     _sectionOee: GlobalKey(),
     _sectionProduccion: GlobalKey(),
+    _sectionCerdas: GlobalKey(),
   };
 
   @override
@@ -782,6 +788,24 @@ class _ComparisonPageState extends State<ComparisonPage> {
           ),
         ),
         _ComparisonRow(
+          label: '',
+          alignToTop: true,
+          munters1: _DifferentialPressureHistoryValue(
+            unitName: munters1.name,
+            tenantId: widget.tenantId,
+            siteId: widget.siteId,
+            plcId: munters1.historyPlcId,
+            blocked: munters1DataBlocked,
+          ),
+          munters2: _DifferentialPressureHistoryValue(
+            unitName: munters2.name,
+            tenantId: widget.tenantId,
+            siteId: widget.siteId,
+            plcId: munters2.historyPlcId,
+            blocked: munters2DataBlocked,
+          ),
+        ),
+        _ComparisonRow(
           label: 'Seteo alarma',
           munters1: _TextValue(
             _formatValueWithUnit(rangeSettings.filterPressureMax, 'Pa'),
@@ -1199,6 +1223,62 @@ class _ComparisonPageState extends State<ComparisonPage> {
       onExpandedChanged: _handleSectionExpandedChanged,
       rows: const [],
     );
+    final String? cerdasTenantId = widget.tenantId;
+    final String? cerdasSiteId = widget.siteId;
+    final String? cerdasPlc1Id = widget.munters1.historyPlcId;
+    final String? cerdasPlc2Id = widget.munters2.historyPlcId;
+    final bool cerdasHasContext =
+        cerdasTenantId != null &&
+        cerdasTenantId.isNotEmpty &&
+        cerdasSiteId != null &&
+        cerdasSiteId.isNotEmpty;
+    final List<_PlcModuleIconData> cerdasPlcIconData = <_PlcModuleIconData>[
+      _PlcModuleIconData(
+        icon: Icons.pets,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+        extraWidget:
+            cerdasHasContext && cerdasPlc1Id != null && cerdasPlc1Id.isNotEmpty
+            ? CerdasPigCountWidget(
+                tenantId: cerdasTenantId,
+                siteId: cerdasSiteId,
+                plcId: cerdasPlc1Id,
+              )
+            : null,
+      ),
+      _PlcModuleIconData(
+        icon: Icons.pets,
+        iconColor: const Color(0xFF94A3B8),
+        status: const _ModuleStatus.pending(),
+        extraWidget:
+            cerdasHasContext && cerdasPlc2Id != null && cerdasPlc2Id.isNotEmpty
+            ? CerdasPigCountWidget(
+                tenantId: cerdasTenantId,
+                siteId: cerdasSiteId,
+                plcId: cerdasPlc2Id,
+              )
+            : null,
+      ),
+    ];
+    final Widget cerdasSection = _SectionTable(
+      key: _sectionKeys[_sectionCerdas],
+      sectionId: _sectionCerdas,
+      title: 'CERDAS',
+      plcIconData: cerdasPlcIconData,
+      collapseGeneration: _sectionsCollapseGeneration,
+      expandRequestGeneration: _sectionExpandRequests[_sectionCerdas] ?? 0,
+      onExpandedChanged: _handleSectionExpandedChanged,
+      rows: <Widget>[
+        CerdasModule(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          plc1Id: cerdasPlc1Id,
+          plc2Id: cerdasPlc2Id,
+          plc1Label: widget.plc1ColumnLabel ?? 'M1',
+          plc2Label: widget.plc2ColumnLabel ?? 'M2',
+        ),
+      ],
+    );
     final bool hasAnyModuleAlarm =
         _isModuleStatusAlarm(m1AlarmasStatus) ||
         _isModuleStatusAlarm(m2AlarmasStatus);
@@ -1216,6 +1296,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
       _sectionEnergiaE: energiaESection,
       _sectionOee: oeeSection,
       _sectionProduccion: produccionSection,
+      _sectionCerdas: cerdasSection,
     };
     final List<String> storedModuleIds = ComparisonPage.normalizeModuleOrder(
       widget.moduleOrder,
@@ -3969,6 +4050,36 @@ class _ComparisonHistoryValue extends StatelessWidget {
       unitName: unitName,
       lowerLimit: rangeSettings.temperatureMin,
       upperLimit: rangeSettings.temperatureMax,
+      tenantId: tenantId,
+      siteId: siteId,
+      plcId: plcId,
+      horizontalMargin: 8,
+    );
+  }
+}
+
+class _DifferentialPressureHistoryValue extends StatelessWidget {
+  const _DifferentialPressureHistoryValue({
+    required this.unitName,
+    required this.tenantId,
+    required this.siteId,
+    required this.plcId,
+    this.blocked = false,
+  });
+
+  final String unitName;
+  final String? tenantId;
+  final String? siteId;
+  final String? plcId;
+  final bool blocked;
+
+  @override
+  Widget build(BuildContext context) {
+    if (blocked) {
+      return const _TextValue('-', fontWeight: FontWeight.w400);
+    }
+    return DifferentialPressureHistoryCard(
+      unitName: unitName,
       tenantId: tenantId,
       siteId: siteId,
       plcId: plcId,

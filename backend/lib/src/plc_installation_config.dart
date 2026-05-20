@@ -12,6 +12,7 @@ class PlcInstallationConfig {
     required this.httpPort,
     required this.units,
     required this.temperatureHistories,
+    required this.differentialPressureHistories,
     required this.doorOpenings,
     required this.runtimeEvents,
     this.routerHost,
@@ -35,6 +36,14 @@ class PlcInstallationConfig {
         _sanitizeSegment(json['siteName'] as String?) ?? 'default-site';
     final String fallbackPlcId =
         _sanitizeSegment(defaultSourceUnitKey) ?? 'default-plc';
+    final List<TemperatureHistoryConfig> temperatureHistories =
+        _parseTemperatureHistories(
+          json,
+          fallbackTenantId: fallbackTenantId,
+          fallbackSiteId: fallbackSiteId,
+          fallbackPlcId: fallbackPlcId,
+          fallbackSourceUnitKey: defaultSourceUnitKey,
+        );
 
     return PlcInstallationConfig(
       backendName: json['backendName'] as String? ?? 'current',
@@ -48,12 +57,13 @@ class PlcInstallationConfig {
       httpHost: json['httpHost'] as String? ?? '0.0.0.0',
       httpPort: (json['httpPort'] as num?)?.toInt() ?? 8080,
       units: units,
-      temperatureHistories: _parseTemperatureHistories(
+      temperatureHistories: temperatureHistories,
+      differentialPressureHistories: _parseDifferentialPressureHistories(
         json,
+        units: units,
         fallbackTenantId: fallbackTenantId,
         fallbackSiteId: fallbackSiteId,
-        fallbackPlcId: fallbackPlcId,
-        fallbackSourceUnitKey: defaultSourceUnitKey,
+        temperatureHistories: temperatureHistories,
       ),
       doorOpenings: DoorOpeningsConfig.fromJson(
         json['doorOpenings'] as Map<String, dynamic>?,
@@ -84,9 +94,66 @@ class PlcInstallationConfig {
   final int httpPort;
   final Map<String, UnitConfig> units;
   final List<TemperatureHistoryConfig> temperatureHistories;
+  final List<DifferentialPressureHistoryConfig> differentialPressureHistories;
   final DoorOpeningsConfig doorOpenings;
   final RuntimeEventsConfig runtimeEvents;
   final String? routerHost;
+}
+
+class DifferentialPressureHistoryConfig {
+  DifferentialPressureHistoryConfig({
+    required this.enabled,
+    required this.sourcePath,
+    required this.tenantId,
+    required this.siteId,
+    required this.plcId,
+    required this.firestoreProjectId,
+    required this.firestoreDatabaseId,
+    required this.firestoreServiceAccountPath,
+  });
+
+  factory DifferentialPressureHistoryConfig.fromJson(
+    Map<String, dynamic>? json, {
+    required String fallbackTenantId,
+    required String fallbackSiteId,
+    required String fallbackPlcId,
+    required String fallbackSourcePath,
+    String? fallbackFirestoreProjectId,
+    String fallbackFirestoreDatabaseId = '(default)',
+    String fallbackFirestoreServiceAccountPath = '',
+  }) {
+    return DifferentialPressureHistoryConfig(
+      enabled: json?['enabled'] as bool? ?? true,
+      sourcePath:
+          json?['pressureDifferentialSource'] as String? ??
+          json?['differentialPressureSource'] as String? ??
+          fallbackSourcePath,
+      tenantId:
+          _sanitizeSegment(
+            (json?['tenantId'] ?? json?['clientId']) as String?,
+          ) ??
+          fallbackTenantId,
+      siteId: _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      plcId: _sanitizeSegment(json?['plcId'] as String?) ?? fallbackPlcId,
+      firestoreProjectId:
+          json?['firestoreProjectId'] as String? ?? fallbackFirestoreProjectId,
+      firestoreDatabaseId:
+          json?['firestoreDatabaseId'] as String? ??
+          fallbackFirestoreDatabaseId,
+      firestoreServiceAccountPath:
+          json?['firestoreServiceAccountPath'] as String? ??
+          fallbackFirestoreServiceAccountPath,
+    );
+  }
+
+  final bool enabled;
+  final String sourcePath;
+  final String tenantId;
+  final String siteId;
+  final String plcId;
+  final String? firestoreProjectId;
+  final String firestoreDatabaseId;
+  final String firestoreServiceAccountPath;
 }
 
 class TemperatureHistoryConfig {
@@ -473,6 +540,73 @@ List<TemperatureHistoryConfig> _parseTemperatureHistories(
       fallbackSourceUnitKey: fallbackSourceUnitKey,
     ),
   ];
+}
+
+List<DifferentialPressureHistoryConfig> _parseDifferentialPressureHistories(
+  Map<String, dynamic> json, {
+  required Map<String, UnitConfig> units,
+  required String fallbackTenantId,
+  required String fallbackSiteId,
+  required List<TemperatureHistoryConfig> temperatureHistories,
+}) {
+  final Map<String, TemperatureHistoryConfig> tempByPlc =
+      <String, TemperatureHistoryConfig>{
+        for (final TemperatureHistoryConfig config in temperatureHistories)
+          config.plcId: config,
+      };
+  final Object? list = json['differentialPressureHistories'];
+  if (list is List && list.isNotEmpty) {
+    return list.map((Object? e) {
+      final Map<String, dynamic>? entry = e as Map<String, dynamic>?;
+      final String sourcePath =
+          entry?['pressureDifferentialSource'] as String? ??
+          entry?['differentialPressureSource'] as String? ??
+          'munters2.presionDiferencial';
+      final String unitKey = sourcePath.split('.').first;
+      final String plcId =
+          _sanitizeSegment(entry?['plcId'] as String?) ??
+          _sanitizeSegment(unitKey) ??
+          'default-plc';
+      final TemperatureHistoryConfig? tempConfig = tempByPlc[plcId];
+      return DifferentialPressureHistoryConfig.fromJson(
+        entry,
+        fallbackTenantId: fallbackTenantId,
+        fallbackSiteId: fallbackSiteId,
+        fallbackPlcId: plcId,
+        fallbackSourcePath: sourcePath,
+        fallbackFirestoreProjectId: tempConfig?.firestoreProjectId,
+        fallbackFirestoreDatabaseId:
+            tempConfig?.firestoreDatabaseId ?? '(default)',
+        fallbackFirestoreServiceAccountPath:
+            tempConfig?.firestoreServiceAccountPath ?? '',
+      );
+    }).toList();
+  }
+
+  return units.entries
+      .where(
+        (MapEntry<String, UnitConfig> entry) =>
+            entry.value.signals.containsKey('presionDiferencial') ||
+            entry.value.signals.containsKey('pressureDifferential') ||
+            entry.value.signals.containsKey('differentialPressure'),
+      )
+      .map((MapEntry<String, UnitConfig> entry) {
+        final String plcId = _sanitizeSegment(entry.key) ?? 'default-plc';
+        final TemperatureHistoryConfig? tempConfig = tempByPlc[plcId];
+        return DifferentialPressureHistoryConfig.fromJson(
+          null,
+          fallbackTenantId: tempConfig?.tenantId ?? fallbackTenantId,
+          fallbackSiteId: tempConfig?.siteId ?? fallbackSiteId,
+          fallbackPlcId: plcId,
+          fallbackSourcePath: '${entry.key}.presionDiferencial',
+          fallbackFirestoreProjectId: tempConfig?.firestoreProjectId,
+          fallbackFirestoreDatabaseId:
+              tempConfig?.firestoreDatabaseId ?? '(default)',
+          fallbackFirestoreServiceAccountPath:
+              tempConfig?.firestoreServiceAccountPath ?? '',
+        );
+      })
+      .toList();
 }
 
 String _resolveDefaultTemperatureSourceUnitKey(Map<String, UnitConfig> units) {

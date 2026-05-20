@@ -84,7 +84,13 @@ service cloud.firestore {
         'Enfriamiento',
         'Aperturas',
         'Calefaccion',
-        'Alarmas'
+        'Alarmas',
+        'Amoniaco',
+        'Agua',
+        'EnergiaE',
+        'Oee',
+        'Produccion',
+        'Cerdas'
       ];
     }
 
@@ -541,6 +547,16 @@ service cloud.firestore {
       }
     }
 
+    match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/differentialPressure {
+      allow read: if canReadTenant(tenantId);
+      allow create, update, delete: if false;
+
+      match /daily/{docId} {
+        allow read: if canReadTenant(tenantId);
+        allow create, update, delete: if false;
+      }
+    }
+
     match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/metrics/waterShortage {
       allow read: if canReadTenant(tenantId);
       allow create, update: if isTenantMember(tenantId) || isOwner();
@@ -557,6 +573,27 @@ service cloud.firestore {
         allow create, update: if isTenantMember(tenantId) || isOwner();
         allow delete: if false;
       }
+    }
+
+    // Pig tracking: stock aggregated count updated atomically via client transaction.
+    match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/plcStats/pigs {
+      allow read: if canReadTenant(tenantId);
+      allow create, update: if isTenantMember(tenantId) || isOwner();
+      allow delete: if false;
+    }
+
+    // Pig movement log — immutable once created.
+    match /tenants/{tenantId}/sites/{siteId}/plcs/{plcId}/pigMovements/{movementId} {
+      allow read: if canReadTenant(tenantId);
+      allow create: if isTenantMember(tenantId) || isOwner();
+      allow update, delete: if false;
+    }
+
+    // Pig exit reasons — shared across all PLCs of the site, never deleted.
+    match /tenants/{tenantId}/sites/{siteId}/pigExitReasons/{reasonId} {
+      allow read: if canReadTenant(tenantId);
+      allow create: if isTenantMember(tenantId) || isOwner();
+      allow update, delete: if false;
     }
   }
 }
