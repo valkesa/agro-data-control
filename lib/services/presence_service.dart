@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../firebase/firestore_paths.dart';
 
@@ -134,14 +137,28 @@ class UserActivitySession {
   }
 }
 
+class UserActivitySessionPage {
+  const UserActivitySessionPage({
+    required this.sessions,
+    required this.lastDocument,
+    required this.hasMore,
+  });
+
+  final List<UserActivitySession> sessions;
+  final DocumentSnapshot<Map<String, dynamic>>? lastDocument;
+  final bool hasMore;
+}
+
 class PresenceService {
   const PresenceService({
     FirebaseFirestore? firestore,
     this.activeThreshold = const Duration(minutes: 5),
+    this.writeTimeout = const Duration(seconds: 12),
   }) : _firestore = firestore;
 
   final FirebaseFirestore? _firestore;
   final Duration activeThreshold;
+  final Duration writeTimeout;
 
   FirebaseFirestore get _db => _firestore ?? FirebaseFirestore.instance;
 
@@ -177,96 +194,51 @@ class PresenceService {
     );
   }
 
-  Stream<List<ActiveUserPresence>> watchActiveUsers({
+  Future<List<ActiveUserPresence>> fetchActiveUsers({
     required String workspaceId,
     int limit = 50,
-  }) {
-    late StreamSubscription<QuerySnapshot<Map<String, dynamic>>> subscription;
-    Timer? timer;
-    QuerySnapshot<Map<String, dynamic>>? latestSnapshot;
-
-    late StreamController<List<ActiveUserPresence>> controller;
-    controller = StreamController<List<ActiveUserPresence>>(
-      onListen: () {
-        void emit() {
-          final QuerySnapshot<Map<String, dynamic>>? snapshot = latestSnapshot;
-          if (snapshot == null || controller.isClosed) {
-            return;
-          }
-          controller.add(_activeUsersFromSnapshot(snapshot));
-        }
-
-        subscription = _presenceCollection(workspaceId)
+  }) async {
+    final QuerySnapshot<Map<String, dynamic>> snapshot =
+        await _presenceCollection(workspaceId)
             .where('isOnline', isEqualTo: true)
             .orderBy('lastSeenAt', descending: true)
             .limit(limit)
-            .snapshots()
-            .listen((QuerySnapshot<Map<String, dynamic>> snapshot) {
-              latestSnapshot = snapshot;
-              emit();
-            }, onError: controller.addError);
-        timer = Timer.periodic(const Duration(seconds: 30), (_) => emit());
-      },
-      onCancel: () async {
-        timer?.cancel();
-        await subscription.cancel();
-      },
-    );
-    return controller.stream;
-  }
-
-  List<ActiveUserPresence> _activeUsersFromSnapshot(
-    QuerySnapshot<Map<String, dynamic>> snapshot,
-  ) {
+            .get();
     final DateTime minLastSeen = DateTime.now().subtract(activeThreshold);
-    return snapshot.docs
+    final List<ActiveUserPresence> activeUsers = snapshot.docs
         .map(ActiveUserPresence.fromFirestore)
         .where((ActiveUserPresence user) {
           final DateTime? lastSeenAt = user.lastSeenAt;
           return lastSeenAt != null && lastSeenAt.isAfter(minLastSeen);
         })
         .toList(growable: false);
+    debugPrint(
+      '[Presence] fetchActiveUsers docs=${snapshot.docs.length} '
+      'active=${activeUsers.length}',
+    );
+    return activeUsers;
   }
 
-  Stream<List<UserActivitySession>> watchUserSessions({
+  Future<UserActivitySessionPage> fetchUserSessionsPage({
     required String workspaceId,
-    int limit = 100,
-  }) {
-    late StreamSubscription<QuerySnapshot<Map<String, dynamic>>> subscription;
-    Timer? timer;
-    QuerySnapshot<Map<String, dynamic>>? latestSnapshot;
-    late StreamController<List<UserActivitySession>> controller;
-
-    controller = StreamController<List<UserActivitySession>>(
-      onListen: () {
-        void emit() {
-          final QuerySnapshot<Map<String, dynamic>>? snapshot = latestSnapshot;
-          if (snapshot == null || controller.isClosed) {
-            return;
-          }
-          controller.add(
-            snapshot.docs
-                .map(UserActivitySession.fromFirestore)
-                .toList(growable: false),
-          );
-        }
-
-        subscription = _sessionsCollection(workspaceId)
-            .orderBy('loginAt', descending: true)
-            .limit(limit)
-            .snapshots()
-            .listen((QuerySnapshot<Map<String, dynamic>> snapshot) {
-              latestSnapshot = snapshot;
-              emit();
-            }, onError: controller.addError);
-        timer = Timer.periodic(const Duration(seconds: 30), (_) => emit());
-      },
-      onCancel: () async {
-        timer?.cancel();
-        await subscription.cancel();
-      },
+    int pageSize = 30,
+    DocumentSnapshot<Map<String, dynamic>>? startAfterDocument,
+  }) async {
+    Query<Map<String, dynamic>> query = _sessionsCollection(
+      workspaceId,
+    ).orderBy('loginAt', descending: true).limit(pageSize);
+    if (startAfterDocument != null) {
+      query = query.startAfterDocument(startAfterDocument);
+    }
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query.get();
+    final List<UserActivitySession> sessions = snapshot.docs
+        .map(UserActivitySession.fromFirestore)
+        .toList(growable: false);
+    return UserActivitySessionPage(
+      sessions: sessions,
+      lastDocument: snapshot.docs.isEmpty ? null : snapshot.docs.last,
+      hasMore: snapshot.docs.length == pageSize,
     );
-    return controller.stream;
   }
 
   Future<String?> markOnline({
@@ -276,123 +248,375 @@ class PresenceService {
   }) async {
     final String email = user.email ?? '';
     final String displayName = _displayNameFor(user);
+    final DateTime now = DateTime.now();
+    final String sessionId = _sessionsCollection(workspaceId).doc().id;
+    final DateTime activeSince = now;
+    debugPrint(
+      '[Presence] markOnline start '
+      'path=${FirestorePaths.workspacePresenceDoc(workspaceId, user.uid)} '
+      'uid=${user.uid} role=${role ?? ''}',
+    );
 
+    final bool presenceConfirmed = await _writePresence(
+      workspaceId: workspaceId,
+      user: user,
+      role: role,
+      sessionId: sessionId,
+      activeSince: activeSince,
+      now: now,
+      source: 'markOnline',
+    );
+    if (!presenceConfirmed) {
+      return null;
+    }
+
+    // Session history is best-effort and must never block presence startup.
+    unawaited(
+      _writeSessionHistory(
+        workspaceId: workspaceId,
+        user: user,
+        role: role,
+        sessionId: sessionId,
+        displayName: displayName,
+        email: email,
+        now: now,
+      ),
+    );
+
+    return sessionId;
+  }
+
+  Future<bool> _writePresence({
+    required String workspaceId,
+    required User user,
+    required String? role,
+    required String sessionId,
+    required DateTime activeSince,
+    required DateTime now,
+    required String source,
+  }) async {
+    final DocumentReference<Map<String, dynamic>> presenceRef = _presenceDoc(
+      workspaceId: workspaceId,
+      uid: user.uid,
+    );
     try {
-      final DateTime now = DateTime.now();
-      final QuerySnapshot<Map<String, dynamic>> activeSessions =
-          await _sessionsCollection(workspaceId)
-              .where('uid', isEqualTo: user.uid)
-              .where('isActive', isEqualTo: true)
-              .orderBy('lastSeenAt', descending: true)
-              .limit(10)
-              .get();
+      return await _setAndConfirmPresence(
+        presenceRef: presenceRef,
+        workspaceId: workspaceId,
+        user: user,
+        role: role,
+        sessionId: sessionId,
+        activeSince: activeSince,
+        now: now,
+        source: source,
+      );
+    } on TimeoutException catch (error, stackTrace) {
+      debugPrint('[Presence] $source presence write timeout=$error');
+      debugPrint('[Presence] $source presence write stack=$stackTrace');
+      return _writePresenceRest(
+        workspaceId: workspaceId,
+        user: user,
+        role: role,
+        sessionId: sessionId,
+        activeSince: activeSince,
+        now: DateTime.now(),
+        source: '$source rest',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[Presence] $source presence write error=$error');
+      debugPrint('[Presence] $source presence write stack=$stackTrace');
+      return false;
+    }
+  }
 
-      String? freshSessionId;
-      DateTime? freshActiveSince;
-      final WriteBatch staleBatch = _db.batch();
-      var staleWriteCount = 0;
-      for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
-          in activeSessions.docs) {
-        final UserActivitySession session = UserActivitySession.fromFirestore(
-          doc,
+  Future<bool> _setAndConfirmPresence({
+    required DocumentReference<Map<String, dynamic>> presenceRef,
+    required String workspaceId,
+    required User user,
+    required String? role,
+    required String sessionId,
+    required DateTime activeSince,
+    required DateTime now,
+    required String source,
+  }) async {
+    await presenceRef
+        .set(<String, Object?>{
+          'uid': user.uid,
+          'displayName': _displayNameFor(user),
+          'email': user.email ?? '',
+          'role': role ?? '',
+          'isOnline': true,
+          'activeSince': Timestamp.fromDate(activeSince),
+          'lastSeenAt': Timestamp.fromDate(now),
+          'currentSessionId': sessionId,
+          'platform': _platformLabel(),
+          'updatedAt': Timestamp.fromDate(now),
+        })
+        .timeout(writeTimeout);
+    debugPrint(
+      '[Presence] $source presence write success '
+      'workspace=$workspaceId sessionId=$sessionId',
+    );
+    final DocumentSnapshot<Map<String, dynamic>> confirmed = await presenceRef
+        .get(const GetOptions(source: Source.server))
+        .timeout(writeTimeout);
+    final DateTime? confirmedLastSeen = _readDateTime(
+      confirmed.data()?['lastSeenAt'],
+    );
+    debugPrint(
+      '[Presence] $source presence server confirm exists=${confirmed.exists} '
+      'lastSeenAt=${confirmedLastSeen?.toIso8601String() ?? 'null'}',
+    );
+    return confirmed.exists;
+  }
+
+  Future<bool> _writePresenceRest({
+    required String workspaceId,
+    required User user,
+    required String? role,
+    required String sessionId,
+    required DateTime activeSince,
+    required DateTime now,
+    required String source,
+  }) async {
+    try {
+      final String token = await user.getIdToken(true) ?? '';
+      final Uri uri = _firestoreDocumentUri(
+        FirestorePaths.workspacePresenceDoc(workspaceId, user.uid),
+      );
+      final http.Response response = await http
+          .patch(
+            uri,
+            headers: <String, String>{
+              'authorization': 'Bearer $token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, Object?>{
+              'fields': <String, Object?>{
+                'uid': _stringValue(user.uid),
+                'displayName': _stringValue(_displayNameFor(user)),
+                'email': _stringValue(user.email ?? ''),
+                'role': _stringValue(role ?? ''),
+                'isOnline': _boolValue(true),
+                'activeSince': _timestampValue(activeSince),
+                'lastSeenAt': _timestampValue(now),
+                'currentSessionId': _stringValue(sessionId),
+                'platform': _stringValue(_platformLabel()),
+                'updatedAt': _timestampValue(now),
+              },
+            }),
+          )
+          .timeout(writeTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        debugPrint(
+          '[Presence] $source presence REST write success '
+          'workspace=$workspaceId sessionId=$sessionId',
         );
-        final DateTime? lastSeenAt = session.lastSeenAt;
-        final DateTime? activeSince = session.activeSince ?? session.loginAt;
-        if (lastSeenAt == null || activeSince == null) {
-          continue;
-        }
-        if (session.isFresh(activeThreshold, now)) {
-          if (freshSessionId == null) {
-            freshSessionId = session.sessionId;
-            freshActiveSince = activeSince;
-            continue;
-          }
-          staleBatch.update(doc.reference, <String, Object?>{
-            'closedAt': Timestamp.fromDate(now),
-            'closeReason': 'session_replaced',
-            'activeDurationSeconds': _durationSeconds(activeSince, now),
-            'isActive': false,
-            'updatedAt': FieldValue.serverTimestamp(),
-          });
-          staleWriteCount += 1;
-          continue;
-        }
-
-        final DateTime closedAt = lastSeenAt.add(activeThreshold);
-        staleBatch.update(doc.reference, <String, Object?>{
-          'closedAt': Timestamp.fromDate(closedAt),
-          'closeReason': 'inactivity_timeout',
-          'activeDurationSeconds': _durationSeconds(activeSince, closedAt),
-          'isActive': false,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-        staleWriteCount += 1;
+        return true;
       }
-      if (staleWriteCount > 0) {
-        await staleBatch.commit();
-      }
+      debugPrint(
+        '[Presence] $source presence REST write failed '
+        'status=${response.statusCode} body=${response.body}',
+      );
+      return false;
+    } catch (error, stackTrace) {
+      debugPrint('[Presence] $source presence REST write error=$error');
+      debugPrint('[Presence] $source presence REST write stack=$stackTrace');
+      return false;
+    }
+  }
 
-      final String sessionId =
-          freshSessionId ?? _sessionsCollection(workspaceId).doc().id;
-      final DateTime activeSince = freshActiveSince ?? now;
-      final WriteBatch batch = _db.batch();
+  Uri _firestoreDocumentUri(String documentPath) {
+    final String projectId = Firebase.app().options.projectId;
+    return Uri.https(
+      'firestore.googleapis.com',
+      '/v1/projects/$projectId/databases/(default)/documents/$documentPath',
+    );
+  }
+
+  Map<String, String> _stringValue(String value) {
+    return <String, String>{'stringValue': value};
+  }
+
+  Map<String, bool> _boolValue(bool value) {
+    return <String, bool>{'booleanValue': value};
+  }
+
+  Map<String, String> _timestampValue(DateTime value) {
+    return <String, String>{'timestampValue': value.toUtc().toIso8601String()};
+  }
+
+  Map<String, String> _nullValue() {
+    return <String, String>{'nullValue': 'NULL_VALUE'};
+  }
+
+  Future<void> _writeSessionHistory({
+    required String workspaceId,
+    required User user,
+    required String? role,
+    required String sessionId,
+    required String displayName,
+    required String email,
+    required DateTime now,
+  }) async {
+    try {
+      await _closeExistingSessions(
+        workspaceId: workspaceId,
+        uid: user.uid,
+        currentSessionId: sessionId,
+        now: now,
+      );
       final DocumentReference<Map<String, dynamic>> sessionRef = _sessionDoc(
         workspaceId: workspaceId,
         sessionId: sessionId,
       );
-
-      if (freshSessionId == null) {
-        batch.set(sessionRef, <String, Object?>{
-          'sessionId': sessionId,
-          'uid': user.uid,
-          'displayName': displayName,
-          'email': email,
-          'role': role ?? '',
-          'loginAt': FieldValue.serverTimestamp(),
-          'activeSince': FieldValue.serverTimestamp(),
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'closedAt': null,
-          'closeReason': '',
-          'activeDurationSeconds': null,
-          'isActive': true,
-          'platform': _platformLabel(),
-          'userAgent': '',
-          'createdAt': FieldValue.serverTimestamp(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
-      } else {
-        batch.set(sessionRef, <String, Object?>{
-          'displayName': displayName,
-          'email': email,
-          'role': role ?? '',
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'isActive': true,
-          'updatedAt': FieldValue.serverTimestamp(),
-        }, SetOptions(merge: true));
-      }
-
-      batch.set(
-        _presenceDoc(workspaceId: workspaceId, uid: user.uid),
-        <String, Object?>{
-          'uid': user.uid,
-          'displayName': displayName,
-          'email': email,
-          'role': role ?? '',
-          'isOnline': true,
-          'activeSince': Timestamp.fromDate(activeSince),
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'currentSessionId': sessionId,
-          'platform': _platformLabel(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+      await sessionRef
+          .set(<String, Object?>{
+            'sessionId': sessionId,
+            'uid': user.uid,
+            'displayName': displayName,
+            'email': email,
+            'role': role ?? '',
+            'loginAt': FieldValue.serverTimestamp(),
+            'activeSince': FieldValue.serverTimestamp(),
+            'lastSeenAt': FieldValue.serverTimestamp(),
+            'closedAt': null,
+            'closeReason': '',
+            'activeDurationSeconds': null,
+            'isActive': true,
+            'platform': _platformLabel(),
+            'userAgent': '',
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          })
+          .timeout(writeTimeout);
+      debugPrint(
+        '[Presence] markOnline session create success '
+        'workspace=$workspaceId sessionId=$sessionId',
       );
-      await batch.commit();
-      return sessionId;
+    } on TimeoutException catch (error, stackTrace) {
+      debugPrint('[Presence] markOnline session write timeout=$error');
+      debugPrint('[Presence] markOnline session write stack=$stackTrace');
+      await _writeSessionHistoryRest(
+        workspaceId: workspaceId,
+        user: user,
+        role: role,
+        sessionId: sessionId,
+        displayName: displayName,
+        email: email,
+        now: now,
+      );
     } catch (error, stackTrace) {
-      debugPrint('[Presence] markOnline error=$error');
-      debugPrint('[Presence] markOnline stack=$stackTrace');
-      return null;
+      debugPrint('[Presence] markOnline session write error=$error');
+      debugPrint('[Presence] markOnline session write stack=$stackTrace');
+    }
+  }
+
+  Future<void> _writeSessionHistoryRest({
+    required String workspaceId,
+    required User user,
+    required String? role,
+    required String sessionId,
+    required String displayName,
+    required String email,
+    required DateTime now,
+  }) async {
+    try {
+      final String token = await user.getIdToken(true) ?? '';
+      final Uri uri = _firestoreDocumentUri(
+        FirestorePaths.workspaceUserSessionDoc(workspaceId, sessionId),
+      );
+      final http.Response response = await http
+          .patch(
+            uri,
+            headers: <String, String>{
+              'authorization': 'Bearer $token',
+              'content-type': 'application/json',
+            },
+            body: jsonEncode(<String, Object?>{
+              'fields': <String, Object?>{
+                'sessionId': _stringValue(sessionId),
+                'uid': _stringValue(user.uid),
+                'displayName': _stringValue(displayName),
+                'email': _stringValue(email),
+                'role': _stringValue(role ?? ''),
+                'loginAt': _timestampValue(now),
+                'activeSince': _timestampValue(now),
+                'lastSeenAt': _timestampValue(now),
+                'closedAt': _nullValue(),
+                'closeReason': _stringValue(''),
+                'activeDurationSeconds': _nullValue(),
+                'isActive': _boolValue(true),
+                'platform': _stringValue(_platformLabel()),
+                'userAgent': _stringValue(''),
+                'createdAt': _timestampValue(now),
+                'updatedAt': _timestampValue(now),
+              },
+            }),
+          )
+          .timeout(writeTimeout);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        debugPrint(
+          '[Presence] markOnline session REST create success '
+          'workspace=$workspaceId sessionId=$sessionId',
+        );
+        return;
+      }
+      debugPrint(
+        '[Presence] markOnline session REST write failed '
+        'status=${response.statusCode} body=${response.body}',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[Presence] markOnline session REST write error=$error');
+      debugPrint('[Presence] markOnline session REST write stack=$stackTrace');
+    }
+  }
+
+  Future<void> _closeExistingSessions({
+    required String workspaceId,
+    required String uid,
+    required String currentSessionId,
+    required DateTime now,
+  }) async {
+    final QuerySnapshot<Map<String, dynamic>> activeSessions =
+        await _sessionsCollection(workspaceId)
+            .where('uid', isEqualTo: uid)
+            .where('isActive', isEqualTo: true)
+            .orderBy('lastSeenAt', descending: true)
+            .limit(10)
+            .get();
+
+    final WriteBatch staleBatch = _db.batch();
+    var staleWriteCount = 0;
+    for (final QueryDocumentSnapshot<Map<String, dynamic>> doc
+        in activeSessions.docs) {
+      final UserActivitySession session = UserActivitySession.fromFirestore(
+        doc,
+      );
+      if (session.sessionId == currentSessionId) {
+        continue;
+      }
+      final DateTime? lastSeenAt = session.lastSeenAt;
+      final DateTime? activeSince = session.activeSince ?? session.loginAt;
+      if (lastSeenAt == null || activeSince == null) {
+        continue;
+      }
+      final DateTime closedAt = session.isFresh(activeThreshold, now)
+          ? now
+          : lastSeenAt.add(activeThreshold);
+      staleBatch.update(doc.reference, <String, Object?>{
+        'closedAt': Timestamp.fromDate(closedAt),
+        'closeReason': session.isFresh(activeThreshold, now)
+            ? 'session_replaced'
+            : 'inactivity_timeout',
+        'activeDurationSeconds': _durationSeconds(activeSince, closedAt),
+        'isActive': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      staleWriteCount += 1;
+    }
+    if (staleWriteCount > 0) {
+      await staleBatch.commit();
     }
   }
 
@@ -402,39 +626,62 @@ class PresenceService {
     required String? role,
     required String sessionId,
   }) async {
+    final DateTime now = DateTime.now();
     try {
-      final WriteBatch batch = _db.batch();
-      batch.set(
-        _presenceDoc(workspaceId: workspaceId, uid: user.uid),
-        <String, Object?>{
-          'uid': user.uid,
-          'displayName': _displayNameFor(user),
-          'email': user.email ?? '',
-          'role': role ?? '',
-          'isOnline': true,
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'currentSessionId': sessionId,
-          'platform': _platformLabel(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+      await _presenceDoc(workspaceId: workspaceId, uid: user.uid)
+          .set(<String, Object?>{
+            'uid': user.uid,
+            'displayName': _displayNameFor(user),
+            'email': user.email ?? '',
+            'role': role ?? '',
+            'isOnline': true,
+            'lastSeenAt': Timestamp.fromDate(now),
+            'currentSessionId': sessionId,
+            'platform': _platformLabel(),
+            'updatedAt': Timestamp.fromDate(now),
+          }, SetOptions(merge: true))
+          .timeout(writeTimeout);
+      debugPrint(
+        '[Presence] heartbeat presence write success '
+        'workspace=$workspaceId sessionId=$sessionId',
       );
-      batch.set(
-        _sessionDoc(workspaceId: workspaceId, sessionId: sessionId),
-        <String, Object?>{
-          'displayName': _displayNameFor(user),
-          'email': user.email ?? '',
-          'role': role ?? '',
-          'lastSeenAt': FieldValue.serverTimestamp(),
-          'isActive': true,
-          'updatedAt': FieldValue.serverTimestamp(),
-        },
-        SetOptions(merge: true),
+    } on TimeoutException catch (error, stackTrace) {
+      debugPrint('[Presence] heartbeat presence write timeout=$error');
+      debugPrint('[Presence] heartbeat presence write stack=$stackTrace');
+      await _writePresenceRest(
+        workspaceId: workspaceId,
+        user: user,
+        role: role,
+        sessionId: sessionId,
+        activeSince: now,
+        now: now,
+        source: 'heartbeat rest',
       );
-      await batch.commit();
     } catch (error, stackTrace) {
-      debugPrint('[Presence] heartbeat error=$error');
-      debugPrint('[Presence] heartbeat stack=$stackTrace');
+      debugPrint('[Presence] heartbeat presence write error=$error');
+      debugPrint('[Presence] heartbeat presence write stack=$stackTrace');
+      return;
+    }
+
+    try {
+      await _sessionDoc(
+        workspaceId: workspaceId,
+        sessionId: sessionId,
+      ).set(<String, Object?>{
+        'displayName': _displayNameFor(user),
+        'email': user.email ?? '',
+        'role': role ?? '',
+        'lastSeenAt': FieldValue.serverTimestamp(),
+        'isActive': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      debugPrint(
+        '[Presence] heartbeat session write success '
+        'workspace=$workspaceId sessionId=$sessionId',
+      );
+    } catch (error, stackTrace) {
+      debugPrint('[Presence] heartbeat session write error=$error');
+      debugPrint('[Presence] heartbeat session write stack=$stackTrace');
     }
   }
 

@@ -1,84 +1,332 @@
+import 'dart:async';
+
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 import '../services/presence_service.dart';
 import '../services/user_management_service.dart';
 
-class ActiveUsersEye extends StatelessWidget {
+class ActiveUsersEye extends StatefulWidget {
   const ActiveUsersEye({
     super.key,
     required this.workspaceId,
+    required this.currentUser,
+    required this.currentRole,
     this.service = const PresenceService(),
   });
 
   final String workspaceId;
+  final User currentUser;
+  final String? currentRole;
   final PresenceService service;
 
   @override
+  State<ActiveUsersEye> createState() => _ActiveUsersEyeState();
+}
+
+class _ActiveUsersEyeState extends State<ActiveUsersEye>
+    with WidgetsBindingObserver {
+  static const Duration _badgeRefreshInterval = Duration(minutes: 5);
+  static const Duration _countdownTick = Duration(seconds: 1);
+
+  int _lastKnownCount = 1;
+  bool _hasLoadError = false;
+  bool _appVisible = true;
+  bool _dialogOpen = false;
+  bool _badgeRequestInFlight = false;
+  DateTime? _nextBadgeRefreshAt;
+  Timer? _badgeRefreshTimer;
+  Timer? _countdownTimer;
+  String _countdownLabel = '--:--';
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    final AppLifecycleState? lifecycleState =
+        WidgetsBinding.instance.lifecycleState;
+    _appVisible =
+        lifecycleState == null || lifecycleState == AppLifecycleState.resumed;
+    if (_appVisible) {
+      _startCountdown();
+      unawaited(_refreshBadgeCount());
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant ActiveUsersEye oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspaceId != widget.workspaceId ||
+        oldWidget.service != widget.service) {
+      _cancelBadgeRefreshTimer();
+      _nextBadgeRefreshAt = null;
+      if (_appVisible && !_dialogOpen) {
+        unawaited(_refreshBadgeCount());
+      }
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final bool visible = state == AppLifecycleState.resumed;
+    if (_appVisible == visible) {
+      return;
+    }
+    _appVisible = visible;
+    if (!visible) {
+      _cancelBadgeRefreshTimer();
+      _stopCountdown();
+      return;
+    }
+    _startCountdown();
+    if (_isBadgeRefreshDue) {
+      unawaited(_refreshBadgeCount());
+    } else {
+      _scheduleNextBadgeRefresh();
+      _updateCountdownLabel();
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _cancelBadgeRefreshTimer();
+    _stopCountdown();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<ActiveUserPresence>>(
-      stream: service.watchActiveUsers(workspaceId: workspaceId),
-      builder:
-          (
-            BuildContext context,
-            AsyncSnapshot<List<ActiveUserPresence>> snapshot,
-          ) {
-            final List<ActiveUserPresence> users =
-                snapshot.data ?? const <ActiveUserPresence>[];
-            final int count = users.length;
-            return Stack(
-              clipBehavior: Clip.none,
-              children: [
-                IconButton.filledTonal(
-                  onPressed: () => showDialog<void>(
-                    context: context,
-                    builder: (BuildContext context) => _ActiveUsersDialog(
-                      workspaceId: workspaceId,
-                      service: service,
-                    ),
-                  ),
-                  style: IconButton.styleFrom(
-                    backgroundColor: const Color(0xFF111827),
-                    foregroundColor: const Color(0xFFE5E7EB),
-                    side: const BorderSide(color: Color(0xFF334155)),
-                    padding: const EdgeInsets.all(11),
-                    minimumSize: const Size.square(42),
-                  ),
-                  tooltip: 'Usuarios activos',
-                  icon: const Icon(Icons.visibility_rounded, size: 21),
-                ),
-                Positioned(
-                  right: -4,
-                  top: -5,
-                  child: _PresenceBadge(count: count),
-                ),
-              ],
-            );
-          },
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Stack(
+          clipBehavior: Clip.none,
+          children: [
+            IconButton.filledTonal(
+              onPressed: _openDialog,
+              style: IconButton.styleFrom(
+                backgroundColor: const Color(0xFF111827),
+                foregroundColor: const Color(0xFFE5E7EB),
+                side: const BorderSide(color: Color(0xFF334155)),
+                padding: const EdgeInsets.all(11),
+                minimumSize: const Size.square(42),
+              ),
+              tooltip: 'Usuarios activos',
+              icon: const Icon(Icons.visibility_rounded, size: 21),
+            ),
+            Positioned(
+              right: -4,
+              top: -5,
+              child: _PresenceBadge(
+                count: _lastKnownCount,
+                hasError: _hasLoadError,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 1),
+        SizedBox(
+          height: 10,
+          child: Text(
+            _appVisible ? _countdownLabel : 'pausa',
+            maxLines: 1,
+            style: const TextStyle(
+              color: Color(0xFF64748B),
+              fontSize: 9,
+              fontWeight: FontWeight.w700,
+              height: 1,
+            ),
+          ),
+        ),
+      ],
     );
+  }
+
+  Future<void> _openDialog() async {
+    _dialogOpen = true;
+    _cancelBadgeRefreshTimer();
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => _ActiveUsersDialog(
+        workspaceId: widget.workspaceId,
+        currentUser: widget.currentUser,
+        currentRole: widget.currentRole,
+        service: widget.service,
+        onActiveUsersChanged: _handleActiveUsersChanged,
+        onActiveUsersError: _handleActiveUsersError,
+      ),
+    );
+    _dialogOpen = false;
+    if (_appVisible) {
+      if (_isBadgeRefreshDue) {
+        unawaited(_refreshBadgeCount());
+      } else {
+        _scheduleNextBadgeRefresh();
+      }
+    }
+  }
+
+  void _handleActiveUsersChanged(List<ActiveUserPresence> users) {
+    if (!mounted) {
+      return;
+    }
+    _markBadgeFresh(users.length);
+  }
+
+  void _handleActiveUsersError(Object error) {
+    debugPrint('[Presence] active users load error=$error');
+    if (!mounted) {
+      return;
+    }
+    _markBadgeError();
+  }
+
+  bool get _isBadgeRefreshDue {
+    final DateTime? next = _nextBadgeRefreshAt;
+    return next == null || !DateTime.now().isBefore(next);
+  }
+
+  List<ActiveUserPresence> _withCurrentUser(List<ActiveUserPresence> users) {
+    if (users.any(
+      (ActiveUserPresence user) => user.uid == widget.currentUser.uid,
+    )) {
+      return users;
+    }
+    return <ActiveUserPresence>[
+      _presenceForCurrentUser(widget.currentUser, widget.currentRole),
+      ...users,
+    ];
+  }
+
+  Future<void> _refreshBadgeCount() async {
+    if (!_appVisible || _dialogOpen || _badgeRequestInFlight) {
+      return;
+    }
+    _badgeRequestInFlight = true;
+    try {
+      final List<ActiveUserPresence> loaded = await widget.service
+          .fetchActiveUsers(workspaceId: widget.workspaceId);
+      if (!mounted || !_appVisible || _dialogOpen) {
+        return;
+      }
+      _markBadgeFresh(_withCurrentUser(loaded).length);
+    } catch (error) {
+      debugPrint('[Presence] badge refresh error=$error');
+      if (!mounted || !_appVisible || _dialogOpen) {
+        return;
+      }
+      _markBadgeError();
+    } finally {
+      _badgeRequestInFlight = false;
+    }
+  }
+
+  void _markBadgeFresh(int count) {
+    _nextBadgeRefreshAt = DateTime.now().add(_badgeRefreshInterval);
+    setState(() {
+      _lastKnownCount = count;
+      _hasLoadError = false;
+    });
+    _updateCountdownLabel();
+    if (_appVisible && !_dialogOpen) {
+      _scheduleNextBadgeRefresh();
+    }
+  }
+
+  void _markBadgeError() {
+    _nextBadgeRefreshAt = DateTime.now().add(_badgeRefreshInterval);
+    setState(() {
+      _hasLoadError = true;
+    });
+    _updateCountdownLabel();
+    if (_appVisible && !_dialogOpen) {
+      _scheduleNextBadgeRefresh();
+    }
+  }
+
+  void _scheduleNextBadgeRefresh() {
+    _cancelBadgeRefreshTimer();
+    if (!_appVisible || _dialogOpen) {
+      return;
+    }
+    final DateTime next = _nextBadgeRefreshAt ?? DateTime.now();
+    final Duration delay = next.difference(DateTime.now());
+    _badgeRefreshTimer = Timer(
+      delay.isNegative ? Duration.zero : delay,
+      () => unawaited(_refreshBadgeCount()),
+    );
+  }
+
+  void _cancelBadgeRefreshTimer() {
+    _badgeRefreshTimer?.cancel();
+    _badgeRefreshTimer = null;
+  }
+
+  void _startCountdown() {
+    _countdownTimer ??= Timer.periodic(
+      _countdownTick,
+      (_) => _updateCountdownLabel(),
+    );
+    _updateCountdownLabel();
+  }
+
+  void _stopCountdown() {
+    _countdownTimer?.cancel();
+    _countdownTimer = null;
+  }
+
+  void _updateCountdownLabel() {
+    if (!mounted) {
+      return;
+    }
+    final DateTime? next = _nextBadgeRefreshAt;
+    final String label;
+    if (!_appVisible) {
+      label = _countdownLabel;
+    } else if (next == null) {
+      label = '--:--';
+    } else {
+      final Duration remaining = next.difference(DateTime.now());
+      final int totalSeconds = remaining.isNegative ? 0 : remaining.inSeconds;
+      final int minutes = totalSeconds ~/ 60;
+      final int seconds = totalSeconds % 60;
+      label =
+          '${minutes.toString().padLeft(2, '0')}:'
+          '${seconds.toString().padLeft(2, '0')}';
+    }
+    setState(() {
+      _countdownLabel = label;
+    });
   }
 }
 
 class _PresenceBadge extends StatelessWidget {
-  const _PresenceBadge({required this.count});
+  const _PresenceBadge({required this.count, required this.hasError});
 
   final int count;
+  final bool hasError;
 
   @override
   Widget build(BuildContext context) {
-    final String label = count > 99 ? '99+' : count.toString();
+    final String label = hasError
+        ? '!'
+        : count > 99
+        ? '99+'
+        : count.toString();
     return Container(
       constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
       padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
       decoration: BoxDecoration(
-        color: const Color(0xFF38BDF8),
+        color: hasError ? const Color(0xFFF87171) : const Color(0xFF38BDF8),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(color: const Color(0xFF0F172A), width: 2),
       ),
       alignment: Alignment.center,
       child: Text(
         label,
-        style: const TextStyle(
-          color: Color(0xFF082F49),
+        style: TextStyle(
+          color: hasError ? const Color(0xFF450A0A) : const Color(0xFF082F49),
           fontSize: 10,
           fontWeight: FontWeight.w800,
         ),
@@ -87,114 +335,297 @@ class _PresenceBadge extends StatelessWidget {
   }
 }
 
-class _ActiveUsersDialog extends StatelessWidget {
-  const _ActiveUsersDialog({required this.workspaceId, required this.service});
+class _ActiveUsersDialog extends StatefulWidget {
+  const _ActiveUsersDialog({
+    required this.workspaceId,
+    required this.currentUser,
+    required this.currentRole,
+    required this.service,
+    required this.onActiveUsersChanged,
+    required this.onActiveUsersError,
+  });
 
   final String workspaceId;
+  final User currentUser;
+  final String? currentRole;
   final PresenceService service;
+  final ValueChanged<List<ActiveUserPresence>> onActiveUsersChanged;
+  final ValueChanged<Object> onActiveUsersError;
+
+  @override
+  State<_ActiveUsersDialog> createState() => _ActiveUsersDialogState();
+}
+
+class _ActiveUsersDialogState extends State<_ActiveUsersDialog>
+    with SingleTickerProviderStateMixin {
+  static const Duration _autoCloseDelay = Duration(seconds: 25);
+
+  late final TabController _tabController;
+  Timer? _autoCloseTimer;
+  int _tabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+    _tabController.addListener(_handleTabChange);
+    _autoCloseTimer = Timer(_autoCloseDelay, _closeIfOpen);
+  }
+
+  @override
+  void dispose() {
+    _autoCloseTimer?.cancel();
+    _tabController.removeListener(_handleTabChange);
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  void _handleTabChange() {
+    if (_tabController.indexIsChanging || _tabController.index != _tabIndex) {
+      setState(() {
+        _tabIndex = _tabController.index;
+      });
+    }
+  }
+
+  void _closeIfOpen() {
+    if (!mounted) {
+      return;
+    }
+    Navigator.of(context).pop();
+  }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: AlertDialog(
-        backgroundColor: const Color(0xFF111827),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Text(
-          'Usuarios',
-          style: TextStyle(color: Color(0xFFE5E7EB)),
-        ),
-        content: SizedBox(
-          width: 720,
-          height: 520,
-          child: Column(
-            children: [
-              const TabBar(
-                tabs: [
-                  Tab(text: 'Activos'),
-                  Tab(text: 'Historial'),
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('Usuarios', style: TextStyle(color: Color(0xFFE5E7EB))),
+      content: SizedBox(
+        width: 720,
+        height: 520,
+        child: Column(
+          children: [
+            TabBar(
+              controller: _tabController,
+              tabs: const [
+                Tab(text: 'Activos'),
+                Tab(text: 'Historial'),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Expanded(
+              child: TabBarView(
+                controller: _tabController,
+                children: [
+                  _ActiveUsersView(
+                    active: _tabIndex == 0,
+                    workspaceId: widget.workspaceId,
+                    currentUser: widget.currentUser,
+                    currentRole: widget.currentRole,
+                    service: widget.service,
+                    onUsersChanged: widget.onActiveUsersChanged,
+                    onLoadError: widget.onActiveUsersError,
+                  ),
+                  _SessionHistoryView(
+                    active: _tabIndex == 1,
+                    workspaceId: widget.workspaceId,
+                    service: widget.service,
+                  ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: TabBarView(
-                  children: [
-                    _ActiveUsersView(
-                      workspaceId: workspaceId,
-                      service: service,
-                    ),
-                    _SessionHistoryView(
-                      workspaceId: workspaceId,
-                      service: service,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cerrar'),
-          ),
-        ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+      ],
     );
   }
 }
 
-class _ActiveUsersView extends StatelessWidget {
-  const _ActiveUsersView({required this.workspaceId, required this.service});
+class _ActiveUsersView extends StatefulWidget {
+  const _ActiveUsersView({
+    required this.active,
+    required this.workspaceId,
+    required this.currentUser,
+    required this.currentRole,
+    required this.service,
+    required this.onUsersChanged,
+    required this.onLoadError,
+  });
 
+  final bool active;
   final String workspaceId;
+  final User currentUser;
+  final String? currentRole;
   final PresenceService service;
+  final ValueChanged<List<ActiveUserPresence>> onUsersChanged;
+  final ValueChanged<Object> onLoadError;
+
+  @override
+  State<_ActiveUsersView> createState() => _ActiveUsersViewState();
+}
+
+class _ActiveUsersViewState extends State<_ActiveUsersView> {
+  static const Duration _refreshInterval = Duration(seconds: 15);
+
+  Timer? _refreshTimer;
+  List<ActiveUserPresence>? _users;
+  Object? _error;
+  bool _loading = true;
+  int _requestGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) {
+      _startPolling();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _ActiveUsersView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.active != widget.active) {
+      if (widget.active) {
+        _startPolling();
+      } else {
+        _stopPolling();
+      }
+    }
+    if (oldWidget.workspaceId != widget.workspaceId ||
+        oldWidget.service != widget.service) {
+      _requestGeneration += 1;
+      setState(() {
+        _users = null;
+        _error = null;
+        _loading = true;
+      });
+      if (widget.active) {
+        _loadUsers();
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _stopPolling();
+    _requestGeneration += 1;
+    super.dispose();
+  }
+
+  void _startPolling() {
+    if (_refreshTimer != null) {
+      return;
+    }
+    _loadUsers();
+    _refreshTimer = Timer.periodic(_refreshInterval, (_) => _loadUsers());
+  }
+
+  void _stopPolling() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    _requestGeneration += 1;
+  }
+
+  Future<void> _loadUsers() async {
+    final int generation = _requestGeneration;
+    try {
+      final List<ActiveUserPresence> loaded = await widget.service
+          .fetchActiveUsers(workspaceId: widget.workspaceId);
+      final List<ActiveUserPresence> users = _withCurrentUser(loaded);
+      if (!mounted || generation != _requestGeneration) {
+        return;
+      }
+      setState(() {
+        _users = users;
+        _error = null;
+        _loading = false;
+      });
+      widget.onUsersChanged(users);
+    } catch (error) {
+      if (!mounted || generation != _requestGeneration) {
+        return;
+      }
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
+      widget.onLoadError(error);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<ActiveUserPresence>>(
-      stream: service.watchActiveUsers(workspaceId: workspaceId),
-      builder:
-          (
-            BuildContext context,
-            AsyncSnapshot<List<ActiveUserPresence>> snapshot,
-          ) {
-            if (snapshot.connectionState == ConnectionState.waiting &&
-                !snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(
-                child: Text(
-                  'Error al cargar usuarios activos:\n${snapshot.error}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Color(0xFFFCA5A5)),
-                ),
-              );
-            }
+    if (_loading && _users == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _users == null) {
+      return Center(
+        child: Text(
+          'Error al cargar usuarios activos:\n$_error',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xFFFCA5A5)),
+        ),
+      );
+    }
 
-            final List<ActiveUserPresence> users =
-                snapshot.data ?? const <ActiveUserPresence>[];
-            if (users.isEmpty) {
-              return const Center(
-                child: Text(
-                  'No hay usuarios activos',
-                  style: TextStyle(color: Color(0xFF94A3B8)),
-                ),
-              );
-            }
+    final List<ActiveUserPresence> users =
+        _users ?? const <ActiveUserPresence>[];
+    if (users.isEmpty) {
+      return const Center(
+        child: Text(
+          'No hay usuarios activos',
+          style: TextStyle(color: Color(0xFF94A3B8)),
+        ),
+      );
+    }
 
-            return ListView.separated(
-              itemCount: users.length,
-              separatorBuilder: (BuildContext context, int index) =>
-                  const SizedBox(height: 8),
-              itemBuilder: (BuildContext context, int index) {
-                return _ActiveUserTile(user: users[index]);
-              },
-            );
-          },
+    return ListView.separated(
+      itemCount: users.length,
+      separatorBuilder: (BuildContext context, int index) =>
+          const SizedBox(height: 8),
+      itemBuilder: (BuildContext context, int index) {
+        return _ActiveUserTile(user: users[index]);
+      },
     );
   }
+
+  List<ActiveUserPresence> _withCurrentUser(List<ActiveUserPresence> users) {
+    if (users.any(
+      (ActiveUserPresence user) => user.uid == widget.currentUser.uid,
+    )) {
+      return users;
+    }
+    return <ActiveUserPresence>[
+      _presenceForCurrentUser(widget.currentUser, widget.currentRole),
+      ...users,
+    ];
+  }
+}
+
+ActiveUserPresence _presenceForCurrentUser(User user, String? role) {
+  final DateTime now = DateTime.now();
+  final String email = user.email ?? '';
+  final String displayName = user.displayName?.trim().isNotEmpty == true
+      ? user.displayName!.trim()
+      : email.contains('@')
+      ? email.substring(0, email.indexOf('@'))
+      : user.uid;
+  return ActiveUserPresence(
+    uid: user.uid,
+    displayName: displayName,
+    email: email,
+    role: role ?? '',
+    currentSessionId: '',
+    activeSince: now,
+    lastSeenAt: now,
+  );
 }
 
 class _ActiveUserTile extends StatelessWidget {
@@ -286,8 +717,13 @@ class _ActiveUserTile extends StatelessWidget {
 enum _HistoryViewMode { porEvento, porUsuario }
 
 class _SessionHistoryView extends StatefulWidget {
-  const _SessionHistoryView({required this.workspaceId, required this.service});
+  const _SessionHistoryView({
+    required this.active,
+    required this.workspaceId,
+    required this.service,
+  });
 
+  final bool active;
   final String workspaceId;
   final PresenceService service;
 
@@ -296,91 +732,200 @@ class _SessionHistoryView extends StatefulWidget {
 }
 
 class _SessionHistoryViewState extends State<_SessionHistoryView> {
+  static const int _pageSize = 30;
+
   _HistoryViewMode _mode = _HistoryViewMode.porEvento;
+  final List<UserActivitySession> _sessions = <UserActivitySession>[];
+  UserActivitySessionPage? _lastPage;
+  bool _loading = false;
+  bool _hasMore = true;
+  Object? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) {
+      _loadSessions();
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _SessionHistoryView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.workspaceId != widget.workspaceId ||
+        oldWidget.service != widget.service) {
+      _resetSessions();
+    }
+    if (oldWidget.active != widget.active &&
+        widget.active &&
+        _sessions.isEmpty) {
+      _loadSessions();
+    }
+  }
+
+  void _resetSessions() {
+    _sessions.clear();
+    _lastPage = null;
+    _loading = false;
+    _hasMore = true;
+    _error = null;
+    if (widget.active) {
+      _loadSessions();
+    }
+  }
+
+  Future<void> _loadSessions() async {
+    if (_loading || !_hasMore) {
+      return;
+    }
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final UserActivitySessionPage page = await widget.service
+          .fetchUserSessionsPage(
+            workspaceId: widget.workspaceId,
+            pageSize: _pageSize,
+            startAfterDocument: _lastPage?.lastDocument,
+          );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _sessions.addAll(page.sessions);
+        _lastPage = page;
+        _hasMore = page.hasMore;
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _error = error;
+        _loading = false;
+      });
+    }
+  }
+
+  Widget _buildLoadMoreButton() {
+    if (_loading) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 12),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (!_hasMore) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 10),
+        child: Center(
+          child: Text(
+            'No hay mas sesiones',
+            style: TextStyle(color: Color(0xFF64748B), fontSize: 12),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 10),
+      child: Center(
+        child: TextButton(
+          onPressed: _loadSessions,
+          child: const Text('Cargar mas'),
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<List<UserActivitySession>>(
-      stream: widget.service.watchUserSessions(workspaceId: widget.workspaceId),
-      builder: (
-        BuildContext context,
-        AsyncSnapshot<List<UserActivitySession>> snapshot,
-      ) {
-        if (snapshot.connectionState == ConnectionState.waiting &&
-            !snapshot.hasData) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(
-            child: Text(
-              'Error al cargar historial:\n${snapshot.error}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFFFCA5A5)),
-            ),
-          );
-        }
+    if (_loading && _sessions.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_error != null && _sessions.isEmpty) {
+      return Center(
+        child: Text(
+          'Error al cargar historial:\n$_error',
+          textAlign: TextAlign.center,
+          style: const TextStyle(color: Color(0xFFFCA5A5)),
+        ),
+      );
+    }
 
-        final List<UserActivitySession> sessions =
-            snapshot.data ?? const <UserActivitySession>[];
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
           children: <Widget>[
-            Row(
-              children: <Widget>[
-                _ViewModeButton(
-                  icon: Icons.timeline_rounded,
-                  label: 'Por evento',
-                  selected: _mode == _HistoryViewMode.porEvento,
-                  isFirst: true,
-                  isLast: false,
-                  onTap: () =>
-                      setState(() => _mode = _HistoryViewMode.porEvento),
-                ),
-                _ViewModeButton(
-                  icon: Icons.people_alt_rounded,
-                  label: 'Por usuario',
-                  selected: _mode == _HistoryViewMode.porUsuario,
-                  isFirst: false,
-                  isLast: true,
-                  onTap: () =>
-                      setState(() => _mode = _HistoryViewMode.porUsuario),
-                ),
-              ],
+            _ViewModeButton(
+              icon: Icons.timeline_rounded,
+              label: 'Por evento',
+              selected: _mode == _HistoryViewMode.porEvento,
+              isFirst: true,
+              isLast: false,
+              onTap: () => setState(() => _mode = _HistoryViewMode.porEvento),
             ),
-            const SizedBox(height: 12),
-            if (sessions.isEmpty)
-              const Expanded(
-                child: Center(
-                  child: Text(
-                    'No hay ingresos registrados',
-                    style: TextStyle(color: Color(0xFF94A3B8)),
+            _ViewModeButton(
+              icon: Icons.people_alt_rounded,
+              label: 'Por usuario',
+              selected: _mode == _HistoryViewMode.porUsuario,
+              isFirst: false,
+              isLast: true,
+              onTap: () => setState(() => _mode = _HistoryViewMode.porUsuario),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Text(
+              'Error al cargar mas sesiones: $_error',
+              style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 12),
+            ),
+          ),
+        if (_sessions.isEmpty)
+          const Expanded(
+            child: Center(
+              child: Text(
+                'No hay ingresos registrados',
+                style: TextStyle(color: Color(0xFF94A3B8)),
+              ),
+            ),
+          )
+        else if (_mode == _HistoryViewMode.porEvento)
+          Expanded(
+            child: ListView.separated(
+              itemCount: _sessions.length + 1,
+              separatorBuilder: (BuildContext context, int index) =>
+                  const SizedBox(height: 8),
+              itemBuilder: (BuildContext context, int index) {
+                if (index == _sessions.length) {
+                  return _buildLoadMoreButton();
+                }
+                return _SessionTile(
+                  session: _sessions[index],
+                  service: widget.service,
+                );
+              },
+            ),
+          )
+        else
+          Expanded(
+            child: Column(
+              children: [
+                Expanded(
+                  child: _SessionsByUserView(
+                    sessions: _sessions,
+                    service: widget.service,
                   ),
                 ),
-              )
-            else if (_mode == _HistoryViewMode.porEvento)
-              Expanded(
-                child: ListView.separated(
-                  itemCount: sessions.length,
-                  separatorBuilder: (BuildContext context, int index) =>
-                      const SizedBox(height: 8),
-                  itemBuilder: (BuildContext context, int index) =>
-                      _SessionTile(
-                        session: sessions[index],
-                        service: widget.service,
-                      ),
-                ),
-              )
-            else
-              Expanded(
-                child: _SessionsByUserView(
-                  sessions: sessions,
-                  service: widget.service,
-                ),
-              ),
-          ],
-        );
-      },
+                _buildLoadMoreButton(),
+              ],
+            ),
+          ),
+      ],
     );
   }
 }
@@ -513,7 +1058,9 @@ class _ViewModeButton extends StatelessWidget {
             Icon(
               icon,
               size: 15,
-              color: selected ? const Color(0xFF38BDF8) : const Color(0xFF64748B),
+              color: selected
+                  ? const Color(0xFF38BDF8)
+                  : const Color(0xFF64748B),
             ),
             const SizedBox(width: 6),
             Text(
@@ -523,8 +1070,7 @@ class _ViewModeButton extends StatelessWidget {
                     ? const Color(0xFF38BDF8)
                     : const Color(0xFF64748B),
                 fontSize: 12,
-                fontWeight:
-                    selected ? FontWeight.w700 : FontWeight.w500,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
               ),
             ),
           ],
@@ -535,10 +1081,7 @@ class _ViewModeButton extends StatelessWidget {
 }
 
 class _SessionsByUserView extends StatelessWidget {
-  const _SessionsByUserView({
-    required this.sessions,
-    required this.service,
-  });
+  const _SessionsByUserView({required this.sessions, required this.service});
 
   final List<UserActivitySession> sessions;
   final PresenceService service;
@@ -596,8 +1139,7 @@ class _UserSessionGroup extends StatelessWidget {
       child: Theme(
         data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
         child: ExpansionTile(
-          tilePadding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
           childrenPadding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
           backgroundColor: const Color(0xFF0F172A),
           collapsedBackgroundColor: const Color(0xFF0F172A),
@@ -636,8 +1178,7 @@ class _UserSessionGroup extends StatelessWidget {
               _RolePill(role: first.role),
               const SizedBox(width: 8),
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E293B),
                   borderRadius: BorderRadius.circular(999),
@@ -656,10 +1197,8 @@ class _UserSessionGroup extends StatelessWidget {
           ),
           children: sessions
               .map(
-                (UserActivitySession s) => _SessionTileCompact(
-                  session: s,
-                  service: service,
-                ),
+                (UserActivitySession s) =>
+                    _SessionTileCompact(session: s, service: service),
               )
               .toList(),
         ),
@@ -702,19 +1241,13 @@ class _SessionTileCompact extends StatelessWidget {
         spacing: 12,
         runSpacing: 4,
         children: <Widget>[
-          _MetaText(
-            label: 'Inicio',
-            value: _formatDateTime(session.loginAt),
-          ),
+          _MetaText(label: 'Inicio', value: _formatDateTime(session.loginAt)),
           _MetaText(label: 'Cierre', value: _formatDateTime(closedAt)),
           _MetaText(
             label: 'Duración',
             value: _formatDurationSeconds(durationSeconds),
           ),
-          _MetaText(
-            label: 'Motivo',
-            value: reason.isEmpty ? 'activa' : reason,
-          ),
+          _MetaText(label: 'Motivo', value: reason.isEmpty ? 'activa' : reason),
         ],
       ),
     );

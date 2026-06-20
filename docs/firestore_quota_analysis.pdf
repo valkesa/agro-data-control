@@ -1,0 +1,344 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 8 0 R >> >> /Contents 3 0 R >>
+endobj
+3 0 obj
+<< /Length 1866 >>
+stream
+BT
+/F1 11 Tf
+50 790 Td
+14 TL
+/F1 16 Tf
+(Analisis de consumo de cuota de Firestore) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(Proyecto: agro-data-control) Tj
+T*
+() Tj
+T*
+(Fecha: 2 de junio de 2026) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Resumen ejecutivo) Tj
+T*
+() Tj
+T*
+(El problema del indicador de usuarios conectados y del historial no fue una falla visual del) Tj
+T*
+(ojito. El sistema alcanzo el limite diario de escrituras de Cloud Firestore en el plan) Tj
+T*
+(Spark.) Tj
+T*
+() Tj
+T*
+(Cloud Firestore writes: 20k / 20k por dia. Error observado: 429 RESOURCE_EXHAUSTED - Quota) Tj
+T*
+(exceeded.) Tj
+T*
+() Tj
+T*
+(Cuando Firestore queda sin cuota, el SDK web deja escrituras en estado local pending. Por) Tj
+T*
+(eso cada usuario puede verse a si mismo, pero otros usuarios no lo ven: el dato nunca llega) Tj
+T*
+(al servidor.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Hallazgo principal) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(El mayor consumidor potencial de cuota son los heartbeats de runtimeEvents generados por el) Tj
+T*
+(backend.) Tj
+T*
+() Tj
+T*
+(El backend toma datos del PLC cada 5 segundos: pollingIntervalMs = 5000.) Tj
+T*
+() Tj
+T*
+(Eso equivale a 1 ciclo cada 5 segundos, 12 ciclos por minuto, 720 ciclos por hora y 17.280) Tj
+T*
+(ciclos por dia.) Tj
+T*
+() Tj
+T*
+(Una sola escritura cada 5 segundos consume 17.280 writes/dia, practicamente toda la cuota) Tj
+T*
+(gratuita de Spark.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Impacto estimado de runtimeEvents) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(La configuracion actual contiene 2 PLCs: munters1 y munters2.) Tj
+T*
+() Tj
+T*
+(Por cada PLC se trackean hasta 4 tipos de runtime: bomba humidificador, resistencia 1,) Tj
+T*
+(resistencia 2 y ventiladores.) Tj
+T*
+() Tj
+T*
+(Eso da hasta 8 heartbeats posibles cada 5 segundos.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Dispositivos activos constantes y escrituras estimadas:) Tj
+T*
+() Tj
+T*
+(1 activo: 17.280 writes/dia, 86% de la cuota Spark.) Tj
+T*
+() Tj
+T*
+ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 8 0 R >> >> /Contents 5 0 R >>
+endobj
+5 0 obj
+<< /Length 1990 >>
+stream
+BT
+/F1 11 Tf
+50 790 Td
+14 TL
+(2 activos: 34.560 writes/dia, 173% de la cuota Spark.) Tj
+T*
+() Tj
+T*
+(4 activos: 69.120 writes/dia, 346% de la cuota Spark.) Tj
+T*
+() Tj
+T*
+(8 activos: 138.240 writes/dia, 691% de la cuota Spark.) Tj
+T*
+() Tj
+T*
+() Tj
+T*
+(Conclusion: con solo dos dispositivos activos constantes, el sistema supera el limite) Tj
+T*
+(gratuito de Firestore.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Relacion con consumos de energia) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(El agregado de consumos de energia probablemente disparo o hizo visible el problema, no por) Tj
+T*
+(la pantalla de consumo en si, sino porque los heartbeats empezaron a persistir campos que) Tj
+T*
+(cambian con el tiempo.) Tj
+T*
+() Tj
+T*
+(Campos involucrados: activeDurationSec, powerWatts, energyKwh y observedAt.) Tj
+T*
+() Tj
+T*
+(Como activeDurationSec y energyKwh cambian continuamente mientras el equipo esta activo, el) Tj
+T*
+(backend actualiza el documento en Firestore en cada poll de 5 segundos.) Tj
+T*
+() Tj
+T*
+(Aunque se reutilice el mismo documento, cada actualizacion cuenta como una escritura.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Otros consumidores de cuota) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(runtimeEvents: heartbeats y eventos ON/OFF de equipos. Impacto muy alto si escribe cada 5) Tj
+T*
+(segundos.) Tj
+T*
+() Tj
+T*
+(presence: usuarios conectados e historial de sesiones. Impacto medio/bajo; aprox. 1.440) Tj
+T*
+(writes/dia por heartbeat/minuto por usuario conectado.) Tj
+T*
+() Tj
+T*
+(temperatureHistory: historicos horarios y recalculo diario. Impacto bajo; decenas a cerca de) Tj
+T*
+(100 writes/dia para 2 PLCs.) Tj
+T*
+() Tj
+T*
+(differentialPressureHistory: muestras agregadas por ventana. Impacto bajo/medio, depende) Tj
+T*
+(frecuencia configurada.) Tj
+T*
+() Tj
+T*
+(doorOpenings: apertura/cierre de puertas. Impacto bajo; ocurre por transicion, no por poll) Tj
+T*
+(constante.) Tj
+T*
+() Tj
+T*
+(Configuracion desde UI: settings, usuarios, costos y visibilidad. Impacto bajo; escrituras) Tj
+T*
+(manuales y esporadicas.) Tj
+T*
+() Tj
+T*
+ET
+endstream
+endobj
+6 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 8 0 R >> >> /Contents 7 0 R >>
+endobj
+7 0 obj
+<< /Length 2293 >>
+stream
+BT
+/F1 11 Tf
+50 790 Td
+14 TL
+/F1 16 Tf
+(Que no consume escrituras directamente) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(La lectura del frontend cada 5 segundos consulta al backend por HTTP. Esa llamada no escribe) Tj
+T*
+(en Firestore por si misma.) Tj
+T*
+() Tj
+T*
+(El consumo de escrituras aparece cuando el backend, durante su propio ciclo de polling,) Tj
+T*
+(decide persistir runtime heartbeats, eventos o historicos en Firestore.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Recomendaciones tecnicas) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(1. No escribir heartbeats cada 5 segundos. Cambiar runtimeEvents para que los heartbeats se) Tj
+T*
+(escriban como maximo cada 60 segundos o cada 5 minutos por dispositivo activo.) Tj
+T*
+() Tj
+T*
+(2. Guardar inmediatamente los cambios ON/OFF. Los eventos de cambio de estado deben) Tj
+T*
+(persistirse en el momento: equipo prende, equipo apaga, cambia potencia de ventiladores,) Tj
+T*
+(etc.) Tj
+T*
+() Tj
+T*
+(3. Calcular energia activa sin persistir cada 5 segundos. Para un evento abierto, la UI) Tj
+T*
+(puede calcular energia en vivo usando energia_kWh = potencia_kW * horas_transcurridas. Al) Tj
+T*
+(cerrar el evento, guardar una unica escritura final con duracion y energia consolidada.) Tj
+T*
+() Tj
+T*
+(4. Evaluar Firebase Blaze o mover heartbeats fuera de Firestore. Si se necesita telemetria) Tj
+T*
+(frecuente real-time, Firestore Spark no es el lugar adecuado. Alternativas: plan Blaze,) Tj
+T*
+(Firebase Realtime Database para estado vivo, o backend memory/HTTP snapshot y Firestore solo) Tj
+T*
+(para eventos consolidados.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Comparacion de throttling) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(Heartbeat cada 5 segundos: 2 activos = 34.560 writes/dia; 8 activos = 138.240 writes/dia.) Tj
+T*
+() Tj
+T*
+(Heartbeat cada 60 segundos: 2 activos = 2.880 writes/dia; 8 activos = 11.520 writes/dia.) Tj
+T*
+() Tj
+T*
+(Heartbeat cada 5 minutos: 2 activos = 576 writes/dia; 8 activos = 2.304 writes/dia.) Tj
+T*
+() Tj
+T*
+/F1 16 Tf
+(Decision sugerida) Tj
+/F1 11 Tf
+T*
+() Tj
+T*
+(Implementar throttle de heartbeats de runtime a 60 segundos o 5 minutos, guardar ON/OFF) Tj
+T*
+(inmediatamente y calcular energia activa en UI sin persistir cada 5 segundos.) Tj
+T*
+() Tj
+T*
+(Esto reduce el consumo de cuota en uno o dos ordenes de magnitud sin perder informacion) Tj
+T*
+(importante.) Tj
+T*
+() Tj
+T*
+ET
+endstream
+endobj
+8 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000184 00000 n 
+0000002102 00000 n 
+0000002228 00000 n 
+0000004270 00000 n 
+0000004396 00000 n 
+0000006741 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+6811
+%%EOF

@@ -65,12 +65,13 @@ class RuntimeTrackerService {
         final List<_HbSaveTask> tasks = seedHbs
             .map((RuntimeEvent hb) => _resolveHbTask(hb, _trackingFor(hb)))
             .toList();
-        _queue = _queue
-            .then<void>((_) => _saveHeartbeats(tasks))
-            .catchError((Object error, StackTrace stackTrace) {
-              _log('error processing initial heartbeats error=$error');
-              _log('error stack=$stackTrace');
-            });
+        _queue = _queue.then<void>((_) => _saveHeartbeats(tasks)).catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          _log('error processing initial heartbeats error=$error');
+          _log('error stack=$stackTrace');
+        });
       }
       return;
     }
@@ -107,8 +108,8 @@ class RuntimeTrackerService {
           signalKey: plc.heater1Signal,
           now: observedAtUtc,
         ),
-        tracking: _states[_stateKey(plc.plcId, _DeviceType.heater1)]!
-            .hbTracking,
+        tracking:
+            _states[_stateKey(plc.plcId, _DeviceType.heater1)]!.hbTracking,
         closedEvents: closedEvents,
         hbTasks: hbTasks,
       );
@@ -120,8 +121,8 @@ class RuntimeTrackerService {
           signalKey: plc.heater2Signal,
           now: observedAtUtc,
         ),
-        tracking: _states[_stateKey(plc.plcId, _DeviceType.heater2)]!
-            .hbTracking,
+        tracking:
+            _states[_stateKey(plc.plcId, _DeviceType.heater2)]!.hbTracking,
         closedEvents: closedEvents,
         hbTasks: hbTasks,
       );
@@ -133,8 +134,7 @@ class RuntimeTrackerService {
       );
     }
 
-    if (!isPersistenceEnabled ||
-        (closedEvents.isEmpty && hbTasks.isEmpty)) {
+    if (!isPersistenceEnabled || (closedEvents.isEmpty && hbTasks.isEmpty)) {
       return;
     }
 
@@ -173,10 +173,7 @@ class RuntimeTrackerService {
     final String docId;
     if (tracking.lastDocId != null &&
         tracking.lastObservedAt != null &&
-        observedAt
-                .difference(tracking.lastObservedAt!)
-                .inMilliseconds
-                .abs() <=
+        observedAt.difference(tracking.lastObservedAt!).inMilliseconds.abs() <=
             _config.hbGapThresholdMs) {
       docId = tracking.lastDocId!; // reuse → overwrites same Firestore doc
     } else {
@@ -246,14 +243,6 @@ class RuntimeTrackerService {
         );
       } else {
         _log('seed off fan segment plc=${plc.plcId}');
-        heartbeatEvents.add(
-          RuntimeEvent.offHeartbeat(
-            deviceType: _DeviceType.fans,
-            observedAt: observedAtUtc,
-            plcId: plc.plcId,
-            powerPercent: 0,
-          ),
-        );
       }
     }
     _log('initialized from first snapshot');
@@ -279,13 +268,6 @@ class RuntimeTrackerService {
       heartbeatEvents.add(_binaryHeartbeat(plc, deviceType, now, now));
     } else {
       _log('seed off binary event plc=${plc.plcId} device=$deviceType');
-      heartbeatEvents.add(
-        RuntimeEvent.offHeartbeat(
-          deviceType: deviceType,
-          observedAt: now,
-          plcId: plc.plcId,
-        ),
-      );
     }
   }
 
@@ -318,14 +300,6 @@ class RuntimeTrackerService {
     }
 
     if (state.isOn == current) {
-      // State unchanged: emit a HB while device is ON so observedAt stays fresh.
-      if (current && state.startedAt != null) {
-        return _RuntimeTrackerChanges(
-          heartbeatEvents: <RuntimeEvent>[
-            _binaryHeartbeat(plc, deviceType, state.startedAt!, now),
-          ],
-        );
-      }
       return const _RuntimeTrackerChanges.empty();
     }
 
@@ -388,14 +362,6 @@ class RuntimeTrackerService {
     }
 
     if (previousPower == currentPower) {
-      // Power unchanged: emit a HB while fans are ON so observedAt stays fresh.
-      if (currentPower > 0 && state.startedAt != null) {
-        return _RuntimeTrackerChanges(
-          heartbeatEvents: <RuntimeEvent>[
-            _fanHeartbeat(plc, currentPower, state.startedAt!, now),
-          ],
-        );
-      }
       return const _RuntimeTrackerChanges.empty();
     }
 

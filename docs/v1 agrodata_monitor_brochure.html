@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AGRODATA Monitor — Brochure</title>
+<style>
+  :root{
+    --green-dark:#1b4d3e;
+    --green:#2f7d4f;
+    --green-soft:#e8f3ec;
+    --gray-bg:#f4f5f4;
+    --text:#2b2b2b;
+    --text-light:#6b6b6b;
+    --border:#e3e3e3;
+    --page-w:794px;
+    --page-h:1123px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    padding:24px 0;
+    background:#dcdcdc;
+    font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    color:var(--text);
+  }
+  .page{
+    width:var(--page-w);
+    min-height:var(--page-h);
+    margin:0 auto 32px;
+    background:#fff;
+    box-shadow:0 4px 18px rgba(0,0,0,.18);
+    padding:36px 44px;
+    position:relative;
+    overflow:hidden;
+  }
+  .icon{width:1em;height:1em;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;vertical-align:-0.15em;}
+  .icon.filled{fill:currentColor;stroke:none;}
+
+  /* ---- brand header ---- */
+  .brand{display:flex;align-items:center;gap:10px;}
+  .brand img{width:40px;height:40px;display:block;}
+  .brand-name{font-size:20px;font-weight:800;color:var(--green-dark);letter-spacing:.5px;line-height:1;}
+  .brand-tag{font-size:9px;font-weight:600;color:var(--text-light);letter-spacing:.6px;text-transform:uppercase;}
+
+  /* ---- page 1 hero ---- */
+  .hero{display:flex;gap:28px;margin-top:28px;align-items:flex-start;}
+  .hero-copy{flex:0 0 230px;}
+  .hero-copy h1{font-size:34px;line-height:1.05;margin:0;color:var(--green-dark);font-weight:800;}
+  .hero-copy h1 span{display:block;font-weight:300;font-size:30px;color:var(--green-dark);}
+  .hero-copy .rule{width:46px;height:3px;background:var(--green-dark);margin:14px 0;}
+  .hero-copy p{font-size:14px;line-height:1.4;margin:0;color:var(--text);}
+  .hero-copy p strong{color:var(--green);}
+
+  .hero-visual{flex:1;position:relative;}
+  .hero-photo{
+    height:300px;border-radius:10px;overflow:hidden;position:relative;
+    background:linear-gradient(180deg,#bcd9ea 0%,#cfe6d2 38%,#9fc89f 60%,#7fae7c 100%);
+    display:flex;align-items:flex-end;justify-content:flex-start;
+  }
+  .hero-photo .field-note{
+    position:absolute;left:14px;bottom:12px;font-size:10px;color:rgba(255,255,255,.85);
+    background:rgba(27,77,62,.45);padding:4px 8px;border-radius:4px;letter-spacing:.3px;
+  }
+  .cabinet{
+    position:absolute;left:50%;top:46%;transform:translate(-60%,-50%);
+    width:118px;background:#fafafa;border:1px solid #d6d6d6;border-radius:8px;
+    box-shadow:0 10px 24px rgba(0,0,0,.18);padding:10px 8px 14px;text-align:center;
+  }
+  .cabinet .icon{width:28px;height:28px;color:var(--green-dark);}
+  .cabinet .cab-title{font-size:9px;font-weight:800;color:var(--green-dark);margin-top:4px;letter-spacing:.3px;}
+  .cabinet .cab-sub{font-size:8px;color:var(--text-light);font-weight:600;}
+  .cabinet .wifi-row{margin-top:10px;color:var(--green);}
+  .cabinet .wifi-row .icon{width:16px;height:16px;}
+
+  .stat-stack{
+    position:absolute;right:-18px;top:-22px;display:flex;flex-direction:column;gap:8px;width:172px;
+  }
+  .stat-card{
+    background:#fff;border-radius:8px;box-shadow:0 4px 14px rgba(0,0,0,.14);
+    padding:8px 10px;display:flex;align-items:center;gap:8px;
+  }
+  .stat-card .icon{width:18px;height:18px;color:var(--green-dark);flex:none;}
+  .stat-card .val{font-size:13px;font-weight:800;color:var(--text);line-height:1.1;}
+  .stat-card .lbl{font-size:8px;color:var(--text-light);font-weight:600;}
+
+  /* ---- pillars row ---- */
+  .pillars{display:flex;align-items:center;justify-content:space-between;margin:34px 6px 0;}
+  .pillar{display:flex;flex-direction:column;align-items:center;gap:6px;}
+  .pillar .icon{width:30px;height:30px;color:var(--green-dark);}
+  .pillar span{font-size:9px;font-weight:700;letter-spacing:.4px;color:var(--text);text-transform:uppercase;}
+  .plus{font-size:18px;font-weight:300;color:var(--text-light);}
+
+  /* ---- two product cards ---- */
+  .duo{display:flex;align-items:center;gap:0;margin-top:34px;position:relative;}
+  .duo-card{flex:1;display:flex;gap:14px;}
+  .duo-card .badge-icon{
+    flex:none;width:54px;height:54px;border-radius:50%;background:var(--green-dark);
+    display:flex;align-items:center;justify-content:center;color:#fff;
+  }
+  .duo-card.alt .badge-icon{background:#fff;border:2px solid var(--green-dark);color:var(--green-dark);}
+  .duo-card .badge-icon .icon{width:26px;height:26px;}
+  .duo-card h3{margin:0 0 6px;font-size:16px;color:var(--text);font-weight:700;}
+  .duo-card p{margin:0 0 8px;font-size:11px;line-height:1.5;color:var(--text-light);}
+  .duo-plus{
+    flex:none;width:46px;height:46px;border-radius:50%;background:var(--green);
+    display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;font-weight:300;
+    margin:0 -4px;position:relative;z-index:2;box-shadow:0 4px 10px rgba(47,125,79,.35);
+  }
+
+  /* ---- beneficios ---- */
+  .section-title{
+    text-align:center;font-size:15px;font-weight:800;letter-spacing:1px;color:var(--text);
+    margin:38px 0 20px;position:relative;
+  }
+  .section-title::before,.section-title::after{content:"";display:inline-block;width:60px;height:1px;background:var(--border);vertical-align:middle;margin:0 14px;}
+  .benefits{display:flex;gap:18px;}
+  .benefit{flex:1;text-align:center;padding:0 6px;}
+  .benefit .ic-circle{
+    width:46px;height:46px;border-radius:50%;background:var(--green-dark);color:#fff;
+    display:flex;align-items:center;justify-content:center;margin:0 auto 10px;
+  }
+  .benefit .ic-circle .icon{width:22px;height:22px;}
+  .benefit h4{font-size:11px;font-weight:800;letter-spacing:.3px;margin:0 0 6px;color:var(--text);}
+  .benefit p{font-size:9.5px;line-height:1.45;color:var(--text-light);margin:0;}
+
+  /* ---- footer bar ---- */
+  .footbar{
+    position:absolute;left:0;right:0;bottom:0;background:var(--green-dark);color:#fff;
+    padding:14px 44px;display:flex;align-items:center;justify-content:space-between;font-size:11px;
+  }
+  .footbar .left{display:flex;align-items:center;gap:10px;font-style:italic;font-weight:600;}
+  .footbar .left .icon{width:20px;height:20px;color:#fff;}
+  .footbar .right{display:flex;align-items:center;gap:10px;font-weight:700;}
+  .flag{width:26px;height:18px;border-radius:2px;overflow:hidden;display:block;}
+
+  /* ================= PAGE 2 ================= */
+  .p2-head{display:flex;align-items:center;justify-content:space-between;}
+  .p2-head h1{margin:0;font-size:26px;color:var(--text);font-weight:300;}
+  .p2-head h1 b{color:var(--green-dark);font-weight:800;}
+  .p2-sub{text-align:center;font-size:12px;font-weight:700;color:var(--text);margin:18px 0 16px;letter-spacing:.2px;}
+
+  .plans{display:flex;gap:16px;}
+  .plan{
+    flex:1;border:1px solid var(--border);border-radius:10px;padding:18px 16px 22px;
+    display:flex;flex-direction:column;
+  }
+  .plan.featured{border-color:var(--green-dark);border-width:2px;position:relative;box-shadow:0 8px 22px rgba(27,77,62,.12);}
+  .plan-badge{
+    position:absolute;top:-12px;left:50%;transform:translateX(-50%);
+    background:var(--green-dark);color:#fff;font-size:9px;font-weight:800;letter-spacing:.4px;
+    padding:5px 14px;border-radius:14px;display:flex;align-items:center;gap:5px;white-space:nowrap;
+  }
+  .plan-badge .icon{width:11px;height:11px;}
+  .plan h3{text-align:center;font-size:14px;font-weight:300;margin:6px 0 14px;color:var(--text);}
+  .plan h3 b{display:block;font-weight:800;color:var(--green-dark);font-size:16px;}
+  .plan ul{list-style:none;margin:0;padding:0;flex:1;}
+  .plan li{display:flex;align-items:flex-start;gap:8px;font-size:10.5px;line-height:1.4;margin-bottom:9px;color:var(--text);}
+  .plan li .icon{width:14px;height:14px;flex:none;margin-top:1px;color:var(--green-dark);}
+  .plan li .icon.check{color:var(--green);}
+  .plan-foot{
+    margin-top:14px;width:50px;height:50px;border-radius:50%;background:var(--green-soft);
+    display:flex;align-items:center;justify-content:center;color:var(--green-dark);align-self:center;
+  }
+  .plan-foot .icon{width:24px;height:24px;}
+
+  .strip-title{
+    text-align:center;background:var(--green-dark);color:#fff;font-size:13px;font-weight:800;
+    letter-spacing:.6px;padding:11px;border-radius:6px;margin:30px 0 20px;
+  }
+  .gains{display:flex;gap:12px;}
+  .gain{flex:1;text-align:center;}
+  .gain .ic-circle{
+    width:42px;height:42px;border-radius:50%;background:var(--green-soft);color:var(--green-dark);
+    display:flex;align-items:center;justify-content:center;margin:0 auto 8px;
+  }
+  .gain .ic-circle .icon{width:20px;height:20px;}
+  .gain h4{font-size:9px;font-weight:800;letter-spacing:.2px;margin:0 0 5px;color:var(--text);}
+  .gain p{font-size:8px;line-height:1.4;color:var(--text-light);margin:0;}
+
+  .buy-rent{display:flex;gap:18px;margin-top:30px;}
+  .br-card{
+    flex:1;background:var(--gray-bg);border-radius:10px;padding:18px 18px 18px;
+    display:flex;align-items:center;gap:16px;
+  }
+  .br-card .body{flex:1;}
+  .br-card h3{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:800;color:var(--text);margin:0 0 10px;}
+  .br-card h3 .icon{width:18px;height:18px;color:var(--green-dark);}
+  .br-card ul{list-style:none;margin:0;padding:0;}
+  .br-card li{display:flex;gap:7px;font-size:9.5px;line-height:1.35;margin-bottom:6px;color:var(--text);}
+  .br-card li .icon{width:13px;height:13px;color:var(--green);flex:none;margin-top:1px;}
+  .br-badge{
+    flex:none;width:78px;height:78px;border-radius:50%;background:var(--green-dark);color:#fff;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;
+    font-size:8px;font-weight:800;letter-spacing:.2px;line-height:1.25;padding:6px;
+  }
+  .br-badge .icon{width:18px;height:18px;margin-bottom:4px;}
+
+  .contact-bar{
+    margin-top:26px;border:1px solid var(--border);border-radius:10px;padding:16px 20px;
+    display:flex;align-items:center;justify-content:space-between;gap:20px;
+  }
+  .contact-bar p{margin:0;font-size:11px;line-height:1.45;color:var(--text);font-weight:600;max-width:380px;}
+  .contact-bar .wa{display:flex;align-items:center;gap:10px;color:var(--green-dark);font-weight:800;font-size:13px;white-space:nowrap;}
+  .contact-bar .wa .ic-circle{
+    width:34px;height:34px;border-radius:50%;background:var(--green-soft);display:flex;align-items:center;justify-content:center;color:var(--green);
+  }
+  .contact-bar .wa .ic-circle .icon{width:18px;height:18px;}
+  .contact-bar .wa small{display:block;font-size:9px;font-weight:600;color:var(--text-light);}
+
+  .footbar.p2{font-size:10px;}
+  .footbar.p2 .mid{display:flex;align-items:center;gap:22px;}
+  .footbar.p2 .mid span{display:flex;align-items:center;gap:6px;font-weight:600;}
+  .footbar.p2 .mid .icon{width:15px;height:15px;}
+  .footbar.p2 .brand img{filter:brightness(0) invert(1);}
+  .footbar.p2 .brand-name,.footbar.p2 .brand-tag{color:#fff;}
+
+  .edit-hint{
+    max-width:var(--page-w);margin:0 auto 18px;font-size:12px;color:#555;background:#fff8d8;
+    border:1px solid #e8dca0;border-radius:6px;padding:10px 16px;
+  }
+
+  @media print{
+    body{background:#fff;padding:0;}
+    .page{box-shadow:none;margin:0;page-break-after:always;}
+    .edit-hint{display:none;}
+  }
+</style>
+</head>
+<body>
+
+<!-- Sprite con todos los íconos en SVG (editables / reemplazables individualmente) -->
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-thermometer" viewBox="0 0 24 24"><path d="M14 4v10.54a4 4 0 1 1-4 0V4a2 2 0 0 1 4 0Z"/></symbol>
+    <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.7l5.7 5.7a8 8 0 1 1-11.4 0z"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M17.5 19a4.5 4.5 0 0 0 0-9 6 6 0 0 0-11.6 1.5A4 4 0 0 0 6 19h11.5z"/></symbol>
+    <symbol id="i-zap" viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"/></symbol>
+    <symbol id="i-sliders" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></symbol>
+    <symbol id="i-bars" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+    <symbol id="i-wifi" viewBox="0 0 24 24"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><line x1="12" y1="20" x2="12.01" y2="20"/></symbol>
+    <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+    <symbol id="i-leaf" viewBox="0 0 24 24"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19 2c1 2 2 4.18 2 8 0 5.5-4.78 10-10 10Z"/><path d="M2 21c0-3 1.85-5.36 5.08-6C9.5 14.52 12 13 13 12"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></symbol>
+    <symbol id="i-cart" viewBox="0 0 24 24"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
+    <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></symbol>
+    <symbol id="i-instagram" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" rx="5"/><path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/><line x1="17.5" y1="6.5" x2="17.51" y2="6.5"/></symbol>
+    <symbol id="i-linkedin" viewBox="0 0 24 24"><path d="M16 8a6 6 0 0 1 6 6v7h-4v-7a2 2 0 0 0-2-2 2 2 0 0 0-2 2v7h-4v-7a6 6 0 0 1 6-6z"/><rect x="2" y="9" width="4" height="12"/><circle cx="4" cy="4" r="2"/></symbol>
+    <symbol id="i-facebook" viewBox="0 0 24 24"><path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></symbol>
+    <symbol id="i-trend" viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></symbol>
+    <symbol id="i-wind" viewBox="0 0 24 24"><path d="M9.6 4.6A2 2 0 1 1 11 8H2"/><path d="M12.6 19.4A2 2 0 1 0 14 16H2"/><path d="M17.7 7.7A2.5 2.5 0 1 1 19.5 12H2"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5.5"/><circle cx="12" cy="12" r="2"/></symbol>
+    <symbol id="i-pig" viewBox="0 0 24 24"><circle cx="12" cy="13" r="7"/><polygon points="7,7 9.3,7 7,3.6"/><polygon points="17,7 14.7,7 17,3.6"/><ellipse cx="12" cy="14.5" rx="2.6" ry="1.9"/><circle cx="11" cy="14.4" r=".5" class="filled"/><circle cx="13" cy="14.4" r=".5" class="filled"/></symbol>
+    <symbol id="i-cabinet" viewBox="0 0 24 24"><rect x="6" y="2" width="12" height="20" rx="1.5"/><line x1="12" y1="2" x2="12" y2="22"/><circle cx="14.2" cy="12" r=".7" class="filled"/></symbol>
+  </defs>
+</svg>
+
+<div class="edit-hint">
+  Brochure AGRODATA Monitor recreado en HTML/CSS editable a partir del PDF original (referencia visual, no copia exacta).
+  Los textos, colores (variables <code>:root</code>), íconos (sprite SVG superior) y la imagen de granja (placeholder con degradé) se pueden reemplazar libremente.
+</div>
+
+<!-- ============ PÁGINA 1 ============ -->
+<section class="page" id="page-1">
+
+  <div class="brand">
+    <img src="../web/branding/Logo.png" alt="Valke">
+    <div>
+      <div class="brand-name">VALKE</div>
+      <div class="brand-tag">Tecnología que protege</div>
+    </div>
+  </div>
+
+  <div class="hero">
+    <div class="hero-copy">
+      <h1>AGRODATA<span>Monitor</span></h1>
+      <div class="rule"></div>
+      <p>Monitoreo <strong>inteligente</strong> para granjas modernas.</p>
+    </div>
+    <div class="hero-visual">
+      <div class="hero-photo">
+        <span class="field-note">Foto de granja / gabinete AGRODATA (placeholder — reemplazar)</span>
+        <div class="cabinet">
+          <svg class="icon"><use href="#i-cabinet"/></svg>
+          <div class="cab-title">AGRODATA</div>
+          <div class="cab-sub">Monitor</div>
+          <div class="wifi-row"><svg class="icon"><use href="#i-wifi"/></svg></div>
+        </div>
+      </div>
+      <div class="stat-stack">
+        <div class="stat-card"><svg class="icon"><use href="#i-thermometer"/></svg><div><div class="val">24,0 °C</div><div class="lbl">Temperatura</div></div></div>
+        <div class="stat-card"><svg class="icon"><use href="#i-droplet"/></svg><div><div class="val">68 % HR</div><div class="lbl">Humedad</div></div></div>
+        <div class="stat-card"><svg class="icon"><use href="#i-cloud"/></svg><div><div class="val">NH₃ 8 ppm</div><div class="lbl">Amoníaco</div></div></div>
+        <div class="stat-card"><svg class="icon"><use href="#i-droplet"/></svg><div><div class="val">320 L/h</div><div class="lbl">Consumo de agua</div></div></div>
+        <div class="stat-card"><svg class="icon"><use href="#i-zap"/></svg><div><div class="val">4,2 kW</div><div class="lbl">Consumo energético</div></div></div>
+        <div class="stat-card"><svg class="icon"><use href="#i-sliders"/></svg><div><div class="val">6</div><div class="lbl">Salidas de control</div></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pillars">
+    <div class="pillar"><svg class="icon"><use href="#i-box"/></svg><span>Hardware</span></div>
+    <span class="plus">+</span>
+    <div class="pillar"><svg class="icon"><use href="#i-cloud"/></svg><span>Software</span></div>
+    <span class="plus">+</span>
+    <div class="pillar"><svg class="icon"><use href="#i-bars"/></svg><span>KPIs</span></div>
+    <span class="plus">+</span>
+    <div class="pillar"><svg class="icon"><use href="#i-bell"/></svg><span>Alarmas</span></div>
+    <span class="plus">+</span>
+    <div class="pillar"><svg class="icon"><use href="#i-wifi"/></svg><span>Conectividad</span></div>
+  </div>
+
+  <div class="duo">
+    <div class="duo-card">
+      <div class="badge-icon"><svg class="icon"><use href="#i-cpu"/></svg></div>
+      <div>
+        <h3>AGRODATA Monitor</h3>
+        <p>AGRODATA Monitor es un equipo de hardware basado en PLC y sensores industriales que permite monitorear y registrar en tiempo real variables críticas de la granja como temperatura, humedad, CO₂, amoníaco, consumo de agua y consumo energético.</p>
+        <p>Además, puede controlar automáticamente ventilación, sistemas evaporativos, válvulas, bombas y otros equipos de proceso.</p>
+      </div>
+    </div>
+    <div class="duo-plus">+</div>
+    <div class="duo-card alt">
+      <div class="badge-icon"><svg class="icon"><use href="#i-monitor"/></svg></div>
+      <div>
+        <h3>AGRODATA Soft</h3>
+        <p>El complemento inteligente de AGRODATA Monitor.</p>
+        <p>Convierte los datos en información útil para monitorear, analizar y optimizar la producción.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">BENEFICIOS</div>
+  <div class="benefits">
+    <div class="benefit">
+      <div class="ic-circle"><svg class="icon"><use href="#i-clock"/></svg></div>
+      <h4>MONITOREO INTELIGENTE 24/7</h4>
+      <p>Controlá en tiempo real las variables críticas de tu granja desde cualquier lugar y en todo momento.</p>
+    </div>
+    <div class="benefit">
+      <div class="ic-circle"><svg class="icon"><use href="#i-bars"/></svg></div>
+      <h4>DATOS QUE GENERAN DECISIONES</h4>
+      <p>Históricos, tendencias y benchmarking entre salas y granjas para tomar mejores decisiones basadas en datos.</p>
+    </div>
+    <div class="benefit">
+      <div class="ic-circle"><svg class="icon"><use href="#i-gear"/></svg></div>
+      <h4>MÁS EFICIENCIA, MÁS RESULTADOS</h4>
+      <p>Automatizá equipos, optimizá recursos y mejorá el bienestar animal para lograr mayor productividad y rentabilidad.</p>
+    </div>
+  </div>
+
+  <div class="footbar">
+    <div class="left"><svg class="icon"><use href="#i-leaf"/></svg> Lo que no se mide, no se puede mejorar.</div>
+    <div class="right">
+      Industria Argentina
+      <svg class="flag" viewBox="0 0 30 20">
+        <rect width="30" height="6.66" fill="#74ACDF"/>
+        <rect y="6.66" width="30" height="6.66" fill="#FFFFFF"/>
+        <rect y="13.33" width="30" height="6.66" fill="#74ACDF"/>
+        <circle cx="15" cy="10" r="2.4" fill="#F6B40E" stroke="#85591A" stroke-width=".4"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ============ PÁGINA 2 ============ -->
+<section class="page" id="page-2">
+
+  <div class="p2-head">
+    <div class="brand">
+      <img src="../web/branding/Logo.png" alt="Valke">
+      <div>
+        <div class="brand-name">VALKE</div>
+        <div class="brand-tag">Tecnología que protege</div>
+      </div>
+    </div>
+    <h1><b>AGRODATA</b> Monitor</h1>
+  </div>
+
+  <p class="p2-sub">Elegí la solución que mejor se adapta a tu granja</p>
+
+  <div class="plans">
+    <div class="plan">
+      <h3><b>AGRODATA</b>Monitor Classic</h3>
+      <ul>
+        <li><svg class="icon"><use href="#i-thermometer"/></svg> Temperatura</li>
+        <li><svg class="icon"><use href="#i-droplet"/></svg> Humedad</li>
+        <li><svg class="icon"><use href="#i-bell"/></svg> Alarmas</li>
+        <li><svg class="icon"><use href="#i-wifi"/></svg> Acceso remoto</li>
+      </ul>
+      <div class="plan-foot"><svg class="icon"><use href="#i-wifi"/></svg></div>
+    </div>
+
+    <div class="plan featured">
+      <span class="plan-badge"><svg class="icon"><use href="#i-trend"/></svg> MÁS ELEGIDO</span>
+      <h3><b>AGRODATA</b>Monitor Pro</h3>
+      <ul>
+        <li><svg class="icon check"><use href="#i-check"/></svg> Todo lo incluido en Classic</li>
+        <li><svg class="icon check"><use href="#i-check"/></svg> CO₂</li>
+        <li><svg class="icon check"><use href="#i-check"/></svg> NH₃ (Amoníaco)</li>
+        <li><svg class="icon check"><use href="#i-check"/></svg> Consumo de agua</li>
+        <li><svg class="icon check"><use href="#i-check"/></svg> Consumo energético</li>
+        <li><svg class="icon check"><use href="#i-check"/></svg> KPIs productivos</li>
+      </ul>
+      <div class="plan-foot"><svg class="icon"><use href="#i-wifi"/></svg></div>
+    </div>
+
+    <div class="plan">
+      <h3><b>AGRODATA</b>Monitor Full</h3>
+      <ul>
+        <li><svg class="icon check"><use href="#i-check"/></svg> Todo lo incluido en Pro</li>
+        <li><svg class="icon"><use href="#i-wind"/></svg> Control de ventilación</li>
+        <li><svg class="icon"><use href="#i-droplet"/></svg> Sistemas evaporativos</li>
+        <li><svg class="icon"><use href="#i-sliders"/></svg> Válvulas</li>
+        <li><svg class="icon"><use href="#i-box"/></svg> Bombas y equipos de proceso</li>
+        <li><svg class="icon"><use href="#i-gear"/></svg> Automatizaciones personalizadas</li>
+        <li><svg class="icon"><use href="#i-target"/></svg> Estrategias de control avanzadas</li>
+      </ul>
+      <div class="plan-foot"><svg class="icon"><use href="#i-wifi"/></svg></div>
+    </div>
+  </div>
+
+  <div class="strip-title">CONVERTÍ DATOS EN MÁS KILOS Y MENOS PÉRDIDAS</div>
+  <div class="gains">
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-pig"/></svg></div>
+      <h4>MENOR MORTALIDAD</h4>
+      <p>Detectá problemas antes de que impacten en los animales.</p>
+    </div>
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-thermometer"/></svg></div>
+      <h4>MENOS ESTRÉS TÉRMICO</h4>
+      <p>Ambientes más estables generan mejores resultados productivos.</p>
+    </div>
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-zap"/></svg></div>
+      <h4>MENOR CONSUMO ENERGÉTICO</h4>
+      <p>Identificá pérdidas y optimizá el uso de energía.</p>
+    </div>
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-droplet"/></svg></div>
+      <h4>MENOR CONSUMO DE AGUA</h4>
+      <p>Controlá consumos y detectá desvíos rápidamente.</p>
+    </div>
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-alert"/></svg></div>
+      <h4>MENOS FALLAS NO DETECTADAS</h4>
+      <p>Alarmas automáticas ante cualquier situación crítica.</p>
+    </div>
+    <div class="gain">
+      <div class="ic-circle"><svg class="icon"><use href="#i-trend"/></svg></div>
+      <h4>MAYOR PRODUCTIVIDAD</h4>
+      <p>Tomá decisiones basadas en datos reales y no en suposiciones.</p>
+    </div>
+  </div>
+
+  <div class="strip-title">COMPRA O ALQUILER</div>
+  <div class="buy-rent">
+    <div class="br-card">
+      <div class="body">
+        <h3><svg class="icon"><use href="#i-cart"/></svg> Compra</h3>
+        <ul>
+          <li><svg class="icon"><use href="#i-check"/></svg> El equipo es tuyo</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Inversión única</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Escalable</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Integrable con futuras ampliaciones</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Licencia AgroData Soft</li>
+        </ul>
+      </div>
+      <div class="br-badge"><svg class="icon"><use href="#i-shield"/></svg> INVERSIÓN A LARGO PLAZO</div>
+    </div>
+    <div class="br-card">
+      <div class="body">
+        <h3><svg class="icon"><use href="#i-calendar"/></svg> Alquiler</h3>
+        <ul>
+          <li><svg class="icon"><use href="#i-check"/></svg> Baja inversión inicial</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Hardware incluido</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> AgroData Soft incluido</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Soporte técnico incluido</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Actualizaciones incluidas</li>
+          <li><svg class="icon"><use href="#i-check"/></svg> Pago mensual por sala</li>
+        </ul>
+      </div>
+      <div class="br-badge"><svg class="icon"><use href="#i-shield"/></svg> FLEXIBILIDAD Y TRANQUILIDAD</div>
+    </div>
+  </div>
+
+  <div class="contact-bar">
+    <p>¿Querés saber qué versión de AGRODATA se adapta mejor a tu granja?<br>¡Consultanos sin compromiso!</p>
+    <div class="wa">
+      <div class="ic-circle"><svg class="icon"><use href="#i-message"/></svg></div>
+      <div>WhatsApp<small>+54 9 11 3074 0079</small></div>
+    </div>
+  </div>
+
+  <div class="footbar p2">
+    <div class="brand">
+      <img src="../web/branding/Logo.png" alt="Valke">
+      <div>
+        <div class="brand-name" style="font-size:15px">VALKE</div>
+        <div class="brand-tag">Tecnología que protege</div>
+      </div>
+    </div>
+    <div class="mid">
+      <span><svg class="icon"><use href="#i-globe"/></svg> www.valke.com.ar</span>
+      <span><svg class="icon"><use href="#i-instagram"/></svg> Instagram</span>
+      <span><svg class="icon"><use href="#i-linkedin"/></svg> LinkedIn</span>
+      <span><svg class="icon"><use href="#i-facebook"/></svg> Facebook</span>
+    </div>
+    <div class="right" style="display:flex;align-items:center;gap:10px;font-weight:700;">
+      Industria Argentina
+      <svg class="flag" viewBox="0 0 30 20">
+        <rect width="30" height="6.66" fill="#74ACDF"/>
+        <rect y="6.66" width="30" height="6.66" fill="#FFFFFF"/>
+        <rect y="13.33" width="30" height="6.66" fill="#74ACDF"/>
+        <circle cx="15" cy="10" r="2.4" fill="#F6B40E" stroke="#85591A" stroke-width=".4"/>
+      </svg>
+    </div>
+  </div>
+</section>
+
+</body>
+</html>

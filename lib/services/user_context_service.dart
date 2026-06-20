@@ -94,6 +94,24 @@ class UserContextService {
     debugPrint('[Firestore] setActiveSite done uid=$uid siteId=$siteId');
   }
 
+  Future<void> setActiveTenantAndSite({
+    required String uid,
+    required String tenantId,
+    required String siteId,
+  }) async {
+    final String path = FirestorePaths.userProfile(uid);
+    debugPrint(
+      '[Firestore] setActiveTenantAndSite started path=$path tenantId=$tenantId siteId=$siteId',
+    );
+    await FirebaseFirestore.instance.doc(path).update(<String, Object?>{
+      'activeTenantId': tenantId,
+      'defaultSiteId': siteId,
+    });
+    debugPrint(
+      '[Firestore] setActiveTenantAndSite done uid=$uid tenantId=$tenantId siteId=$siteId',
+    );
+  }
+
   Future<void> saveComparisonModuleOrder({
     required String uid,
     required List<String> moduleOrder,

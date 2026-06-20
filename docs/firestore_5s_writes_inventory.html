@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Inventario de escrituras Firestore cada 5 segundos</title>
+  <style>
+    @page { size: A4; margin: 22mm 18mm; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111827;
+      line-height: 1.45;
+      font-size: 13px;
+    }
+    h1 { font-size: 25px; margin: 0 0 8px; }
+    h2 { font-size: 17px; margin: 24px 0 8px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    p { margin: 6px 0; }
+    ul { margin: 6px 0 8px 20px; padding: 0; }
+    li { margin: 3px 0; }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11.5px;
+      background: #f3f4f6;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    pre {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11.2px;
+      background: #f3f4f6;
+      padding: 9px 11px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 14px;
+      font-size: 11.8px;
+    }
+    th, td {
+      border: 1px solid #d1d5db;
+      padding: 7px 8px;
+      vertical-align: top;
+    }
+    th { background: #e5e7eb; text-align: left; }
+    .note {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .ok {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>Inventario de escrituras Firestore cada 5 segundos</h1>
+  <p class="muted">Proyecto: <strong>agro-data-control</strong> | Documento complementario al analisis de cuota</p>
+
+  <h2>Resumen</h2>
+  <p>
+    El backend corre con <code>pollingIntervalMs = 5000</code>, es decir, procesa un snapshot cada 5 segundos.
+    No todo lo que se evalua en ese ciclo se escribe en Firestore. La escritura constante relevante esta en
+    <code>runtimeEvents</code>, especificamente en los heartbeats de equipos activos.
+  </p>
+  <pre>1 ciclo cada 5 segundos = 17.280 ciclos por dia
+1 write cada 5 segundos = 17.280 writes/dia</pre>
+
+  <h2>Escrituras que pueden ocurrir cada 5 segundos</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Escritura</th>
+        <th>Condicion</th>
+        <th>Ruta Firestore</th>
+        <th>Motivo original</th>
+        <th>Impacto</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Heartbeat de ventiladores</td>
+        <td><code>tensionSalidaVentiladores &gt; 0</code></td>
+        <td><code>tenants/the-gene-pig/sites/genetica-1/plcs/{plcId}/runtimeEvents/{eventId}</code></td>
+        <td>Mantener vivo el evento abierto, actualizar duracion, potencia, porcentaje y energia acumulada.</td>
+        <td>17.280 writes/dia por Munter con ventiladores activos.</td>
+      </tr>
+      <tr>
+        <td>Heartbeat de bomba humidificador</td>
+        <td><code>bombaHumidificador == true</code></td>
+        <td><code>tenants/the-gene-pig/sites/genetica-1/plcs/{plcId}/runtimeEvents/{eventId}</code></td>
+        <td>Registrar que la bomba sigue encendida y actualizar duracion/energia del evento activo.</td>
+        <td>17.280 writes/dia por bomba activa.</td>
+      </tr>
+      <tr>
+        <td>Heartbeat de resistencia 1</td>
+        <td><code>resistencia1 == true</code></td>
+        <td><code>tenants/the-gene-pig/sites/genetica-1/plcs/{plcId}/runtimeEvents/{eventId}</code></td>
+        <td>Registrar continuidad del estado ON y actualizar duracion/energia.</td>
+        <td>17.280 writes/dia por resistencia activa.</td>
+      </tr>
+      <tr>
+        <td>Heartbeat de resistencia 2</td>
+        <td><code>resistencia2 == true</code></td>
+        <td><code>tenants/the-gene-pig/sites/genetica-1/plcs/{plcId}/runtimeEvents/{eventId}</code></td>
+        <td>Registrar continuidad del estado ON y actualizar duracion/energia.</td>
+        <td>17.280 writes/dia por resistencia activa.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Dispositivos cubiertos por la configuracion actual</h2>
+  <p>La config actual tiene 2 PLCs: <code>munters1</code> y <code>munters2</code>. Para cada uno se trackean 4 runtime devices.</p>
+  <pre>munters1.fans
+munters1.bombaHumidificador
+munters1.resistencia1
+munters1.resistencia2
+munters2.fans
+munters2.bombaHumidificador
+munters2.resistencia1
+munters2.resistencia2</pre>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Dispositivos activos constantes</th>
+        <th>Writes/dia con heartbeat cada 5s</th>
+        <th>Comparacion con Spark</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>17.280</td>
+        <td>86% de la cuota diaria de 20.000 writes</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>34.560</td>
+        <td>173% de la cuota diaria</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>69.120</td>
+        <td>346% de la cuota diaria</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>138.240</td>
+        <td>691% de la cuota diaria</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Por que lo hicimos</h2>
+  <p>
+    La intencion tecnica fue mantener eventos abiertos actualizados mientras el equipo sigue ON.
+    Eso permite mostrar en la UI datos vivos como:
+  </p>
+  <ul>
+    <li>Duracion acumulada: <code>activeDurationSec</code></li>
+    <li>Potencia: <code>powerWatts</code></li>
+    <li>Porcentaje de ventiladores: <code>powerPercent</code></li>
+    <li>Energia acumulada: <code>energyKwh</code></li>
+    <li>Ultima observacion: <code>observedAt</code></li>
+  </ul>
+  <p>
+    El problema es que esos campos cambian continuamente. Si se persisten cada 5 segundos,
+    cada actualizacion cuenta como escritura aunque se reutilice el mismo documento.
+  </p>
+
+  <h2>Que se evalua cada 5 segundos pero no necesariamente escribe</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Modulo</th>
+        <th>Comportamiento</th>
+        <th>Impacto en writes</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>doorOpenings</code></td>
+        <td>Evalua puertas cada poll, pero escribe solo cuando hay transicion abierta/cerrada.</td>
+        <td>Bajo. No escribe cada 5 segundos si no cambia la puerta.</td>
+      </tr>
+      <tr>
+        <td><code>temperatureHistory</code></td>
+        <td>Evalua snapshots, toma muestras cada 20 minutos y escribe al cerrar la hora/recalcular dia.</td>
+        <td>Bajo. No escribe cada 5 segundos.</td>
+      </tr>
+      <tr>
+        <td><code>differentialPressureHistory</code></td>
+        <td>Evalua snapshots, pero guarda por ventana de 4 horas.</td>
+        <td>Bajo. No escribe cada 5 segundos.</td>
+      </tr>
+      <tr>
+        <td>Frontend snapshot HTTP</td>
+        <td>La app consulta al backend cada 5 segundos por HTTP.</td>
+        <td>No es escritura Firestore directa.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Recomendacion</h2>
+  <div class="ok">
+    Guardar cambios ON/OFF inmediatamente, pero throttlear heartbeats a 60 segundos o 5 minutos.
+    Para energia activa, calcular en UI usando <code>startedAt</code>, <code>powerWatts</code> y la hora actual,
+    y guardar el valor final al cerrar el evento.
+  </div>
+</body>
+</html>

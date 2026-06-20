@@ -73,6 +73,18 @@
         "unitKey": "munters1",
         "signalKey": "puertaMunter",
         "label": "Puerta Munter"
+      },
+      {
+        "doorId": "munters2_sala",
+        "unitKey": "munters2",
+        "signalKey": "puertaSala",
+        "label": "Puerta Sala M2"
+      },
+      {
+        "doorId": "munters2_munter",
+        "unitKey": "munters2",
+        "signalKey": "puertaMunter",
+        "label": "Puerta Munter M2"
       }
     ]
   },

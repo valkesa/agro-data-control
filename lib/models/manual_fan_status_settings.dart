@@ -20,6 +20,17 @@ class ManualFanStatusSettings {
       munters2: munters2 ?? this.munters2,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is ManualFanStatusSettings &&
+            other.munters1 == munters1 &&
+            other.munters2 == munters2;
+  }
+
+  @override
+  int get hashCode => Object.hash(munters1, munters2);
 }
 
 class FanUnitStatusSettings {
@@ -64,4 +75,19 @@ class FanUnitStatusSettings {
       q10: q10 ?? this.q10,
     );
   }
+
+  @override
+  bool operator ==(Object other) {
+    return identical(this, other) ||
+        other is FanUnitStatusSettings &&
+            other.q5 == q5 &&
+            other.q6 == q6 &&
+            other.q7 == q7 &&
+            other.q8 == q8 &&
+            other.q9 == q9 &&
+            other.q10 == q10;
+  }
+
+  @override
+  int get hashCode => Object.hash(q5, q6, q7, q8, q9, q10);
 }

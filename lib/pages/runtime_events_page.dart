@@ -147,8 +147,9 @@ class _RuntimeEventsPageState extends State<RuntimeEventsPage>
           )
           .toList();
       final List<List<RuntimeEventRecord>> results = await Future.wait(futures);
-      final List<RuntimeEventRecord> all =
-          results.expand((List<RuntimeEventRecord> r) => r).toList();
+      final List<RuntimeEventRecord> all = results
+          .expand((List<RuntimeEventRecord> r) => r)
+          .toList();
       all.sort(
         (RuntimeEventRecord a, RuntimeEventRecord b) =>
             b.startedAt.compareTo(a.startedAt),
@@ -186,7 +187,10 @@ class _RuntimeEventsPageState extends State<RuntimeEventsPage>
           color: const Color(0xFF0F172A),
           child: TabBar(
             controller: _tabController,
-            tabs: const <Tab>[Tab(text: 'Datos'), Tab(text: 'Gráficos')],
+            tabs: const <Tab>[
+              Tab(text: 'Datos'),
+              Tab(text: 'Gráficos'),
+            ],
             labelColor: const Color(0xFF38BDF8),
             unselectedLabelColor: const Color(0xFF64748B),
             indicatorColor: const Color(0xFF38BDF8),
@@ -196,9 +200,7 @@ class _RuntimeEventsPageState extends State<RuntimeEventsPage>
         Expanded(
           child: _loading
               ? const Center(
-                  child: CircularProgressIndicator(
-                    color: Color(0xFF38BDF8),
-                  ),
+                  child: CircularProgressIndicator(color: Color(0xFF38BDF8)),
                 )
               : _error != null
               ? _ErrorView(error: _error!, onRetry: _loadData)
@@ -273,11 +275,7 @@ class _RuntimeEventsPageState extends State<RuntimeEventsPage>
     }
   }
 
-  Widget _buildSelectorChip(
-    String label,
-    bool selected,
-    VoidCallback onTap,
-  ) {
+  Widget _buildSelectorChip(String label, bool selected, VoidCallback onTap) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -286,15 +284,13 @@ class _RuntimeEventsPageState extends State<RuntimeEventsPage>
           color: selected ? const Color(0xFF1D4ED8) : const Color(0xFF1E293B),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-            color:
-                selected ? const Color(0xFF3B82F6) : const Color(0xFF334155),
+            color: selected ? const Color(0xFF3B82F6) : const Color(0xFF334155),
           ),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color:
-                selected ? const Color(0xFFBFDBFE) : const Color(0xFF94A3B8),
+            color: selected ? const Color(0xFFBFDBFE) : const Color(0xFF94A3B8),
             fontSize: 11,
             fontWeight: selected ? FontWeight.w600 : FontWeight.w400,
           ),
@@ -458,7 +454,8 @@ class _DataTabState extends State<_DataTab> {
   @override
   Widget build(BuildContext context) {
     final List<RuntimeEventRecord> displayed = _displayed;
-    final bool hasFilter = _filterDeviceType != null || _filterIsHeartbeat != null;
+    final bool hasFilter =
+        _filterDeviceType != null || _filterIsHeartbeat != null;
     return Column(
       children: <Widget>[
         _CurrentStateSummary(allRecords: widget.allRecords),
@@ -472,7 +469,8 @@ class _DataTabState extends State<_DataTab> {
                 _Chip(
                   label: _filterDeviceType == null
                       ? 'Todos los dispositivos'
-                      : (_deviceLabels[_filterDeviceType] ?? _filterDeviceType!),
+                      : (_deviceLabels[_filterDeviceType] ??
+                            _filterDeviceType!),
                   active: _filterDeviceType != null,
                   onTap: _showDeviceFilter,
                 ),
@@ -530,7 +528,8 @@ class _CurrentStateSummary extends StatelessWidget {
     if (allRecords.isEmpty) return const SizedBox.shrink();
 
     // For each (plcId, deviceType) find the most recent record.
-    final Map<String, RuntimeEventRecord> latest = <String, RuntimeEventRecord>{};
+    final Map<String, RuntimeEventRecord> latest =
+        <String, RuntimeEventRecord>{};
     for (final RuntimeEventRecord r in allRecords) {
       final String key = '${r.plcId}::${r.deviceType}';
       final RuntimeEventRecord? prev = latest[key];
@@ -541,24 +540,25 @@ class _CurrentStateSummary extends StatelessWidget {
 
     if (latest.isEmpty) return const SizedBox.shrink();
 
-    final List<_DeviceState> states = latest.entries.map((MapEntry<String, RuntimeEventRecord> e) {
-      final RuntimeEventRecord r = e.value;
-      // Use explicit deviceIsOn if available; fall back to isHeartbeat for old docs.
-      final bool isOn = r.deviceIsOn ?? r.isHeartbeat;
-      return _DeviceState(
-        plcId: r.plcId,
-        deviceType: r.deviceType,
-        isOn: isOn,
-        since: isOn ? r.startedAt : null,
-        powerPercent: r.powerPercent,
-      );
-    }).toList()
-      ..sort((a, b) {
-        final int plcCmp = a.plcId.compareTo(b.plcId);
-        if (plcCmp != 0) return plcCmp;
-        return (_deviceLabels[a.deviceType] ?? a.deviceType)
-            .compareTo(_deviceLabels[b.deviceType] ?? b.deviceType);
-      });
+    final List<_DeviceState> states =
+        latest.entries.map((MapEntry<String, RuntimeEventRecord> e) {
+          final RuntimeEventRecord r = e.value;
+          // Use explicit deviceIsOn if available; fall back to isHeartbeat for old docs.
+          final bool isOn = r.deviceIsOn ?? r.isHeartbeat;
+          return _DeviceState(
+            plcId: r.plcId,
+            deviceType: r.deviceType,
+            isOn: isOn,
+            since: isOn ? r.startedAt : null,
+            powerPercent: r.powerPercent,
+          );
+        }).toList()..sort((a, b) {
+          final int plcCmp = a.plcId.compareTo(b.plcId);
+          if (plcCmp != 0) return plcCmp;
+          return (_deviceLabels[a.deviceType] ?? a.deviceType).compareTo(
+            _deviceLabels[b.deviceType] ?? b.deviceType,
+          );
+        });
 
     return Container(
       width: double.infinity,
@@ -578,7 +578,8 @@ class _CurrentStateSummary extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: () {
-              final Map<String, List<_DeviceState>> byPlc = <String, List<_DeviceState>>{};
+              final Map<String, List<_DeviceState>> byPlc =
+                  <String, List<_DeviceState>>{};
               for (final _DeviceState s in states) {
                 byPlc.putIfAbsent(s.plcId, () => <_DeviceState>[]).add(s);
               }
@@ -589,10 +590,12 @@ class _CurrentStateSummary extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: plcStates
-                        .map((_DeviceState s) => Padding(
-                              padding: const EdgeInsets.only(bottom: 6),
-                              child: _StateChip(state: s),
-                            ))
+                        .map(
+                          (_DeviceState s) => Padding(
+                            padding: const EdgeInsets.only(bottom: 6),
+                            child: _StateChip(state: s),
+                          ),
+                        )
                         .toList(),
                   ),
                 );
@@ -716,8 +719,13 @@ class _EventCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color color =
         _deviceColors[record.deviceType] ?? const Color(0xFF94A3B8);
-    final String label =
-        _deviceLabels[record.deviceType] ?? record.deviceType;
+    final String label = _deviceLabels[record.deviceType] ?? record.deviceType;
+    final int displayDurationSec = record.isHeartbeat
+        ? DateTime.now().difference(record.startedAt).inSeconds.abs()
+        : record.durationSec;
+    final double? displayEnergyKwh = record.powerWatts == null
+        ? record.energyKwh
+        : (record.powerWatts! / 1000) * (displayDurationSec / 3600);
 
     final DateTime? endTime = record.endedAt ?? record.observedAt;
     final String dateRange = endTime != null
@@ -776,10 +784,14 @@ class _EventCard extends StatelessWidget {
                             vertical: 1,
                           ),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1D4ED8).withValues(alpha: 0.25),
+                            color: const Color(
+                              0xFF1D4ED8,
+                            ).withValues(alpha: 0.25),
                             borderRadius: BorderRadius.circular(4),
                             border: Border.all(
-                              color: const Color(0xFF3B82F6).withValues(alpha: 0.5),
+                              color: const Color(
+                                0xFF3B82F6,
+                              ).withValues(alpha: 0.5),
                             ),
                           ),
                           child: const Text(
@@ -801,7 +813,7 @@ class _EventCard extends StatelessWidget {
                         _buildHbStateWidget(record, color)
                       else
                         Text(
-                          _formatDuration(record.durationSec),
+                          _formatDuration(displayDurationSec),
                           style: const TextStyle(
                             color: Color(0xFFE5E7EB),
                             fontSize: 18,
@@ -820,7 +832,7 @@ class _EventCard extends StatelessWidget {
                     ],
                   ),
                   if (record.powerPercent != null ||
-                      record.energyKwh != null) ...<Widget>[
+                      displayEnergyKwh != null) ...<Widget>[
                     const SizedBox(height: 2),
                     Row(
                       children: <Widget>[
@@ -833,7 +845,7 @@ class _EventCard extends StatelessWidget {
                             ),
                           ),
                         if (record.powerPercent != null &&
-                            record.energyKwh != null)
+                            displayEnergyKwh != null)
                           const Text(
                             '  ·  ',
                             style: TextStyle(
@@ -841,9 +853,9 @@ class _EventCard extends StatelessWidget {
                               fontSize: 10,
                             ),
                           ),
-                        if (record.energyKwh != null)
+                        if (displayEnergyKwh != null)
                           Text(
-                            '${record.energyKwh!.toStringAsFixed(3)} kWh',
+                            '${displayEnergyKwh.toStringAsFixed(3)} kWh',
                             style: const TextStyle(
                               color: Color(0xFF64748B),
                               fontSize: 10,
@@ -961,11 +973,7 @@ class _ChartsTab extends StatelessWidget {
             plcIds: plcIds,
             selectedPlcId: selectedPlcId,
             selectedPeriod: selectedPeriod,
-            deviceTypes: const <String>[
-              'humidifierPump',
-              'heater1',
-              'heater2',
-            ],
+            deviceTypes: const <String>['humidifierPump', 'heater1', 'heater2'],
           ),
         ],
       ),
@@ -1046,10 +1054,9 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
     }
   }
 
-  List<String> get _activePlcIds =>
-      widget.selectedPlcId == 'all'
-          ? widget.plcIds
-          : <String>[widget.selectedPlcId];
+  List<String> get _activePlcIds => widget.selectedPlcId == 'all'
+      ? widget.plcIds
+      : <String>[widget.selectedPlcId];
 
   DateTime _periodStart() {
     final DateTime now = DateTime.now();
@@ -1088,19 +1095,22 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
   }
 
   // For each unique event instance (plcId + deviceType + startedAt),
-  // keep the closed record if available, otherwise the HB with the
-  // largest durationSec (most recent snapshot). This avoids double-counting
-  // when both HBs and a closed record exist for the same event.
+  // keep the closed record if available, otherwise one open record. Open
+  // durations are calculated against the current time so Firestore does not
+  // need heartbeat writes every polling cycle.
   // Returns the portion of a record's duration that falls within the period.
   // Cross-boundary events (started before periodStart but observed/ended after)
   // are clamped so we don't count pre-period time.
   int _effectiveDurationSec(RuntimeEventRecord r, DateTime periodStart) {
-    if (!r.startedAt.isBefore(periodStart)) return r.durationSec;
-    if (r.isHeartbeat &&
-        r.observedAt != null &&
-        r.observedAt!.isAfter(periodStart)) {
-      return r.observedAt!.difference(periodStart).inSeconds;
+    if (r.isHeartbeat) {
+      final DateTime end = DateTime.now();
+      if (!end.isAfter(periodStart)) return 0;
+      final DateTime effectiveStart = r.startedAt.isBefore(periodStart)
+          ? periodStart
+          : r.startedAt;
+      return end.difference(effectiveStart).inSeconds;
     }
+    if (!r.startedAt.isBefore(periodStart)) return r.durationSec;
     if (!r.isHeartbeat &&
         r.endedAt != null &&
         r.endedAt!.isAfter(periodStart)) {
@@ -1112,8 +1122,7 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
   Map<String, RuntimeEventRecord> _groupByEvent(
     Iterable<RuntimeEventRecord> records,
   ) {
-    final Map<String, RuntimeEventRecord> best =
-        <String, RuntimeEventRecord>{};
+    final Map<String, RuntimeEventRecord> best = <String, RuntimeEventRecord>{};
     for (final RuntimeEventRecord r in records) {
       final String key =
           '${r.plcId}:${r.deviceType}:${r.startedAt.millisecondsSinceEpoch}';
@@ -1122,10 +1131,6 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
         best[key] = r;
       } else if (!r.isHeartbeat && existing.isHeartbeat) {
         best[key] = r; // closed supersedes HB
-      } else if (r.isHeartbeat &&
-          existing.isHeartbeat &&
-          r.durationSec > existing.durationSec) {
-        best[key] = r; // latest (longest) HB wins
       }
     }
     return best;
@@ -1148,10 +1153,7 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
           if (kwh != null && kwh > 0) ...<Widget>[
             Text(
               '${_fmtNum(kwh, 1)} kWh',
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
             ),
             const SizedBox(width: 8),
           ],
@@ -1240,7 +1242,8 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
         if (kw != null) {
           final double hrs = effSec / 3600.0;
           devKwHrs[deviceType] = (devKwHrs[deviceType] ?? 0) + hrs * kw;
-          devCostMap[deviceType] = (devCostMap[deviceType] ?? 0) + hrs * kw * cpk;
+          devCostMap[deviceType] =
+              (devCostMap[deviceType] ?? 0) + hrs * kw * cpk;
         } else {
           devMissing.add(deviceType);
         }
@@ -1248,17 +1251,23 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
     }
 
     // ── Grand total ──
-    double grandTotal =
-        fanCostMap.values.fold(0.0, (double a, double b) => a + b);
+    double grandTotal = fanCostMap.values.fold(
+      0.0,
+      (double a, double b) => a + b,
+    );
     for (final String d in simpleDevices) {
       grandTotal += devCostMap[d] ?? 0;
     }
 
     // ── Group totals ──────────────────────────────────────────────────────────
-    final double fansTotalKwh =
-        fanKwHrs.values.fold(0.0, (double a, double b) => a + b);
-    final double fansTotalCost =
-        fanCostMap.values.fold(0.0, (double a, double b) => a + b);
+    final double fansTotalKwh = fanKwHrs.values.fold(
+      0.0,
+      (double a, double b) => a + b,
+    );
+    final double fansTotalCost = fanCostMap.values.fold(
+      0.0,
+      (double a, double b) => a + b,
+    );
     final bool fansMissingAny = fanMissingPcts.isNotEmpty;
 
     final double coolKwh = devKwHrs['humidifierPump'] ?? 0;
@@ -1299,15 +1308,17 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
               '  $pct%: ${_fmtNum(hrs, 2)}h × ${_fmtNum(effectiveKw, 2)}kW'
               ' × $cpkStr \$/kWh = ${_formatCost(cost)}';
         }
-        lines.add(Text(
-          line,
-          style: TextStyle(
-            color: missing
-                ? const Color(0xFF64748B)
-                : const Color(0xFFCBD5E1),
-            fontSize: 11,
+        lines.add(
+          Text(
+            line,
+            style: TextStyle(
+              color: missing
+                  ? const Color(0xFF64748B)
+                  : const Color(0xFFCBD5E1),
+              fontSize: 11,
+            ),
           ),
-        ));
+        );
       }
     }
 
@@ -1325,10 +1336,12 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
       final String label = _deviceLabels[deviceType] ?? deviceType;
       final int sec = devSec[deviceType] ?? 0;
       if (sec == 0) {
-        lines.add(const Text(
-          '  Bomba Humidificadora: \$0',
-          style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
-        ));
+        lines.add(
+          const Text(
+            '  Bomba Humidificadora: \$0',
+            style: TextStyle(color: Color(0xFFCBD5E1), fontSize: 11),
+          ),
+        );
       } else {
         final double hrs = sec / 3600.0;
         final bool missing = coolMissing || !devKwHrs.containsKey(deviceType);
@@ -1338,25 +1351,29 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
         } else {
           final double effectiveKw = hrs > 0 ? devKwHrs[deviceType]! / hrs : 0;
           final double cost = devCostMap[deviceType]!;
-          line = '  $label: ${_fmtNum(hrs, 2)}h × ${_fmtNum(effectiveKw, 2)}kW'
+          line =
+              '  $label: ${_fmtNum(hrs, 2)}h × ${_fmtNum(effectiveKw, 2)}kW'
               ' × $cpkStr \$/kWh = ${_formatCost(cost)}';
         }
-        lines.add(Text(
-          line,
-          style: TextStyle(
-            color: missing
-                ? const Color(0xFF64748B)
-                : const Color(0xFFCBD5E1),
-            fontSize: 11,
+        lines.add(
+          Text(
+            line,
+            style: TextStyle(
+              color: missing
+                  ? const Color(0xFF64748B)
+                  : const Color(0xFFCBD5E1),
+              fontSize: 11,
+            ),
           ),
-        ));
+        );
       }
     }
 
     // ── Calefacción ───────────────────────────────────────────────────────────
     const List<String> heaterDevices = <String>['heater1', 'heater2'];
-    final bool hasHeaters =
-        heaterDevices.any((String d) => (devSec[d] ?? 0) > 0);
+    final bool hasHeaters = heaterDevices.any(
+      (String d) => (devSec[d] ?? 0) > 0,
+    );
     if (hasHeaters) {
       lines.add(const SizedBox(height: 4));
       lines.add(
@@ -1372,7 +1389,8 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
         final String label = _deviceLabels[deviceType] ?? deviceType;
         final double hrs = sec / 3600.0;
         final bool missing =
-            devMissing.contains(deviceType) || !devKwHrs.containsKey(deviceType);
+            devMissing.contains(deviceType) ||
+            !devKwHrs.containsKey(deviceType);
         final String line;
         if (missing) {
           line = '  $label: ${_fmtNum(hrs, 2)}h — sin config kW';
@@ -1383,29 +1401,33 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
               '  $label: ${_fmtNum(hrs, 2)}h × ${_fmtNum(effectiveKw, 2)}kW'
               ' × $cpkStr \$/kWh = ${_formatCost(cost)}';
         }
-        lines.add(Text(
-          line,
-          style: TextStyle(
-            color: missing
-                ? const Color(0xFF64748B)
-                : const Color(0xFFCBD5E1),
-            fontSize: 11,
+        lines.add(
+          Text(
+            line,
+            style: TextStyle(
+              color: missing
+                  ? const Color(0xFF64748B)
+                  : const Color(0xFFCBD5E1),
+              fontSize: 11,
+            ),
           ),
-        ));
+        );
       }
     }
 
     if (lines.isEmpty) return const SizedBox.shrink();
 
     lines.add(const Divider(color: Color(0xFF334155), height: 16));
-    lines.add(Text(
-      'Total: ${_formatCost(grandTotal)}',
-      style: const TextStyle(
-        color: Color(0xFF4ADE80),
-        fontSize: 13,
-        fontWeight: FontWeight.w700,
+    lines.add(
+      Text(
+        'Total: ${_formatCost(grandTotal)}',
+        style: const TextStyle(
+          color: Color(0xFF4ADE80),
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
       ),
-    ));
+    );
 
     return Container(
       width: double.infinity,
@@ -1503,10 +1525,7 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
                     )
                   : const Text(
                       '—',
-                      style: TextStyle(
-                        color: Color(0xFF475569),
-                        fontSize: 11,
-                      ),
+                      style: TextStyle(color: Color(0xFF475569), fontSize: 11),
                       textAlign: TextAlign.right,
                     ),
             ),
@@ -1537,8 +1556,8 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
       if (showCost) {
         final double? kw = _kwForFanLevel(r.plcId, pct);
         if (kw != null) {
-          costByPower[pct] = (costByPower[pct] ?? 0) +
-              (effSec / 3600.0) * kw * _costPerKw!;
+          costByPower[pct] =
+              (costByPower[pct] ?? 0) + (effSec / 3600.0) * kw * _costPerKw!;
         } else {
           missingKwPcts.add(pct);
         }
@@ -1679,14 +1698,15 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
         ? '${hasMissing ? '~' : ''}${_formatCost(totalCost)}'
         : '—';
     final double hours = totalSec / 3600.0;
-    final double kw =
-        hours > 0 && _costPerKw! > 0 ? totalCost / (hours * _costPerKw!) : 0;
+    final double kw = hours > 0 && _costPerKw! > 0
+        ? totalCost / (hours * _costPerKw!)
+        : 0;
     final String tooltip = hasMissing
         ? 'Costo parcial — falta configurar kW'
         : '${hours.toStringAsFixed(1)}h'
-            ' × ${kw.toStringAsFixed(2)}kW'
-            ' × ${_formatCost(_costPerKw!)}/kWh'
-            ' = ${_formatCost(totalCost)}';
+              ' × ${kw.toStringAsFixed(2)}kW'
+              ' × ${_formatCost(_costPerKw!)}/kWh'
+              ' = ${_formatCost(totalCost)}';
 
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -1766,10 +1786,12 @@ class _DeviceBreakdownSectionState extends State<_DeviceBreakdownSection> {
 
           if (recs.isEmpty) return const SizedBox.shrink();
 
-          final List<RuntimeEventRecord> closed =
-              recs.where((RuntimeEventRecord r) => !r.isHeartbeat).toList();
-          final List<RuntimeEventRecord> hbs =
-              recs.where((RuntimeEventRecord r) => r.isHeartbeat).toList();
+          final List<RuntimeEventRecord> closed = recs
+              .where((RuntimeEventRecord r) => !r.isHeartbeat)
+              .toList();
+          final List<RuntimeEventRecord> hbs = recs
+              .where((RuntimeEventRecord r) => r.isHeartbeat)
+              .toList();
           final int totalSec = recs.fold(
             0,
             (int s, RuntimeEventRecord r) =>
@@ -1898,7 +1920,8 @@ class _PowerLineChartState extends State<_PowerLineChart> {
   @override
   void didUpdateWidget(_PowerLineChart old) {
     super.didUpdateWidget(old);
-    if (old.plcId != widget.plcId || old.selectedPeriod != widget.selectedPeriod) {
+    if (old.plcId != widget.plcId ||
+        old.selectedPeriod != widget.selectedPeriod) {
       _rebuild();
     } else if (old.records != widget.records) {
       _rebuildSpots();
@@ -1932,18 +1955,19 @@ class _PowerLineChartState extends State<_PowerLineChart> {
 
   // Build step-line spots from fan records for this PLC, filtered by period.
   List<FlSpot> _buildStepSpots({required double afterMs}) {
-    final List<RuntimeEventRecord> recs = widget.records
-        .where(
-          (RuntimeEventRecord r) =>
-              r.plcId == widget.plcId &&
-              r.deviceType == 'fans' &&
-              r.startedAt.millisecondsSinceEpoch >= afterMs,
-        )
-        .toList()
-      ..sort(
-        (RuntimeEventRecord a, RuntimeEventRecord b) =>
-            a.startedAt.compareTo(b.startedAt),
-      );
+    final List<RuntimeEventRecord> recs =
+        widget.records
+            .where(
+              (RuntimeEventRecord r) =>
+                  r.plcId == widget.plcId &&
+                  r.deviceType == 'fans' &&
+                  r.startedAt.millisecondsSinceEpoch >= afterMs,
+            )
+            .toList()
+          ..sort(
+            (RuntimeEventRecord a, RuntimeEventRecord b) =>
+                a.startedAt.compareTo(b.startedAt),
+          );
 
     if (recs.isEmpty) return const <FlSpot>[];
 
@@ -1951,10 +1975,10 @@ class _PowerLineChartState extends State<_PowerLineChart> {
 
     for (final RuntimeEventRecord r in recs) {
       final double sx = r.startedAt.millisecondsSinceEpoch.toDouble();
-      final double ex =
-          (r.endedAt ?? r.observedAt ?? r.startedAt)
-              .millisecondsSinceEpoch
-              .toDouble();
+      final DateTime effectiveEnd = r.isHeartbeat
+          ? DateTime.now()
+          : (r.endedAt ?? r.observedAt ?? r.startedAt);
+      final double ex = effectiveEnd.millisecondsSinceEpoch.toDouble();
       final double pw = (r.powerPercent ?? 0).toDouble();
 
       if (spots.isEmpty) {
@@ -2022,8 +2046,10 @@ class _PowerLineChartState extends State<_PowerLineChart> {
       final double origDuration = _xGestureEndMs - _xGestureStartMs;
       // drag up (negative dy) = zoom in; drag down = zoom out
       final double factor = math.pow(2.0, dy / 150.0).toDouble();
-      final double newDuration =
-          (origDuration * factor).clamp(_minWindowMs, _maxWindowMs);
+      final double newDuration = (origDuration * factor).clamp(
+        _minWindowMs,
+        _maxWindowMs,
+      );
       final double center = (_xGestureStartMs + _xGestureEndMs) / 2;
       setState(() {
         _startMs = center - newDuration / 2;
@@ -2044,8 +2070,9 @@ class _PowerLineChartState extends State<_PowerLineChart> {
   }
 
   String _formatAxisLabel(double ms, double windowMs) {
-    final DateTime dt =
-        DateTime.fromMillisecondsSinceEpoch(ms.toInt()).toLocal();
+    final DateTime dt = DateTime.fromMillisecondsSinceEpoch(
+      ms.toInt(),
+    ).toLocal();
     final String hhmm =
         '${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
     if (windowMs < 24 * 3600000) return hhmm;
@@ -2054,8 +2081,7 @@ class _PowerLineChartState extends State<_PowerLineChart> {
 
   @override
   Widget build(BuildContext context) {
-    final Color fanColor =
-        _deviceColors['fans'] ?? const Color(0xFF22C55E);
+    final Color fanColor = _deviceColors['fans'] ?? const Color(0xFF22C55E);
 
     final double windowMs = _endMs - _startMs;
     final double interval = _axisInterval(windowMs);
@@ -2105,121 +2131,121 @@ class _PowerLineChartState extends State<_PowerLineChart> {
                       onHorizontalDragUpdate: (DragUpdateDetails d) =>
                           _onPanUpdate(d, chartWidth),
                       child: LineChart(
-                      duration: Duration.zero,
-                      LineChartData(
-                        minX: _startMs,
-                        maxX: _endMs,
-                        minY: 0,
-                        maxY: 105,
-                        clipData: const FlClipData.all(),
-                        gridData: FlGridData(
-                          show: true,
-                          horizontalInterval: 25,
-                          verticalInterval: interval,
-                          getDrawingHorizontalLine: (_) => const FlLine(
-                            color: Color(0xFF1E293B),
-                            strokeWidth: 1,
-                          ),
-                          getDrawingVerticalLine: (_) => const FlLine(
-                            color: Color(0xFF1E293B),
-                            strokeWidth: 1,
-                          ),
-                        ),
-                        borderData: FlBorderData(show: false),
-                        titlesData: FlTitlesData(
-                          topTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          rightTitles: const AxisTitles(
-                            sideTitles: SideTitles(showTitles: false),
-                          ),
-                          leftTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 34,
-                              interval: 25,
-                              getTitlesWidget: (double v, TitleMeta _) {
-                                if (v != 0 &&
-                                    v != 25 &&
-                                    v != 50 &&
-                                    v != 75 &&
-                                    v != 100) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Text(
-                                  '${v.toInt()}%',
-                                  style: const TextStyle(
-                                    color: Color(0xFF94A3B8),
-                                    fontSize: 9,
-                                  ),
-                                );
-                              },
+                        duration: Duration.zero,
+                        LineChartData(
+                          minX: _startMs,
+                          maxX: _endMs,
+                          minY: 0,
+                          maxY: 105,
+                          clipData: const FlClipData.all(),
+                          gridData: FlGridData(
+                            show: true,
+                            horizontalInterval: 25,
+                            verticalInterval: interval,
+                            getDrawingHorizontalLine: (_) => const FlLine(
+                              color: Color(0xFF1E293B),
+                              strokeWidth: 1,
+                            ),
+                            getDrawingVerticalLine: (_) => const FlLine(
+                              color: Color(0xFF1E293B),
+                              strokeWidth: 1,
                             ),
                           ),
-                          bottomTitles: AxisTitles(
-                            sideTitles: SideTitles(
-                              showTitles: true,
-                              reservedSize: 30,
-                              interval: interval,
-                              getTitlesWidget: (double v, TitleMeta meta) {
-                                if (v < _startMs || v > _endMs) {
-                                  return const SizedBox.shrink();
-                                }
-                                return Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Text(
-                                    _formatAxisLabel(v, windowMs),
+                          borderData: FlBorderData(show: false),
+                          titlesData: FlTitlesData(
+                            topTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            rightTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            leftTitles: AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 34,
+                                interval: 25,
+                                getTitlesWidget: (double v, TitleMeta _) {
+                                  if (v != 0 &&
+                                      v != 25 &&
+                                      v != 50 &&
+                                      v != 75 &&
+                                      v != 100) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Text(
+                                    '${v.toInt()}%',
                                     style: const TextStyle(
                                       color: Color(0xFF94A3B8),
                                       fontSize: 9,
                                     ),
-                                    textAlign: TextAlign.center,
-                                  ),
-                                );
-                              },
+                                  );
+                                },
+                              ),
+                            ),
+                            bottomTitles: AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 30,
+                                interval: interval,
+                                getTitlesWidget: (double v, TitleMeta meta) {
+                                  if (v < _startMs || v > _endMs) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      _formatAxisLabel(v, windowMs),
+                                      style: const TextStyle(
+                                        color: Color(0xFF94A3B8),
+                                        fontSize: 9,
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  );
+                                },
+                              ),
                             ),
                           ),
-                        ),
-                        lineTouchData: LineTouchData(
-                          touchTooltipData: LineTouchTooltipData(
-                            getTooltipColor: (_) => const Color(0xFF1E293B),
-                            getTooltipItems: (List<LineBarSpot> spots) =>
-                                spots.map((LineBarSpot s) {
-                              final DateTime dt =
-                                  DateTime.fromMillisecondsSinceEpoch(
-                                s.x.toInt(),
-                              ).toLocal();
-                              final String time =
-                                  '${dt.day}/${dt.month} '
-                                  '${dt.hour.toString().padLeft(2, '0')}:'
-                                  '${dt.minute.toString().padLeft(2, '0')}';
-                              return LineTooltipItem(
-                                '$time\n${s.y.toInt()}%',
-                                const TextStyle(
-                                  color: Color(0xFFE5E7EB),
-                                  fontSize: 11,
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        lineBarsData: <LineChartBarData>[
-                          LineChartBarData(
-                            spots: chartSpots,
-                            isCurved: false,
-                            color: fanColor,
-                            barWidth: 2,
-                            isStrokeCapRound: false,
-                            dotData: const FlDotData(show: false),
-                            belowBarData: BarAreaData(
-                              show: true,
-                              color: fanColor.withValues(alpha: 0.08),
+                          lineTouchData: LineTouchData(
+                            touchTooltipData: LineTouchTooltipData(
+                              getTooltipColor: (_) => const Color(0xFF1E293B),
+                              getTooltipItems: (List<LineBarSpot> spots) =>
+                                  spots.map((LineBarSpot s) {
+                                    final DateTime dt =
+                                        DateTime.fromMillisecondsSinceEpoch(
+                                          s.x.toInt(),
+                                        ).toLocal();
+                                    final String time =
+                                        '${dt.day}/${dt.month} '
+                                        '${dt.hour.toString().padLeft(2, '0')}:'
+                                        '${dt.minute.toString().padLeft(2, '0')}';
+                                    return LineTooltipItem(
+                                      '$time\n${s.y.toInt()}%',
+                                      const TextStyle(
+                                        color: Color(0xFFE5E7EB),
+                                        fontSize: 11,
+                                      ),
+                                    );
+                                  }).toList(),
                             ),
                           ),
-                        ],
+                          lineBarsData: <LineChartBarData>[
+                            LineChartBarData(
+                              spots: chartSpots,
+                              isCurved: false,
+                              color: fanColor,
+                              barWidth: 2,
+                              isStrokeCapRound: false,
+                              dotData: const FlDotData(show: false),
+                              belowBarData: BarAreaData(
+                                show: true,
+                                color: fanColor.withValues(alpha: 0.08),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
                     // ── X axis strip: horizontal = pan, vertical = zoom ──
                     Positioned(
                       left: 34,
@@ -2404,11 +2430,7 @@ class _ErrorView extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: <Widget>[
-            const Icon(
-              Icons.error_outline,
-              color: Color(0xFFEF4444),
-              size: 48,
-            ),
+            const Icon(Icons.error_outline, color: Color(0xFFEF4444), size: 48),
             const SizedBox(height: 16),
             Text(
               error,

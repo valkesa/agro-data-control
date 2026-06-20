@@ -15,7 +15,19 @@
       "Bash(grep -v \"^$\")",
       "Bash(open /Users/jerry/APPS/valke-apps/agro_data_control/agro_data_control_diseno_funcional.html)",
       "Bash(open /Users/jerry/APPS/valke-apps/agro_data_control/trabajos_de_implementacion/agro_data_control_diseno_funcional.html)",
-      "Bash(grep -E \"\\\\.\\(dart|json\\)$\")"
+      "Bash(grep -E \"\\\\.\\(dart|json\\)$\")",
+      "Bash(which google-chrome *)",
+      "Read(//Applications/**)",
+      "Bash(mkdir -p /tmp/agrodata_shot)",
+      "Bash(\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --screenshot=/tmp/agrodata_shot/page.png --window-size=860,2400 \"file:///Users/jerry/APPS/valke-apps/agro_data_control/docs/agrodata_monitor_brochure.html\")",
+      "Read(//tmp/**)",
+      "Bash(\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --screenshot=/tmp/agrodata_shot/p1.png --window-size=900,1300 --hide-scrollbars \"file:///Users/jerry/APPS/valke-apps/agro_data_control/docs/agrodata_monitor_brochure.html\")",
+      "Bash(python3 -c ' *)",
+      "Bash(sips --help)",
+      "Bash(sips --cropOffset 1180 0 -c 1320 900 full.png --out p2_view.png)",
+      "Bash(sips -g pixelHeight -g pixelWidth p2_view.png)",
+      "Bash(sed 's#</body>#<style>#page-1{display:none}</style></body>#' \"/Users/jerry/APPS/valke-apps/agro_data_control/docs/agrodata_monitor_brochure.html\")",
+      "Bash(\"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome\" --headless=new --disable-gpu --screenshot=p2_only.png --window-size=900,1250 --hide-scrollbars \"file://$\\(pwd\\)/only_p2.html\")"
     ]
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +47,13 @@ import 'utils/browser_exit_guard.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: false,
+    webExperimentalForceLongPolling: true,
+    webExperimentalLongPollingOptions: WebExperimentalLongPollingOptions(
+      timeoutDuration: Duration(seconds: 30),
+    ),
+  );
   runApp(const AgroDataControlApp());
 }
 
@@ -192,8 +200,10 @@ class _AgroDataShellState extends State<AgroDataShell>
   PlcDashboardService _service = const PlcDashboardService();
   String? _activeSiteId;
   String? _activeSiteName;
+  String? _activeTenantName;
   String? _activeBackendEndpoint;
   List<SiteDocument> _availableSites = const <SiteDocument>[];
+  List<TenantDocument> _availableTenants = const <TenantDocument>[];
   List<PlcDisplayConfig> _plcConfigs = const <PlcDisplayConfig>[];
   final SiteConfigService _siteConfigService = const SiteConfigService();
   final SitePlcConfigService _sitePlcConfigService =
@@ -294,6 +304,12 @@ class _AgroDataShellState extends State<AgroDataShell>
                 humidityMin: t.humidityInteriorMin!,
                 humidityMax: t.humidityInteriorMax!,
                 filterPressureMax: t.filterPressureMax!,
+                thermalFlowThresholdC:
+                    t.thermalFlowThresholdC ??
+                    _rangeSettings.thermalFlowThresholdC,
+                thermalFlowMarkedDeltaC:
+                    t.thermalFlowMarkedDeltaC ??
+                    _rangeSettings.thermalFlowMarkedDeltaC,
               );
             });
           }
@@ -325,6 +341,13 @@ class _AgroDataShellState extends State<AgroDataShell>
     _touchPresence();
   }
 
+  void _goEnvironmentOverview() {
+    setState(() {
+      _selectedTab = 'environmentOverview';
+    });
+    _touchPresence();
+  }
+
   Future<void> _signOut() async {
     await _stopPresence(markOffline: true, closeReason: 'manual_logout');
     await widget.authService.signOut();
@@ -334,8 +357,17 @@ class _AgroDataShellState extends State<AgroDataShell>
     required String workspaceId,
     required String? role,
   }) async {
+    debugPrint(
+      '[Presence] start requested workspace=$workspaceId role=${role ?? ''} '
+      'currentWorkspace=${_presenceWorkspaceId ?? ''} '
+      'hasSession=${_presenceSessionId != null}',
+    );
     if (_presenceWorkspaceId == workspaceId) {
-      _touchPresence(force: true);
+      if (_presenceSessionId == null) {
+        await _refreshPresenceSession();
+      } else {
+        _touchPresence(force: true);
+      }
       return;
     }
 
@@ -354,7 +386,11 @@ class _AgroDataShellState extends State<AgroDataShell>
       role: role,
     );
     _presenceSessionId = sessionId;
-    _lastPresenceWriteAt = DateTime.now();
+    _lastPresenceWriteAt = sessionId == null ? null : DateTime.now();
+    debugPrint(
+      '[Presence] start result workspace=$workspaceId '
+      'sessionId=${sessionId ?? 'null'}',
+    );
     _presenceHeartbeatTimer = Timer.periodic(
       _presenceHeartbeatInterval,
       (_) => _touchPresence(),
@@ -370,6 +406,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       return;
     }
     _presenceStartInFlight = true;
+    debugPrint('[Presence] refresh requested workspace=$workspaceId');
     try {
       final String? sessionId = await _presenceService.markOnline(
         workspaceId: workspaceId,
@@ -380,6 +417,10 @@ class _AgroDataShellState extends State<AgroDataShell>
         _presenceSessionId = sessionId;
         _lastPresenceWriteAt = DateTime.now();
       }
+      debugPrint(
+        '[Presence] refresh result workspace=$workspaceId '
+        'sessionId=${sessionId ?? 'null'}',
+      );
     } finally {
       _presenceStartInFlight = false;
     }
@@ -413,9 +454,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       return;
     }
     final DateTime now = DateTime.now();
-    final bool recentlyActive =
-        now.difference(_lastPresenceActivityAt) <= _presenceActiveThreshold;
-    if (!force && (!_presenceVisible || !recentlyActive)) {
+    if (!force && !_presenceVisible) {
       return;
     }
     final DateTime? lastWrite = _lastPresenceWriteAt;
@@ -565,7 +604,7 @@ class _AgroDataShellState extends State<AgroDataShell>
         result.rangeSettingsOrNull;
     if (configuredRangeSettings != null) {
       debugPrint(
-        '[Firebase settings] temperatureMin=${configuredRangeSettings.temperatureMin} temperatureMax=${configuredRangeSettings.temperatureMax} humidityMin=${configuredRangeSettings.humidityMin} humidityMax=${configuredRangeSettings.humidityMax} filterPressureMax=${configuredRangeSettings.filterPressureMax}',
+        '[Firebase settings] temperatureMin=${configuredRangeSettings.temperatureMin} temperatureMax=${configuredRangeSettings.temperatureMax} humidityMin=${configuredRangeSettings.humidityMin} humidityMax=${configuredRangeSettings.humidityMax} filterPressureMax=${configuredRangeSettings.filterPressureMax} thermalFlowThresholdC=${configuredRangeSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${configuredRangeSettings.thermalFlowMarkedDeltaC}',
       );
     }
     if (mounted && configuredRangeSettings != null) {
@@ -602,8 +641,10 @@ class _AgroDataShellState extends State<AgroDataShell>
         _userRole = result.userContext.role;
         _activeSiteId = result.siteId.isNotEmpty ? result.siteId : null;
         _activeSiteName = result.siteDocument?.name;
+        _activeTenantName = result.tenantDocument?.name;
         _activeBackendEndpoint = result.siteDocument?.backendUrl;
         _availableSites = result.availableSites;
+        _availableTenants = result.availableTenants;
         _plcConfigs = result.plcConfigs;
         _service = PlcDashboardService(
           endpoint: result.siteDocument?.backendUrl,
@@ -656,8 +697,8 @@ class _AgroDataShellState extends State<AgroDataShell>
     // Owners bypass missing activeTenantId/siteId — resolve from Firestore.
     String? resolvedTenantId = userContext.activeTenantId;
     if (isOwner && resolvedTenantId == null) {
-      final List<String> allTenants =
-          await _siteConfigService.fetchAllActiveTenantIds();
+      final List<String> allTenants = await _siteConfigService
+          .fetchAllActiveTenantIds();
       resolvedTenantId = allTenants.isNotEmpty ? allTenants.first : null;
     }
 
@@ -679,6 +720,12 @@ class _AgroDataShellState extends State<AgroDataShell>
     }
 
     final String tenantId = resolvedTenantId;
+    final TenantDocument? tenantDoc = await _siteConfigService.fetchTenant(
+      tenantId: tenantId,
+    );
+    final List<TenantDocument> availableTenants = isOwner
+        ? await _siteConfigService.fetchActiveTenants()
+        : const <TenantDocument>[];
 
     // Fetch site document and available sites list in parallel.
     // Owners with no allowedSiteIds see all sites for the tenant.
@@ -701,6 +748,8 @@ class _AgroDataShellState extends State<AgroDataShell>
         config: null,
         siteId: '',
         resolvedTenantId: resolvedTenantId,
+        tenantDocument: tenantDoc,
+        availableTenants: availableTenants,
         availableSites: availableSites,
       );
     }
@@ -732,7 +781,9 @@ class _AgroDataShellState extends State<AgroDataShell>
           config: null,
           siteId: resolvedSiteId,
           resolvedTenantId: resolvedTenantId,
+          tenantDocument: tenantDoc,
           siteDocument: siteDoc,
+          availableTenants: availableTenants,
           availableSites: availableSites,
         );
       }
@@ -746,7 +797,9 @@ class _AgroDataShellState extends State<AgroDataShell>
         config: config,
         siteId: resolvedSiteId,
         resolvedTenantId: resolvedTenantId,
+        tenantDocument: tenantDoc,
         siteDocument: siteDoc,
+        availableTenants: availableTenants,
         availableSites: availableSites,
         plcConfigs: plcConfigs,
       );
@@ -762,7 +815,9 @@ class _AgroDataShellState extends State<AgroDataShell>
       config: config,
       siteId: resolvedSiteId,
       resolvedTenantId: resolvedTenantId,
+      tenantDocument: tenantDoc,
       siteDocument: siteDoc,
+      availableTenants: availableTenants,
       availableSites: availableSites,
       plcConfigs: plcConfigs,
     );
@@ -924,13 +979,7 @@ class _AgroDataShellState extends State<AgroDataShell>
 
     await _saveRangeSettings(
       bootstrap: bootstrap,
-      updated: DashboardRangeSettings(
-        temperatureMin: _rangeSettings.temperatureMin,
-        temperatureMax: _rangeSettings.temperatureMax,
-        humidityMin: _rangeSettings.humidityMin,
-        humidityMax: _rangeSettings.humidityMax,
-        filterPressureMax: updated,
-      ),
+      updated: _rangeSettings.copyWith(filterPressureMax: updated),
     );
   }
 
@@ -964,6 +1013,8 @@ class _AgroDataShellState extends State<AgroDataShell>
       humidityInteriorOpt: (updated.humidityMin + updated.humidityMax) / 2,
       humidityInteriorMax: updated.humidityMax,
       filterPressureMax: updated.filterPressureMax,
+      thermalFlowThresholdC: updated.thermalFlowThresholdC,
+      thermalFlowMarkedDeltaC: updated.thermalFlowMarkedDeltaC,
     );
 
     final ControlDashboardSaveResult saveResult = await _dashboardConfigService
@@ -1011,11 +1062,17 @@ class _AgroDataShellState extends State<AgroDataShell>
             humidityMin: refreshedConfig.thresholds.humidityInteriorMin!,
             humidityMax: refreshedConfig.thresholds.humidityInteriorMax!,
             filterPressureMax: refreshedConfig.thresholds.filterPressureMax!,
+            thermalFlowThresholdC:
+                refreshedConfig.thresholds.thermalFlowThresholdC ??
+                updated.thermalFlowThresholdC,
+            thermalFlowMarkedDeltaC:
+                refreshedConfig.thresholds.thermalFlowMarkedDeltaC ??
+                updated.thermalFlowMarkedDeltaC,
           )
         : updated;
 
     debugPrint(
-      '[Firebase settings] temperatureMin=${effectiveSettings.temperatureMin} temperatureMax=${effectiveSettings.temperatureMax} humidityMin=${effectiveSettings.humidityMin} humidityMax=${effectiveSettings.humidityMax} filterPressureMax=${effectiveSettings.filterPressureMax}',
+      '[Firebase settings] temperatureMin=${effectiveSettings.temperatureMin} temperatureMax=${effectiveSettings.temperatureMax} humidityMin=${effectiveSettings.humidityMin} humidityMax=${effectiveSettings.humidityMax} filterPressureMax=${effectiveSettings.filterPressureMax} thermalFlowThresholdC=${effectiveSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${effectiveSettings.thermalFlowMarkedDeltaC}',
     );
 
     setState(() {
@@ -1026,8 +1083,12 @@ class _AgroDataShellState extends State<AgroDataShell>
           membership: bootstrap.membership,
           config: refreshedConfig,
           siteId: bootstrap.siteId,
+          resolvedTenantId: bootstrap.resolvedTenantId,
+          tenantDocument: bootstrap.tenantDocument,
           siteDocument: bootstrap.siteDocument,
+          availableTenants: bootstrap.availableTenants,
           availableSites: bootstrap.availableSites,
+          plcConfigs: bootstrap.plcConfigs,
         ),
       );
     });
@@ -1203,8 +1264,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       siteId = picked.siteId;
     }
 
-    final String siteName =
-        bootstrap.siteDocument?.name.isNotEmpty == true
+    final String siteName = bootstrap.siteDocument?.name.isNotEmpty == true
         ? bootstrap.siteDocument!.name
         : siteId;
 
@@ -1222,13 +1282,13 @@ class _AgroDataShellState extends State<AgroDataShell>
   }
 
   Future<_TenantSiteSelection?> _pickTenantAndSite() async {
-    final List<String> tenants =
-        await _siteConfigService.fetchAllActiveTenantIds();
+    final List<String> tenants = await _siteConfigService
+        .fetchAllActiveTenantIds();
     if (!mounted) return null;
     if (tenants.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No active tenants found.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('No active tenants found.')));
       return null;
     }
 
@@ -1302,8 +1362,8 @@ class _AgroDataShellState extends State<AgroDataShell>
     final bool canEditManualFanStatus =
         bootstrap.userContext.role == UserAppRole.owner ||
         bootstrap.userContext.role == UserAppRole.valkeTechnician;
-    final String? tenantId = bootstrap.userContext.activeTenantId;
-    final String siteId = bootstrap.siteId;
+    final String? tenantId = _historyTenantId ?? bootstrap.effectiveTenantId;
+    final String siteId = _activeSiteId ?? _historySiteId ?? bootstrap.siteId;
     if (!canEditManualFanStatus ||
         tenantId == null ||
         tenantId.isEmpty ||
@@ -1324,6 +1384,8 @@ class _AgroDataShellState extends State<AgroDataShell>
       return;
     }
 
+    final ManualFanStatusSettings previousSettings = _manualFanStatusSettings;
+
     setState(() {
       _manualFanStatusSettings = updated;
     });
@@ -1340,6 +1402,9 @@ class _AgroDataShellState extends State<AgroDataShell>
       return;
     }
     if (!result.isSuccess) {
+      setState(() {
+        _manualFanStatusSettings = previousSettings;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -1349,6 +1414,36 @@ class _AgroDataShellState extends State<AgroDataShell>
       );
       return;
     }
+
+    final ControlDashboardConfigResult persistedConfig =
+        await _dashboardConfigService.readConfig(
+          tenantId: tenantId,
+          siteId: siteId,
+        );
+
+    if (!mounted) {
+      return;
+    }
+    if (persistedConfig.hasError ||
+        persistedConfig.manualFanStatusSettings != updated) {
+      final ManualFanStatusSettings effectiveSettings = persistedConfig.hasError
+          ? previousSettings
+          : persistedConfig.manualFanStatusSettings;
+      setState(() {
+        _manualFanStatusSettings = effectiveSettings;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            persistedConfig.hasError
+                ? 'No se pudo verificar estado de fanes: ${persistedConfig.errorMessage}'
+                : 'Firestore no devolvio el estado de fanes guardado.',
+          ),
+        ),
+      );
+      return;
+    }
+
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text('Estado de fanes guardado.')));
@@ -1482,7 +1577,7 @@ class _AgroDataShellState extends State<AgroDataShell>
 
   Future<void> _switchSite(String siteId) async {
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
-    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String? tenantId = bootstrap.effectiveTenantId;
     if (tenantId == null) return;
 
     final bool isOwner = bootstrap.userContext.role == UserAppRole.owner;
@@ -1519,6 +1614,77 @@ class _AgroDataShellState extends State<AgroDataShell>
 
     _startConfigStream(tenantId: tenantId, siteId: siteId);
     unawaited(_loadWaterShortageSummaries(tenantId: tenantId, siteId: siteId));
+    unawaited(_refreshLiveSnapshot());
+  }
+
+  Future<void> _switchTenant(String tenantId) async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (bootstrap.userContext.role != UserAppRole.owner) {
+      return;
+    }
+
+    final List<SiteDocument> sites = await _siteConfigService
+        .fetchActiveSitesForUser(
+          tenantId: tenantId,
+          allowedSiteIds: const <String>[],
+          ownerBypass: true,
+        );
+    if (!mounted || sites.isEmpty) {
+      return;
+    }
+
+    final SiteDocument siteDoc = sites.first;
+    final TenantDocument? tenantDoc = await _siteConfigService.fetchTenant(
+      tenantId: tenantId,
+    );
+    final List<PlcDisplayConfig> plcConfigs = await _sitePlcConfigService
+        .fetchActivePlcs(tenantId: tenantId, siteId: siteDoc.siteId);
+
+    try {
+      await _userContextService.setActiveTenantAndSite(
+        uid: widget.user.uid,
+        tenantId: tenantId,
+        siteId: siteDoc.siteId,
+      );
+    } catch (error) {
+      debugPrint('[tenant-switch] persist error=$error');
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _historyTenantId = tenantId;
+      _historySiteId = siteDoc.siteId;
+      _activeSiteId = siteDoc.siteId;
+      _activeSiteName = siteDoc.name;
+      _activeTenantName = tenantDoc?.name ?? tenantId;
+      _availableSites = sites;
+      _plcConfigs = plcConfigs;
+      _service = PlcDashboardService(
+        endpoint: siteDoc.backendUrl,
+        plcNames: {
+          for (final PlcDisplayConfig p in plcConfigs) p.plcId: p.displayName,
+        },
+      );
+      _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
+        _DashboardBootstrapResult(
+          userContext: bootstrap.userContext,
+          membership: bootstrap.membership,
+          config: bootstrap.config,
+          siteId: siteDoc.siteId,
+          resolvedTenantId: tenantId,
+          tenantDocument: tenantDoc,
+          siteDocument: siteDoc,
+          availableTenants: _availableTenants,
+          availableSites: sites,
+          plcConfigs: plcConfigs,
+        ),
+      );
+    });
+
+    _startConfigStream(tenantId: tenantId, siteId: siteDoc.siteId);
+    unawaited(
+      _loadWaterShortageSummaries(tenantId: tenantId, siteId: siteDoc.siteId),
+    );
     unawaited(_refreshLiveSnapshot());
   }
 
@@ -1923,6 +2089,8 @@ class _AgroDataShellState extends State<AgroDataShell>
         : munters1;
     final String screenTitle = _selectedTab == 'comparativo'
         ? 'Dashboard'
+        : _selectedTab == 'environmentOverview'
+        ? 'Ambiente'
         : selectedUnit.name;
     final String? presenceWorkspaceId =
         _presenceWorkspaceId ?? _historyTenantId;
@@ -1971,16 +2139,26 @@ class _AgroDataShellState extends State<AgroDataShell>
                   onSelectComparison: _goHomeDashboard,
                   onLogoTap: _goHomeDashboard,
                   userEmail: widget.user.email,
-                  siteName: _activeSiteName,
+                  farmName: _activeTenantName ?? _historyTenantId,
+                  roomName: _activeSiteName,
+                  activeTenantId: _historyTenantId,
+                  availableTenants: _availableTenants,
+                  onTenantChanged: _switchTenant,
                   activeSiteId: _activeSiteId,
                   availableSites: _availableSites,
                   onSiteChanged: _switchSite,
+                  canSelectSite: _userRole == UserAppRole.owner,
                   activeUsersIndicator:
                       _userRole == UserAppRole.owner &&
                           presenceWorkspaceId != null
-                      ? ActiveUsersEye(workspaceId: presenceWorkspaceId)
+                      ? ActiveUsersEye(
+                          workspaceId: presenceWorkspaceId,
+                          currentUser: widget.user,
+                          currentRole: _userRole,
+                        )
                       : null,
-                  onRuntimeEvents: _userRole == UserAppRole.owner &&
+                  onRuntimeEvents:
+                      _userRole == UserAppRole.owner &&
                           _historyTenantId != null &&
                           _historySiteId?.isNotEmpty == true
                       ? _goRuntimeEvents
@@ -2001,15 +2179,50 @@ class _AgroDataShellState extends State<AgroDataShell>
                           final String tenantId = _historyTenantId ?? '';
                           final String siteId = _historySiteId ?? '';
                           final List<String> plcIds = _plcConfigs.isNotEmpty
-                              ? _plcConfigs
-                                    .map((c) => c.plcId)
-                                    .toList()
+                              ? _plcConfigs.map((c) => c.plcId).toList()
                               : <String>['munters1', 'munters2'];
                           return RuntimeEventsPage(
                             tenantId: tenantId,
                             siteId: siteId,
                             plcIds: plcIds,
                             onBack: _goHomeDashboard,
+                          );
+                        }
+
+                        if (_selectedTab == 'environmentOverview') {
+                          final List<MuntersModel>
+                          visibleUnits = <MuntersModel>[
+                            if (_unitVisibilitySettings.showMunters1) munters1,
+                            if (_unitVisibilitySettings.showMunters2) munters2,
+                          ];
+                          final List<String> visibleLabels = <String>[
+                            if (_unitVisibilitySettings.showMunters1)
+                              _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].columnLabel
+                                  : 'M1',
+                            if (_unitVisibilitySettings.showMunters2)
+                              _plcConfigs.length > 1
+                                  ? _plcConfigs[1].columnLabel
+                                  : 'M2',
+                          ];
+                          final List<String?> visiblePlcIds = <String?>[
+                            if (_unitVisibilitySettings.showMunters1)
+                              _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].plcId
+                                  : munters1.historyPlcId,
+                            if (_unitVisibilitySettings.showMunters2)
+                              _plcConfigs.length > 1
+                                  ? _plcConfigs[1].plcId
+                                  : munters2.historyPlcId,
+                          ];
+                          return EnvironmentOverviewPage(
+                            units: visibleUnits,
+                            labels: visibleLabels,
+                            plcIds: visiblePlcIds,
+                            tenantId: _historyTenantId,
+                            siteId: _historySiteId,
+                            rangeSettings: _rangeSettings,
+                            onTapBack: _goHomeDashboard,
                           );
                         }
 
@@ -2050,6 +2263,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                                     ? _plcConfigs[1].plcId
                                     : 'munters2',
                               ),
+                              onOpenEnvironmentOverview: _goEnvironmentOverview,
                             ),
                           );
                         }
@@ -2602,7 +2816,9 @@ class _DashboardBootstrapResult {
     required this.config,
     required this.siteId,
     this.resolvedTenantId,
+    this.tenantDocument,
     this.siteDocument,
+    this.availableTenants = const <TenantDocument>[],
     this.availableSites = const <SiteDocument>[],
     this.plcConfigs = const <PlcDisplayConfig>[],
   });
@@ -2614,7 +2830,9 @@ class _DashboardBootstrapResult {
   // Effective tenantId — may differ from userContext.activeTenantId when an
   // owner user has no activeTenantId set and we resolved one from Firestore.
   final String? resolvedTenantId;
+  final TenantDocument? tenantDocument;
   final SiteDocument? siteDocument;
+  final List<TenantDocument> availableTenants;
   final List<SiteDocument> availableSites;
   final List<PlcDisplayConfig> plcConfigs;
 
@@ -2691,6 +2909,12 @@ class _DashboardBootstrapResult {
       humidityMin: thresholds.humidityInteriorMin!,
       humidityMax: thresholds.humidityInteriorMax!,
       filterPressureMax: thresholds.filterPressureMax!,
+      thermalFlowThresholdC:
+          thresholds.thermalFlowThresholdC ??
+          const DashboardRangeSettings.defaults().thermalFlowThresholdC,
+      thermalFlowMarkedDeltaC:
+          thresholds.thermalFlowMarkedDeltaC ??
+          const DashboardRangeSettings.defaults().thermalFlowMarkedDeltaC,
     );
   }
 
@@ -3064,7 +3288,7 @@ class _SettingsMenuDialog extends StatelessWidget {
                         minimumSize: const Size(0, 42),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                       ),
-                      child: const Text('Rangos Temp. y Hum.'),
+                      child: const Text('Rangos y Flujo Térmico'),
                     ),
                     if (canShowAdvancedSeteos) ...[
                       const SizedBox(height: 8),
@@ -3935,6 +4159,8 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   late final TextEditingController _temperatureMaxController;
   late final TextEditingController _humidityMinController;
   late final TextEditingController _humidityMaxController;
+  late final TextEditingController _thermalFlowThresholdController;
+  late final TextEditingController _thermalFlowMarkedDeltaController;
   String? _errorText;
 
   @override
@@ -3952,6 +4178,12 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     _humidityMaxController = TextEditingController(
       text: widget.initialSettings.humidityMax.toString(),
     );
+    _thermalFlowThresholdController = TextEditingController(
+      text: widget.initialSettings.thermalFlowThresholdC.toString(),
+    );
+    _thermalFlowMarkedDeltaController = TextEditingController(
+      text: widget.initialSettings.thermalFlowMarkedDeltaC.toString(),
+    );
   }
 
   @override
@@ -3960,6 +4192,8 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     _temperatureMaxController.dispose();
     _humidityMinController.dispose();
     _humidityMaxController.dispose();
+    _thermalFlowThresholdController.dispose();
+    _thermalFlowMarkedDeltaController.dispose();
     super.dispose();
   }
 
@@ -3968,13 +4202,21 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     final double? temperatureMax = _parseInput(_temperatureMaxController.text);
     final double? humidityMin = _parseInput(_humidityMinController.text);
     final double? humidityMax = _parseInput(_humidityMaxController.text);
+    final double? thermalFlowThreshold = _parseInput(
+      _thermalFlowThresholdController.text,
+    );
+    final double? thermalFlowMarkedDelta = _parseInput(
+      _thermalFlowMarkedDeltaController.text,
+    );
 
     if (temperatureMin == null ||
         temperatureMax == null ||
         humidityMin == null ||
-        humidityMax == null) {
+        humidityMax == null ||
+        thermalFlowThreshold == null ||
+        thermalFlowMarkedDelta == null) {
       setState(() {
-        _errorText = 'Completa los cuatro valores con numeros validos.';
+        _errorText = 'Completa todos los valores con numeros validos.';
       });
       return;
     }
@@ -3986,6 +4228,21 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
       return;
     }
 
+    if (thermalFlowThreshold < 0 || thermalFlowMarkedDelta <= 0) {
+      setState(() {
+        _errorText = 'Los valores de flujo termico deben ser positivos.';
+      });
+      return;
+    }
+
+    if (thermalFlowThreshold >= thermalFlowMarkedDelta) {
+      setState(() {
+        _errorText =
+            'El umbral debe ser menor que la diferencia de pendiente marcada.';
+      });
+      return;
+    }
+
     Navigator.of(context).pop(
       DashboardRangeSettings(
         temperatureMin: temperatureMin,
@@ -3993,6 +4250,8 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
         humidityMin: humidityMin,
         humidityMax: humidityMax,
         filterPressureMax: widget.initialSettings.filterPressureMax,
+        thermalFlowThresholdC: thermalFlowThreshold,
+        thermalFlowMarkedDeltaC: thermalFlowMarkedDelta,
       ),
     );
   }
@@ -4012,50 +4271,64 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
       ),
       content: SizedBox(
         width: 420,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'Estos rangos aplican a todos los Munters en la UI.',
-              style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
-            ),
-            const SizedBox(height: 16),
-            _RangeField(
-              controller: _temperatureMinController,
-              label: 'Temp. interior minima',
-              suffix: 'C',
-            ),
-            const SizedBox(height: 10),
-            _RangeField(
-              controller: _temperatureMaxController,
-              label: 'Temp. interior maxima',
-              suffix: 'C',
-            ),
-            const SizedBox(height: 14),
-            _RangeField(
-              controller: _humidityMinController,
-              label: 'Humedad interior minima',
-              suffix: '%',
-            ),
-            const SizedBox(height: 10),
-            _RangeField(
-              controller: _humidityMaxController,
-              label: 'Humedad interior maxima',
-              suffix: '%',
-            ),
-            if (_errorText != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _errorText!,
-                style: const TextStyle(
-                  color: Color(0xFFFCA5A5),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Estos rangos aplican a todos los Munters en la UI.',
+                style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
               ),
+              const SizedBox(height: 16),
+              _RangeField(
+                controller: _temperatureMinController,
+                label: 'Temp. interior minima',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _temperatureMaxController,
+                label: 'Temp. interior maxima',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 14),
+              _RangeField(
+                controller: _humidityMinController,
+                label: 'Humedad interior minima',
+                suffix: '%',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _humidityMaxController,
+                label: 'Humedad interior maxima',
+                suffix: '%',
+              ),
+              const SizedBox(height: 14),
+              _RangeField(
+                controller: _thermalFlowThresholdController,
+                label: 'Umbral flecha flujo termico',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _thermalFlowMarkedDeltaController,
+                label: 'Pendiente marcada desde',
+                suffix: 'C',
+              ),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFCA5A5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
       actions: [
@@ -6465,7 +6738,10 @@ class _TenantPickerDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: Color(0xFF94A3B8)),
+          ),
         ),
       ],
     );
@@ -6508,7 +6784,10 @@ class _SitePickerDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel', style: TextStyle(color: Color(0xFF94A3B8))),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: Color(0xFF94A3B8)),
+          ),
         ),
       ],
     );

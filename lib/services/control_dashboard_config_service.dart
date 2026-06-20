@@ -110,6 +110,12 @@ class ControlDashboardConfigService {
             },
           },
         },
+        'ui': <String, Object?>{
+          'thermalFlow': <String, Object?>{
+            'thresholdC': thresholds.thermalFlowThresholdC,
+            'markedDeltaC': thresholds.thermalFlowMarkedDeltaC,
+          },
+        },
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedByUid': userUid,
       }, SetOptions(merge: true));
@@ -139,13 +145,22 @@ class ControlDashboardConfigService {
     debugPrint('[Firestore] dashboard magnifier save started path=$path');
 
     try {
-      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
-        'ui': <String, Object?>{
-          'magnifier': <String, Object?>{'zoom': zoom, 'size': size},
+      await FirebaseFirestore.instance.doc(path).set(
+        <String, Object?>{
+          'ui': <String, Object?>{
+            'magnifier': <String, Object?>{'zoom': zoom, 'size': size},
+          },
+          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedByUid': userUid,
         },
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedByUid': userUid,
-      }, SetOptions(merge: true));
+        SetOptions(
+          mergeFields: <Object>[
+            FieldPath(const ['ui', 'magnifier']),
+            'updatedAt',
+            'updatedByUid',
+          ],
+        ),
+      );
 
       debugPrint('[Firestore] dashboard magnifier save success path=$path');
       return const ControlDashboardSaveResult.success();
@@ -213,30 +228,39 @@ class ControlDashboardConfigService {
     debugPrint('[Firestore] dashboard fan status save started path=$path');
 
     try {
-      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
-        'ui': <String, Object?>{
-          'manualFanStatus': <String, Object?>{
-            'munters1': <String, Object?>{
-              'q5': settings.munters1.q5,
-              'q6': settings.munters1.q6,
-              'q7': settings.munters1.q7,
-              'q8': settings.munters1.q8,
-              'q9': settings.munters1.q9,
-              'q10': settings.munters1.q10,
-            },
-            'munters2': <String, Object?>{
-              'q5': settings.munters2.q5,
-              'q6': settings.munters2.q6,
-              'q7': settings.munters2.q7,
-              'q8': settings.munters2.q8,
-              'q9': settings.munters2.q9,
-              'q10': settings.munters2.q10,
+      await FirebaseFirestore.instance.doc(path).set(
+        <String, Object?>{
+          'ui': <String, Object?>{
+            'manualFanStatus': <String, Object?>{
+              'munters1': <String, Object?>{
+                'q5': settings.munters1.q5,
+                'q6': settings.munters1.q6,
+                'q7': settings.munters1.q7,
+                'q8': settings.munters1.q8,
+                'q9': settings.munters1.q9,
+                'q10': settings.munters1.q10,
+              },
+              'munters2': <String, Object?>{
+                'q5': settings.munters2.q5,
+                'q6': settings.munters2.q6,
+                'q7': settings.munters2.q7,
+                'q8': settings.munters2.q8,
+                'q9': settings.munters2.q9,
+                'q10': settings.munters2.q10,
+              },
             },
           },
+          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedByUid': userUid,
         },
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedByUid': userUid,
-      }, SetOptions(merge: true));
+        SetOptions(
+          mergeFields: <Object>[
+            FieldPath(const ['ui', 'manualFanStatus']),
+            'updatedAt',
+            'updatedByUid',
+          ],
+        ),
+      );
 
       debugPrint('[Firestore] dashboard fan status save success path=$path');
       return const ControlDashboardSaveResult.success();
@@ -264,11 +288,20 @@ class ControlDashboardConfigService {
     debugPrint('[Firestore] dashboard maintenance save started path=$path');
 
     try {
-      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
-        'ui': <String, Object?>{'maintenance': settings.toFirestore()},
-        'updatedAt': FieldValue.serverTimestamp(),
-        'updatedByUid': userUid,
-      }, SetOptions(mergeFields: <Object>['ui.maintenance', 'updatedAt', 'updatedByUid']));
+      await FirebaseFirestore.instance.doc(path).set(
+        <String, Object?>{
+          'ui': <String, Object?>{'maintenance': settings.toFirestore()},
+          'updatedAt': FieldValue.serverTimestamp(),
+          'updatedByUid': userUid,
+        },
+        SetOptions(
+          mergeFields: <Object>[
+            FieldPath(const ['ui', 'maintenance']),
+            'updatedAt',
+            'updatedByUid',
+          ],
+        ),
+      );
 
       debugPrint('[Firestore] dashboard maintenance save success path=$path');
       return const ControlDashboardSaveResult.success();
@@ -561,6 +594,8 @@ class ControlDashboardThresholds {
     required this.humidityInteriorOpt,
     required this.humidityInteriorMax,
     required this.filterPressureMax,
+    required this.thermalFlowThresholdC,
+    required this.thermalFlowMarkedDeltaC,
   });
 
   const ControlDashboardThresholds.empty()
@@ -570,7 +605,9 @@ class ControlDashboardThresholds {
       humidityInteriorMin = null,
       humidityInteriorOpt = null,
       humidityInteriorMax = null,
-      filterPressureMax = null;
+      filterPressureMax = null,
+      thermalFlowThresholdC = null,
+      thermalFlowMarkedDeltaC = null;
 
   factory ControlDashboardThresholds.fromRaw(Map<String, dynamic> rawData) {
     return ControlDashboardThresholds(
@@ -616,6 +653,16 @@ class ControlDashboardThresholds {
         'presionDiferencial',
         'max',
       ]),
+      thermalFlowThresholdC: _readDouble(rawData, const [
+        'ui',
+        'thermalFlow',
+        'thresholdC',
+      ]),
+      thermalFlowMarkedDeltaC: _readDouble(rawData, const [
+        'ui',
+        'thermalFlow',
+        'markedDeltaC',
+      ]),
     );
   }
 
@@ -626,6 +673,8 @@ class ControlDashboardThresholds {
   final double? humidityInteriorOpt;
   final double? humidityInteriorMax;
   final double? filterPressureMax;
+  final double? thermalFlowThresholdC;
+  final double? thermalFlowMarkedDeltaC;
 
   static double? _readDouble(Map<String, dynamic> source, List<String> path) {
     Object? current = source;

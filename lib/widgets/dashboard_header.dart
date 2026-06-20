@@ -12,10 +12,15 @@ class DashboardHeader extends StatelessWidget {
     required this.onSelectComparison,
     required this.onLogoTap,
     this.userEmail,
-    this.siteName,
+    this.farmName,
+    this.roomName,
+    this.activeTenantId,
+    this.availableTenants = const <TenantDocument>[],
+    this.onTenantChanged,
     this.activeSiteId,
     this.availableSites = const <SiteDocument>[],
     this.onSiteChanged,
+    this.canSelectSite = false,
     this.activeUsersIndicator,
     this.onRuntimeEvents,
   });
@@ -27,10 +32,15 @@ class DashboardHeader extends StatelessWidget {
   final VoidCallback onSelectComparison;
   final VoidCallback onLogoTap;
   final String? userEmail;
-  final String? siteName;
+  final String? farmName;
+  final String? roomName;
+  final String? activeTenantId;
+  final List<TenantDocument> availableTenants;
+  final void Function(String tenantId)? onTenantChanged;
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
+  final bool canSelectSite;
   final Widget? activeUsersIndicator;
   final VoidCallback? onRuntimeEvents;
 
@@ -45,11 +55,16 @@ class DashboardHeader extends StatelessWidget {
           vertical: narrow ? 12 : 16,
         );
         final Widget title = _HeaderTitle(
-          siteName: siteName,
+          farmName: farmName,
+          roomName: roomName,
+          activeTenantId: activeTenantId,
+          availableTenants: availableTenants,
+          onTenantChanged: onTenantChanged,
           screenTitle: screenTitle,
           activeSiteId: activeSiteId,
           availableSites: availableSites,
           onSiteChanged: onSiteChanged,
+          canSelectSite: canSelectSite,
           compact: narrow,
           veryCompact: veryNarrow,
           onLogoTap: onLogoTap,
@@ -207,21 +222,31 @@ class _UserEmailLabel extends StatelessWidget {
 
 class _HeaderTitle extends StatelessWidget {
   const _HeaderTitle({
-    required this.siteName,
+    required this.farmName,
+    required this.roomName,
+    required this.activeTenantId,
+    required this.availableTenants,
+    required this.onTenantChanged,
     required this.screenTitle,
     required this.activeSiteId,
     required this.availableSites,
     required this.onSiteChanged,
+    required this.canSelectSite,
     required this.compact,
     required this.veryCompact,
     required this.onLogoTap,
   });
 
-  final String? siteName;
+  final String? farmName;
+  final String? roomName;
+  final String? activeTenantId;
+  final List<TenantDocument> availableTenants;
+  final void Function(String tenantId)? onTenantChanged;
   final String screenTitle;
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
+  final bool canSelectSite;
   final bool compact;
   final bool veryCompact;
   final VoidCallback onLogoTap;
@@ -240,7 +265,7 @@ class _HeaderTitle extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'AgroDataControl',
+                'AgroDataMonitor',
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -250,7 +275,25 @@ class _HeaderTitle extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 4),
-              if (availableSites.length > 1)
+              if (canSelectSite && availableTenants.length > 1)
+                _TenantDropdown(
+                  availableTenants: availableTenants,
+                  activeTenantId: activeTenantId,
+                  onTenantChanged: onTenantChanged,
+                )
+              else
+                Text(
+                  'Granja: ${farmName ?? '—'}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              const SizedBox(height: 3),
+              if (canSelectSite && availableSites.length > 1)
                 _SiteDropdown(
                   availableSites: availableSites,
                   activeSiteId: activeSiteId,
@@ -258,12 +301,12 @@ class _HeaderTitle extends StatelessWidget {
                 )
               else
                 Text(
-                  siteName ?? '—',
+                  'Sala: ${roomName ?? '—'}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                     color: Color(0xFFCBD5E1),
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
@@ -278,6 +321,53 @@ class _HeaderTitle extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _TenantDropdown extends StatelessWidget {
+  const _TenantDropdown({
+    required this.availableTenants,
+    required this.activeTenantId,
+    required this.onTenantChanged,
+  });
+
+  final List<TenantDocument> availableTenants;
+  final String? activeTenantId;
+  final void Function(String tenantId)? onTenantChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<String>(
+        value: activeTenantId ?? availableTenants.first.tenantId,
+        isDense: true,
+        dropdownColor: const Color(0xFF1E293B),
+        style: const TextStyle(
+          color: Color(0xFFCBD5E1),
+          fontSize: 14,
+          fontWeight: FontWeight.w700,
+          fontFamily: 'monospace',
+        ),
+        icon: const Icon(
+          Icons.keyboard_arrow_down,
+          color: Color(0xFF64748B),
+          size: 16,
+        ),
+        items: availableTenants
+            .map(
+              (TenantDocument tenant) => DropdownMenuItem<String>(
+                value: tenant.tenantId,
+                child: Text('Granja: ${tenant.name}'),
+              ),
+            )
+            .toList(),
+        onChanged: (String? tenantId) {
+          if (tenantId != null) {
+            onTenantChanged?.call(tenantId);
+          }
+        },
+      ),
     );
   }
 }
@@ -302,7 +392,7 @@ class _SiteDropdown extends StatelessWidget {
         dropdownColor: const Color(0xFF1E293B),
         style: const TextStyle(
           color: Color(0xFFCBD5E1),
-          fontSize: 14,
+          fontSize: 13,
           fontWeight: FontWeight.w700,
           fontFamily: 'monospace',
         ),
@@ -315,7 +405,7 @@ class _SiteDropdown extends StatelessWidget {
             .map(
               (SiteDocument site) => DropdownMenuItem<String>(
                 value: site.siteId,
-                child: Text(site.name),
+                child: Text('Sala: ${site.name}'),
               ),
             )
             .toList(),

@@ -71,6 +71,8 @@ class _DoorOpeningsModuleState extends State<DoorOpeningsModule> {
       repository: _repository,
       salaSnapshotEvent: widget.doorEvents['sala'],
       munterSnapshotEvent: widget.doorEvents['munter'],
+      salaM2SnapshotEvent: widget.doorEvents['munters2_sala'],
+      munterM2SnapshotEvent: widget.doorEvents['munters2_munter'],
     );
   }
 }
@@ -84,6 +86,8 @@ class _DoorOpeningsTable extends StatefulWidget {
     required this.repository,
     required this.salaSnapshotEvent,
     required this.munterSnapshotEvent,
+    required this.salaM2SnapshotEvent,
+    required this.munterM2SnapshotEvent,
   });
 
   final String tenantId;
@@ -93,56 +97,147 @@ class _DoorOpeningsTable extends StatefulWidget {
   final DoorOpeningsRepository repository;
   final DashboardDoorEvent? salaSnapshotEvent;
   final DashboardDoorEvent? munterSnapshotEvent;
+  final DashboardDoorEvent? salaM2SnapshotEvent;
+  final DashboardDoorEvent? munterM2SnapshotEvent;
 
   @override
   State<_DoorOpeningsTable> createState() => _DoorOpeningsTableState();
 }
 
 class _DoorOpeningsTableState extends State<_DoorOpeningsTable> {
-  late final Stream<DoorStateRecord?> _salaStateStream;
-  late final Stream<List<DoorOpeningRecord>> _salaHistoryStream;
-  late final Stream<List<DoorOpeningRecord>> _salaMonthHistoryStream;
-  late final Stream<DoorStateRecord?> _munterStateStream;
-  late final Stream<List<DoorOpeningRecord>> _munterHistoryStream;
-  late final Stream<List<DoorOpeningRecord>> _munterMonthHistoryStream;
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        _DoorDataLoader(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          doorId: 'sala',
+          historyLimit: widget.historyLimit,
+          now: widget.now,
+          repository: widget.repository,
+          snapshotEvent: widget.salaSnapshotEvent,
+          builder: (BuildContext context, _DoorDisplayData salaM1) {
+            return _DoorDataLoader(
+              tenantId: widget.tenantId,
+              siteId: widget.siteId,
+              doorId: 'munters2_sala',
+              historyLimit: widget.historyLimit,
+              now: widget.now,
+              repository: widget.repository,
+              snapshotEvent: widget.salaM2SnapshotEvent,
+              builder: (BuildContext context, _DoorDisplayData salaM2) {
+                return _DoorSection(
+                  title: 'Puerta',
+                  doorName: 'Sala',
+                  m1Data: salaM1,
+                  m2Data: salaM2,
+                );
+              },
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        _DoorDataLoader(
+          tenantId: widget.tenantId,
+          siteId: widget.siteId,
+          doorId: 'munter',
+          historyLimit: widget.historyLimit,
+          now: widget.now,
+          repository: widget.repository,
+          snapshotEvent: widget.munterSnapshotEvent,
+          builder: (BuildContext context, _DoorDisplayData munterM1) {
+            return _DoorDataLoader(
+              tenantId: widget.tenantId,
+              siteId: widget.siteId,
+              doorId: 'munters2_munter',
+              historyLimit: widget.historyLimit,
+              now: widget.now,
+              repository: widget.repository,
+              snapshotEvent: widget.munterM2SnapshotEvent,
+              builder: (BuildContext context, _DoorDisplayData munterM2) {
+                return _DoorSection(
+                  title: 'Puerta',
+                  doorName: 'Munter',
+                  m1Data: munterM1,
+                  m2Data: munterM2,
+                );
+              },
+            );
+          },
+        ),
+      ],
+    );
+  }
+}
+
+class _DoorDataLoader extends StatefulWidget {
+  const _DoorDataLoader({
+    required this.tenantId,
+    required this.siteId,
+    required this.doorId,
+    required this.historyLimit,
+    required this.now,
+    required this.repository,
+    required this.builder,
+    this.snapshotEvent,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final String doorId;
+  final int historyLimit;
+  final DateTime now;
+  final DoorOpeningsRepository repository;
+  final DashboardDoorEvent? snapshotEvent;
+  final Widget Function(BuildContext context, _DoorDisplayData data) builder;
+
+  @override
+  State<_DoorDataLoader> createState() => _DoorDataLoaderState();
+}
+
+class _DoorDataLoaderState extends State<_DoorDataLoader> {
+  late Stream<DoorStateRecord?> _stateStream;
+  late Stream<List<DoorOpeningRecord>> _historyStream;
+  late Stream<List<DoorOpeningRecord>> _monthHistoryStream;
 
   @override
   void initState() {
     super.initState();
+    _configureStreams();
+  }
+
+  @override
+  void didUpdateWidget(_DoorDataLoader oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tenantId != widget.tenantId ||
+        oldWidget.siteId != widget.siteId ||
+        oldWidget.doorId != widget.doorId ||
+        oldWidget.historyLimit != widget.historyLimit ||
+        oldWidget.repository != widget.repository) {
+      _configureStreams();
+    }
+  }
+
+  void _configureStreams() {
     final DateTime now = DateTime.now();
     final DateTime monthStart = DateTime(now.year, now.month);
-    _salaStateStream = widget.repository.watchDoorState(
+    _stateStream = widget.repository.watchDoorState(
       tenantId: widget.tenantId,
       siteId: widget.siteId,
-      doorId: 'sala',
+      doorId: widget.doorId,
     );
-    _salaHistoryStream = widget.repository.watchDoorHistory(
+    _historyStream = widget.repository.watchDoorHistory(
       tenantId: widget.tenantId,
       siteId: widget.siteId,
-      doorId: 'sala',
+      doorId: widget.doorId,
       limit: widget.historyLimit,
     );
-    _salaMonthHistoryStream = widget.repository.watchDoorMonthHistory(
+    _monthHistoryStream = widget.repository.watchDoorMonthHistory(
       tenantId: widget.tenantId,
       siteId: widget.siteId,
-      doorId: 'sala',
-      monthStart: monthStart,
-    );
-    _munterStateStream = widget.repository.watchDoorState(
-      tenantId: widget.tenantId,
-      siteId: widget.siteId,
-      doorId: 'munter',
-    );
-    _munterHistoryStream = widget.repository.watchDoorHistory(
-      tenantId: widget.tenantId,
-      siteId: widget.siteId,
-      doorId: 'munter',
-      limit: widget.historyLimit,
-    );
-    _munterMonthHistoryStream = widget.repository.watchDoorMonthHistory(
-      tenantId: widget.tenantId,
-      siteId: widget.siteId,
-      doorId: 'munter',
+      doorId: widget.doorId,
       monthStart: monthStart,
     );
   }
@@ -150,104 +245,41 @@ class _DoorOpeningsTableState extends State<_DoorOpeningsTable> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DoorStateRecord?>(
-      stream: _salaStateStream,
-      builder: (BuildContext context, AsyncSnapshot<DoorStateRecord?> salaStateSnapshot) {
-        return StreamBuilder<List<DoorOpeningRecord>>(
-          stream: _salaHistoryStream,
-          builder:
-              (
-                BuildContext context,
-                AsyncSnapshot<List<DoorOpeningRecord>> salaHistorySnapshot,
-              ) {
-                return StreamBuilder<List<DoorOpeningRecord>>(
-                  stream: _salaMonthHistoryStream,
-                  builder:
-                      (
-                        BuildContext context,
-                        AsyncSnapshot<List<DoorOpeningRecord>>
-                        salaMonthSnapshot,
-                      ) {
-                        return StreamBuilder<DoorStateRecord?>(
-                          stream: _munterStateStream,
-                          builder:
-                              (
-                                BuildContext context,
-                                AsyncSnapshot<DoorStateRecord?>
-                                munterStateSnapshot,
-                              ) {
-                                return StreamBuilder<List<DoorOpeningRecord>>(
-                                  stream: _munterHistoryStream,
-                                  builder:
-                                      (
-                                        BuildContext context,
-                                        AsyncSnapshot<List<DoorOpeningRecord>>
-                                        munterHistorySnapshot,
-                                      ) {
-                                        return StreamBuilder<
-                                          List<DoorOpeningRecord>
-                                        >(
-                                          stream: _munterMonthHistoryStream,
-                                          builder:
-                                              (
-                                                BuildContext context,
-                                                AsyncSnapshot<
-                                                  List<DoorOpeningRecord>
-                                                >
-                                                munterMonthSnapshot,
-                                              ) {
-                                                final _DoorDisplayData sala =
-                                                    _DoorDisplayData.fromSnapshots(
-                                                      snapshotEvent: widget
-                                                          .salaSnapshotEvent,
-                                                      stateSnapshot:
-                                                          salaStateSnapshot,
-                                                      historySnapshot:
-                                                          salaHistorySnapshot,
-                                                      monthHistorySnapshot:
-                                                          salaMonthSnapshot,
-                                                      now: widget.now,
-                                                    );
-                                                final _DoorDisplayData munter =
-                                                    _DoorDisplayData.fromSnapshots(
-                                                      snapshotEvent: widget
-                                                          .munterSnapshotEvent,
-                                                      stateSnapshot:
-                                                          munterStateSnapshot,
-                                                      historySnapshot:
-                                                          munterHistorySnapshot,
-                                                      monthHistorySnapshot:
-                                                          munterMonthSnapshot,
-                                                      now: widget.now,
-                                                    );
-
-                                                return Column(
-                                                  crossAxisAlignment:
-                                                      CrossAxisAlignment.start,
-                                                  children: <Widget>[
-                                                    _DoorSection(
-                                                      title: 'Puerta',
-                                                      doorName: 'Sala',
-                                                      data: sala,
-                                                    ),
-                                                    const SizedBox(height: 10),
-                                                    _DoorSection(
-                                                      title: 'Puerta',
-                                                      doorName: 'Munter',
-                                                      data: munter,
-                                                    ),
-                                                  ],
-                                                );
-                                              },
-                                        );
-                                      },
+      stream: _stateStream,
+      builder:
+          (
+            BuildContext context,
+            AsyncSnapshot<DoorStateRecord?> stateSnapshot,
+          ) {
+            return StreamBuilder<List<DoorOpeningRecord>>(
+              stream: _historyStream,
+              builder:
+                  (
+                    BuildContext context,
+                    AsyncSnapshot<List<DoorOpeningRecord>> historySnapshot,
+                  ) {
+                    return StreamBuilder<List<DoorOpeningRecord>>(
+                      stream: _monthHistoryStream,
+                      builder:
+                          (
+                            BuildContext context,
+                            AsyncSnapshot<List<DoorOpeningRecord>>
+                            monthHistorySnapshot,
+                          ) {
+                            final _DoorDisplayData data =
+                                _DoorDisplayData.fromSnapshots(
+                                  snapshotEvent: widget.snapshotEvent,
+                                  stateSnapshot: stateSnapshot,
+                                  historySnapshot: historySnapshot,
+                                  monthHistorySnapshot: monthHistorySnapshot,
+                                  now: widget.now,
                                 );
-                              },
-                        );
-                      },
-                );
-              },
-        );
-      },
+                            return widget.builder(context, data);
+                          },
+                    );
+                  },
+            );
+          },
     );
   }
 }
@@ -430,12 +462,14 @@ class _DoorSection extends StatelessWidget {
   const _DoorSection({
     required this.title,
     required this.doorName,
-    required this.data,
+    required this.m1Data,
+    required this.m2Data,
   });
 
   final String title;
   final String doorName;
-  final _DoorDisplayData data;
+  final _DoorDisplayData m1Data;
+  final _DoorDisplayData m2Data;
 
   static const Color _rowEven = Color(0xFF0F172A);
   static const Color _rowOdd = Color(0xFF1E293B);
@@ -462,81 +496,114 @@ class _DoorSection extends StatelessWidget {
       ),
       _DoorDataRow(
         label: 'Estado actual',
-        labelFontSize: data.isOpen ? 14 : 12,
+        labelFontSize: m1Data.isOpen || m2Data.isOpen ? 14 : 12,
         backgroundColor: _rc(i++),
         m1Child: _ValueText(
-          data.statusLabel,
-          color: data.isOpen
+          m1Data.statusLabel,
+          color: m1Data.isOpen
               ? const Color(0xFFEF4444)
               : const Color(0xFF22C55E),
           bold: true,
-          fontSize: data.isOpen ? 14 : 12,
+          fontSize: m1Data.isOpen ? 14 : 12,
         ),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m2Child: _ValueText(
+          m2Data.statusLabel,
+          color: m2Data.isOpen
+              ? const Color(0xFFEF4444)
+              : const Color(0xFF22C55E),
+          bold: true,
+          fontSize: m2Data.isOpen ? 14 : 12,
+        ),
       ),
-      if (data.openSinceLabel != null)
+      if (m1Data.openSinceLabel != null || m2Data.openSinceLabel != null)
         _DoorDataRow(
           label: 'Abierta desde',
-          labelFontSize: data.isOpen ? 14 : 12,
+          labelFontSize: m1Data.isOpen || m2Data.isOpen ? 14 : 12,
           backgroundColor: _rc(i++),
           m1Child: _ValueText(
-            data.openSinceLabel!,
-            color: const Color(0xFFEF4444),
-            bold: true,
-            fontSize: data.isOpen ? 14 : 12,
+            m1Data.openSinceLabel ?? '-',
+            color: m1Data.openSinceLabel == null
+                ? const Color(0xFF94A3B8)
+                : const Color(0xFFEF4444),
+            bold: m1Data.openSinceLabel != null,
+            fontSize: m1Data.isOpen ? 14 : 12,
           ),
-          m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+          m2Child: _ValueText(
+            m2Data.openSinceLabel ?? '-',
+            color: m2Data.openSinceLabel == null
+                ? const Color(0xFF94A3B8)
+                : const Color(0xFFEF4444),
+            bold: m2Data.openSinceLabel != null,
+            fontSize: m2Data.isOpen ? 14 : 12,
+          ),
         ),
       _DoorDataRow(
         label: 'Último cambio',
         backgroundColor: _rc(i++),
         m1Child: _TooltipValueText(
-          value: data.lastChangedLabel,
-          tooltip: data.lastOpeningTooltip,
+          value: m1Data.lastChangedLabel,
+          tooltip: m1Data.lastOpeningTooltip,
         ),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m2Child: _TooltipValueText(
+          value: m2Data.lastChangedLabel,
+          tooltip: m2Data.lastOpeningTooltip,
+        ),
       ),
       _DoorDataRow(
         label: 'Aperturas totales',
         backgroundColor: _rc(i++),
-        m1Child: _ValueText(data.totalOpeningsLabel, bold: true),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m1Child: _ValueText(m1Data.totalOpeningsLabel, bold: true),
+        m2Child: _ValueText(m2Data.totalOpeningsLabel, bold: true),
       ),
       _DoorDataRow(
         label: 'Aperturas mes',
         backgroundColor: _rc(i++),
-        m1Child: _ValueText(data.monthOpeningsLabel, bold: true),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m1Child: _ValueText(m1Data.monthOpeningsLabel, bold: true),
+        m2Child: _ValueText(m2Data.monthOpeningsLabel, bold: true),
       ),
       _DoorDataRow(
         label: 'Última apertura completa',
         backgroundColor: _rc(i++),
-        m1Child: _SingleLineValueText(data.lastClosedLabel ?? '--'),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m1Child: _SingleLineValueText(m1Data.lastClosedLabel ?? '--'),
+        m2Child: _SingleLineValueText(m2Data.lastClosedLabel ?? '--'),
       ),
       // Sin color de fila: la caja de historial tiene su propio estilo
       _DoorDataRow(
         label: 'Historial reciente',
-        m1Child: _HistoryBoxValue(items: data.recentHistoryItems),
-        m2Child: const _ValueText('-', color: Color(0xFF94A3B8)),
+        m1Child: _HistoryBoxValue(items: m1Data.recentHistoryItems),
+        m2Child: _HistoryBoxValue(items: m2Data.recentHistoryItems),
       ),
-      if (data.loading)
+      if (m1Data.loading || m2Data.loading)
         _DoorDataRow(
           label: '',
-          m1Child: const _ValueText(
-            'Cargando aperturas...',
-            color: Color(0xFF94A3B8),
-          ),
-          m2Child: const SizedBox.shrink(),
+          m1Child: m1Data.loading
+              ? const _ValueText(
+                  'Cargando aperturas...',
+                  color: Color(0xFF94A3B8),
+                )
+              : const SizedBox.shrink(),
+          m2Child: m2Data.loading
+              ? const _ValueText(
+                  'Cargando aperturas...',
+                  color: Color(0xFF94A3B8),
+                )
+              : const SizedBox.shrink(),
         ),
-      if (data.errorMessage != null)
+      if (m1Data.errorMessage != null || m2Data.errorMessage != null)
         _DoorDataRow(
           label: '',
-          m1Child: _ValueText(
-            data.errorMessage!,
-            color: const Color(0xFFFCA5A5),
-          ),
-          m2Child: const SizedBox.shrink(),
+          m1Child: m1Data.errorMessage == null
+              ? const SizedBox.shrink()
+              : _ValueText(
+                  m1Data.errorMessage!,
+                  color: const Color(0xFFFCA5A5),
+                ),
+          m2Child: m2Data.errorMessage == null
+              ? const SizedBox.shrink()
+              : _ValueText(
+                  m2Data.errorMessage!,
+                  color: const Color(0xFFFCA5A5),
+                ),
         ),
     ];
 

@@ -3,6 +3,18 @@ import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
 
+class TenantDocument {
+  const TenantDocument({
+    required this.tenantId,
+    required this.name,
+    required this.active,
+  });
+
+  final String tenantId;
+  final String name;
+  final bool active;
+}
+
 class SiteDocument {
   const SiteDocument({
     required this.siteId,
@@ -28,6 +40,24 @@ class SiteDocument {
 
 class SiteConfigService {
   const SiteConfigService();
+
+  Future<TenantDocument?> fetchTenant({required String tenantId}) async {
+    final String path = '${FirestorePaths.tenantsCollection()}/$tenantId';
+    debugPrint('[SiteConfig] fetchTenant path=$path');
+    try {
+      final DocumentSnapshot<Map<String, dynamic>> doc = await FirebaseFirestore
+          .instance
+          .doc(path)
+          .get();
+      if (!doc.exists) {
+        return null;
+      }
+      return _tenantFromData(doc.id, doc.data() ?? <String, dynamic>{});
+    } catch (error) {
+      debugPrint('[SiteConfig] fetchTenant error path=$path error=$error');
+      return null;
+    }
+  }
 
   Future<SiteDocument?> fetchSite({
     required String tenantId,
@@ -181,5 +211,43 @@ class SiteConfigService {
       debugPrint('[SiteConfig] fetchAllActiveTenantIds error=$error');
       return const <String>[];
     }
+  }
+
+  Future<List<TenantDocument>> fetchActiveTenants() async {
+    debugPrint('[SiteConfig] fetchActiveTenants');
+    try {
+      final QuerySnapshot<Map<String, dynamic>> snap = await FirebaseFirestore
+          .instance
+          .collection(FirestorePaths.tenantsCollection())
+          .get();
+      final List<TenantDocument> tenants = snap.docs
+          .map(
+            (QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+                _tenantFromData(doc.id, doc.data()),
+          )
+          .where((TenantDocument tenant) => tenant.active)
+          .toList();
+      tenants.sort((TenantDocument a, TenantDocument b) {
+        return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+      });
+      return tenants;
+    } catch (error) {
+      debugPrint('[SiteConfig] fetchActiveTenants error=$error');
+      return const <TenantDocument>[];
+    }
+  }
+
+  TenantDocument _tenantFromData(String tenantId, Map<String, dynamic> data) {
+    final String name = data['name']?.toString().trim().isNotEmpty == true
+        ? data['name'].toString().trim()
+        : data['clientName']?.toString().trim().isNotEmpty == true
+        ? data['clientName'].toString().trim()
+        : tenantId;
+    final Object? activeRaw = data['active'];
+    return TenantDocument(
+      tenantId: tenantId,
+      name: name,
+      active: activeRaw is bool ? activeRaw : true,
+    );
   }
 }

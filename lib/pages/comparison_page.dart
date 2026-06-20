@@ -5,10 +5,12 @@ import 'package:flutter/material.dart';
 
 import '../models/dashboard_range_settings.dart';
 import '../models/dashboard_door_event.dart';
+import '../models/cerdas_models.dart';
 import '../models/magnifier_settings.dart';
 import '../models/munters_model.dart';
 import '../models/plc_maintenance_settings.dart';
 import '../models/plc_unit_diagnostics.dart';
+import '../services/cerdas_repository.dart';
 import '../widgets/cerdas_module.dart';
 import '../widgets/differential_pressure_history_card.dart';
 import '../widgets/door_openings_module.dart';
@@ -36,6 +38,7 @@ class ComparisonPage extends StatefulWidget {
     this.plc2ColumnLabel,
     this.plc1MaintenanceMode,
     this.plc2MaintenanceMode,
+    this.onOpenEnvironmentOverview,
   });
 
   static const String sectionEstado = 'Estado';
@@ -93,6 +96,9 @@ class ComparisonPage extends StatefulWidget {
     for (final String value in defaultModuleOrder) {
       addIfAllowed(value);
     }
+    normalized.remove(sectionCerdas);
+    final int estadoIndex = normalized.indexOf(sectionEstado);
+    normalized.insert(estadoIndex >= 0 ? estadoIndex + 1 : 0, sectionCerdas);
     return normalized;
   }
 
@@ -115,9 +121,59 @@ class ComparisonPage extends StatefulWidget {
   final String? plc2ColumnLabel;
   final PlcMaintenanceMode? plc1MaintenanceMode;
   final PlcMaintenanceMode? plc2MaintenanceMode;
+  final VoidCallback? onOpenEnvironmentOverview;
 
   @override
   State<ComparisonPage> createState() => _ComparisonPageState();
+}
+
+class EnvironmentOverviewPage extends StatelessWidget {
+  const EnvironmentOverviewPage({
+    super.key,
+    required this.units,
+    required this.labels,
+    required this.plcIds,
+    required this.tenantId,
+    required this.siteId,
+    required this.rangeSettings,
+    required this.onTapBack,
+  });
+
+  final List<MuntersModel> units;
+  final List<String> labels;
+  final List<String?> plcIds;
+  final String? tenantId;
+  final String? siteId;
+  final DashboardRangeSettings rangeSettings;
+  final VoidCallback onTapBack;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: onTapBack,
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (int i = 0; i < units.length; i++) ...[
+              _LargeEnvironmentUnitCard(
+                label: i < labels.length ? labels[i] : units[i].name,
+                unit: units[i],
+                tenantId: tenantId,
+                siteId: siteId,
+                plcId: i < plcIds.length ? plcIds[i] : units[i].historyPlcId,
+                rangeSettings: rangeSettings,
+                blocked: _shouldBlockOperationalData(units[i]),
+              ),
+              if (i != units.length - 1) const SizedBox(height: 14),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class _ComparisonPageState extends State<ComparisonPage> {
@@ -145,6 +201,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
   final bool _munters1Collapsed = false;
   final bool _munters2Collapsed = false;
   bool _reorderEnabled = false;
+  bool _alarmasAutoExpandQueued = false;
   int _sectionsCollapseGeneration = 0;
   final Map<String, int> _sectionExpandRequests = <String, int>{};
   final Set<String> _expandedSectionIds = <String>{};
@@ -254,6 +311,25 @@ class _ComparisonPageState extends State<ComparisonPage> {
         curve: Curves.easeOut,
         alignment: 0.06,
       );
+    });
+  }
+
+  void _queueAlarmasAutoExpand() {
+    if (_alarmasAutoExpandQueued) {
+      return;
+    }
+    _alarmasAutoExpandQueued = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _alarmasAutoExpandQueued = false;
+      if (!mounted || _expandedSectionIds.contains(_sectionAlarmas)) {
+        return;
+      }
+      setState(() {
+        _sectionExpandRequests[_sectionAlarmas] =
+            (_sectionExpandRequests[_sectionAlarmas] ?? 0) + 1;
+        _expandedSectionIds.add(_sectionAlarmas);
+      });
+      _handleSectionExpanded();
     });
   }
 
@@ -1282,6 +1358,9 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final bool hasAnyModuleAlarm =
         _isModuleStatusAlarm(m1AlarmasStatus) ||
         _isModuleStatusAlarm(m2AlarmasStatus);
+    if (hasAnyModuleAlarm && !_expandedSectionIds.contains(_sectionAlarmas)) {
+      _queueAlarmasAutoExpand();
+    }
     final Map<String, Widget> sectionById = <String, Widget>{
       _sectionFuncionamiento: funcionamientoSection,
       _sectionAmbiente: ambienteSection,
@@ -1363,10 +1442,17 @@ class _ComparisonPageState extends State<ComparisonPage> {
                       showMunters2: widget.showMunters2,
                       plc1ColumnLabel: widget.plc1ColumnLabel ?? 'M1',
                       plc2ColumnLabel: widget.plc2ColumnLabel ?? 'M2',
+                      munters1: munters1,
+                      munters2: munters2,
+                      rangeSettings: rangeSettings,
+                      munters1Blocked: munters1DataBlocked,
+                      munters2Blocked: munters2DataBlocked,
                       plc1MaintenanceMode: widget.plc1MaintenanceMode,
                       plc2MaintenanceMode: widget.plc2MaintenanceMode,
                       magnifierSettings: widget.magnifierSettings,
                       reorderEnabled: _reorderEnabled,
+                      onOpenEnvironmentOverview:
+                          widget.onOpenEnvironmentOverview,
                       onToggleReorder: () {
                         setState(() {
                           _reorderEnabled = !_reorderEnabled;
@@ -1555,10 +1641,16 @@ class _TableHeader extends StatelessWidget {
     required this.showMunters2,
     required this.plc1ColumnLabel,
     required this.plc2ColumnLabel,
+    required this.munters1,
+    required this.munters2,
+    required this.rangeSettings,
+    required this.munters1Blocked,
+    required this.munters2Blocked,
     required this.plc1MaintenanceMode,
     required this.plc2MaintenanceMode,
     required this.magnifierSettings,
     required this.reorderEnabled,
+    required this.onOpenEnvironmentOverview,
     required this.onToggleReorder,
   });
 
@@ -1566,10 +1658,16 @@ class _TableHeader extends StatelessWidget {
   final bool showMunters2;
   final String plc1ColumnLabel;
   final String plc2ColumnLabel;
+  final MuntersModel munters1;
+  final MuntersModel munters2;
+  final DashboardRangeSettings rangeSettings;
+  final bool munters1Blocked;
+  final bool munters2Blocked;
   final PlcMaintenanceMode? plc1MaintenanceMode;
   final PlcMaintenanceMode? plc2MaintenanceMode;
   final MagnifierSettings magnifierSettings;
   final bool reorderEnabled;
+  final VoidCallback? onOpenEnvironmentOverview;
   final VoidCallback onToggleReorder;
 
   @override
@@ -1599,9 +1697,23 @@ class _TableHeader extends StatelessWidget {
             ),
           ),
           if (showMunters1)
-            _HeaderUnit(title: plc1ColumnLabel, mode: plc1MaintenanceMode),
+            _HeaderUnit(
+              title: plc1ColumnLabel,
+              mode: plc1MaintenanceMode,
+              unit: munters1,
+              rangeSettings: rangeSettings,
+              blocked: munters1Blocked,
+              onOpenEnvironmentOverview: onOpenEnvironmentOverview,
+            ),
           if (showMunters2)
-            _HeaderUnit(title: plc2ColumnLabel, mode: plc2MaintenanceMode),
+            _HeaderUnit(
+              title: plc2ColumnLabel,
+              mode: plc2MaintenanceMode,
+              unit: munters2,
+              rangeSettings: rangeSettings,
+              blocked: munters2Blocked,
+              onOpenEnvironmentOverview: onOpenEnvironmentOverview,
+            ),
         ],
       ),
     );
@@ -1609,98 +1721,759 @@ class _TableHeader extends StatelessWidget {
 }
 
 class _HeaderUnit extends StatelessWidget {
-  const _HeaderUnit({required this.title, required this.mode});
+  const _HeaderUnit({
+    required this.title,
+    required this.mode,
+    required this.unit,
+    required this.rangeSettings,
+    required this.blocked,
+    required this.onOpenEnvironmentOverview,
+  });
 
   final String title;
   final PlcMaintenanceMode? mode;
+  final MuntersModel unit;
+  final DashboardRangeSettings rangeSettings;
+  final bool blocked;
+  final VoidCallback? onOpenEnvironmentOverview;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       flex: 4,
-      child: SizedBox(
-        height: mode == null ? 24 : 44,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          crossAxisAlignment: CrossAxisAlignment.center,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 5),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (mode == null)
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFE5E7EB),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              )
-            else
-              Tooltip(
-                message: mode!.fullLabel,
-                child: Container(
-                  height: 42,
-                  constraints: const BoxConstraints(maxWidth: 160),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 5,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF59E0B),
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: const Color(0xFFFBBF24)),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x335B3B00),
-                        blurRadius: 8,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            mode!.icon,
-                            color: const Color(0xFF111827),
-                            size: 14,
-                          ),
-                          const SizedBox(width: 5),
-                          Flexible(
-                            child: Text(
-                              mode!.label,
-                              overflow: TextOverflow.ellipsis,
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(
-                                color: Color(0xFF111827),
-                                fontSize: 12,
-                                fontWeight: FontWeight.w800,
-                                height: 1,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 3),
-                      const Text(
-                        'Tareas de Mantenimiento',
-                        overflow: TextOverflow.ellipsis,
+            _HeaderEnvironmentCard(
+              unit: unit,
+              rangeSettings: rangeSettings,
+              blocked: blocked,
+              onTap: onOpenEnvironmentOverview,
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: mode == null ? 18 : 44,
+              child: Center(
+                child: mode == null
+                    ? Text(
+                        title,
                         textAlign: TextAlign.center,
-                        style: TextStyle(
-                          color: Color(0xFF111827),
-                          fontSize: 10,
+                        style: const TextStyle(
+                          color: Color(0xFFE5E7EB),
+                          fontSize: 13,
                           fontWeight: FontWeight.w700,
-                          height: 1,
+                        ),
+                      )
+                    : Tooltip(
+                        message: mode!.fullLabel,
+                        child: Container(
+                          height: 42,
+                          constraints: const BoxConstraints(maxWidth: 160),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 5,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF59E0B),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: const Color(0xFFFBBF24)),
+                            boxShadow: const [
+                              BoxShadow(
+                                color: Color(0x335B3B00),
+                                blurRadius: 8,
+                                offset: Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    mode!.icon,
+                                    color: const Color(0xFF111827),
+                                    size: 14,
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Flexible(
+                                    child: Text(
+                                      mode!.label,
+                                      overflow: TextOverflow.ellipsis,
+                                      textAlign: TextAlign.center,
+                                      style: const TextStyle(
+                                        color: Color(0xFF111827),
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        height: 1,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              const Text(
+                                'Tareas de Mantenimiento',
+                                overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  color: Color(0xFF111827),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  height: 1,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
-                    ],
-                  ),
-                ),
               ),
+            ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _HeaderEnvironmentCard extends StatelessWidget {
+  const _HeaderEnvironmentCard({
+    required this.unit,
+    required this.rangeSettings,
+    required this.blocked,
+    this.onTap,
+  });
+
+  final MuntersModel unit;
+  final DashboardRangeSettings rangeSettings;
+  final bool blocked;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final double? temp = blocked ? null : unit.tempInterior;
+    final double? exteriorTemp = blocked ? null : unit.tempExterior;
+    final double? humidity = blocked ? null : unit.humInterior;
+    final bool tempInRange =
+        temp != null &&
+        temp >= rangeSettings.temperatureMin &&
+        temp <= rangeSettings.temperatureMax;
+    final bool humidityInRange =
+        humidity != null &&
+        humidity >= rangeSettings.humidityMin &&
+        humidity <= rangeSettings.humidityMax;
+    final bool hasAlert =
+        (temp != null && !tempInRange) ||
+        (humidity != null && !humidityInRange);
+    final bool hasAnyData = temp != null || humidity != null;
+    final Color borderColor = !hasAnyData
+        ? const Color(0xFF334155)
+        : hasAlert
+        ? const Color(0xFFEF4444)
+        : const Color(0xFF22C55E);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(minHeight: 116),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: borderColor),
+            boxShadow: const [
+              BoxShadow(
+                color: Color(0x33000000),
+                blurRadius: 10,
+                offset: Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _HeaderExteriorTemperatureMetric(value: exteriorTemp),
+              const SizedBox(height: 4),
+              _HeaderTemperatureMetric(
+                value: temp,
+                color: temp == null
+                    ? const Color(0xFF94A3B8)
+                    : tempInRange
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFFEF4444),
+                heatingActive: !blocked && _hasAnyHeatingOn(unit),
+                coolingActive: !blocked && unit.bombaHumidificador == true,
+              ),
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 6),
+                height: 1,
+                color: const Color(0xFF223046),
+              ),
+              _HeaderHumidityMetric(
+                value: humidity,
+                color: humidity == null
+                    ? const Color(0xFF94A3B8)
+                    : humidityInRange
+                    ? const Color(0xFF22C55E)
+                    : const Color(0xFFEF4444),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LargeEnvironmentUnitCard extends StatelessWidget {
+  const _LargeEnvironmentUnitCard({
+    required this.label,
+    required this.unit,
+    required this.tenantId,
+    required this.siteId,
+    required this.plcId,
+    required this.rangeSettings,
+    required this.blocked,
+  });
+
+  final String label;
+  final MuntersModel unit;
+  final String? tenantId;
+  final String? siteId;
+  final String? plcId;
+  final DashboardRangeSettings rangeSettings;
+  final bool blocked;
+
+  @override
+  Widget build(BuildContext context) {
+    final double? temp = blocked ? null : unit.tempInterior;
+    final double? exteriorTemp = blocked ? null : unit.tempExterior;
+    final double? humidity = blocked ? null : unit.humInterior;
+    final bool tempInRange =
+        temp != null &&
+        temp >= rangeSettings.temperatureMin &&
+        temp <= rangeSettings.temperatureMax;
+    final bool humidityInRange =
+        humidity != null &&
+        humidity >= rangeSettings.humidityMin &&
+        humidity <= rangeSettings.humidityMax;
+    final bool hasAlert =
+        (temp != null && !tempInRange) ||
+        (humidity != null && !humidityInRange);
+    final bool hasAnyData = temp != null || humidity != null;
+    final Color borderColor = !hasAnyData
+        ? const Color(0xFF334155)
+        : hasAlert
+        ? const Color(0xFFEF4444)
+        : const Color(0xFF22C55E);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(18, 18, 18, 20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor, width: 1.5),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x44000000),
+            blurRadius: 16,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 24,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 18),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(
+                flex: 7,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _LargeExteriorTemperatureValue(value: exteriorTemp),
+                    const SizedBox(height: 6),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _LargeEnvironmentStatusIcons(
+                          heatingActive: !blocked && _hasAnyHeatingOn(unit),
+                          coolingActive:
+                              !blocked && unit.bombaHumidificador == true,
+                        ),
+                        const SizedBox(width: 18),
+                        Flexible(
+                          child: _LargeTemperatureValue(
+                            value: temp,
+                            color: temp == null
+                                ? const Color(0xFF94A3B8)
+                                : tempInRange
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFFEF4444),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 18),
+                      height: 1,
+                      color: const Color(0xFF223046),
+                    ),
+                    _LargeHumidityMetric(
+                      value: humidity,
+                      color: humidity == null
+                          ? const Color(0xFF94A3B8)
+                          : humidityInRange
+                          ? const Color(0xFF22C55E)
+                          : const Color(0xFFEF4444),
+                    ),
+                    if (hasAlert) ...[
+                      const SizedBox(height: 12),
+                      const _LargeEnvironmentAlarmLabel(),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(width: 18),
+              Expanded(
+                flex: 5,
+                child: _LargeEnvironmentExtraData(
+                  tenantId: tenantId,
+                  siteId: siteId,
+                  plcId: plcId,
+                  nh3: blocked ? null : unit.nh3,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LargeEnvironmentStatusIcons extends StatelessWidget {
+  const _LargeEnvironmentStatusIcons({
+    required this.heatingActive,
+    required this.coolingActive,
+  });
+
+  final bool heatingActive;
+  final bool coolingActive;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 46,
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.local_fire_department,
+            size: 40,
+            color: heatingActive
+                ? const Color(0xFFF97316)
+                : const Color(0xFF64748B),
+          ),
+          const SizedBox(height: 18),
+          Icon(
+            Icons.ac_unit,
+            size: 36,
+            color: coolingActive
+                ? const Color(0xFF38BDF8)
+                : const Color(0xFF64748B),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LargeExteriorTemperatureValue extends StatelessWidget {
+  const _LargeExteriorTemperatureValue({required this.value});
+
+  final double? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final String valueLabel = value == null
+        ? 'Ext: --'
+        : 'Ext: ${value!.toStringAsFixed(1)} °C';
+    return Text(
+      valueLabel,
+      textAlign: TextAlign.center,
+      style: const TextStyle(
+        color: Color(0xFFCBD5E1),
+        fontSize: 20,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _LargeTemperatureValue extends StatelessWidget {
+  const _LargeTemperatureValue({required this.value, required this.color});
+
+  final double? value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PlainEnvironmentValue(
+      value: value?.toStringAsFixed(1),
+      unit: '°C',
+      color: color,
+      fontSize: 86,
+      unitFontSize: 24,
+    );
+  }
+}
+
+class _LargeEnvironmentExtraData extends StatelessWidget {
+  const _LargeEnvironmentExtraData({
+    required this.tenantId,
+    required this.siteId,
+    required this.plcId,
+    required this.nh3,
+  });
+
+  final String? tenantId;
+  final String? siteId;
+  final String? plcId;
+  final double? nh3;
+
+  static const CerdasRepository _repository = CerdasRepository();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF111827),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF223046)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _LargeExtraMetricRow(
+            label: 'Cerdas por sala',
+            valueChild: _LargeCerdasValue(
+              tenantId: tenantId,
+              siteId: siteId,
+              plcId: plcId,
+              repository: _repository,
+            ),
+          ),
+          const SizedBox(height: 12),
+          _LargeExtraMetricRow(
+            label: 'NH3',
+            value: nh3 == null ? '-' : '${nh3!.toStringAsFixed(1)} ppm',
+          ),
+          const SizedBox(height: 12),
+          const _LargeExtraMetricRow(label: 'CO2', value: '-'),
+          const SizedBox(height: 12),
+          const _LargeExtraMetricRow(label: 'Consumo H2O', value: '-'),
+        ],
+      ),
+    );
+  }
+}
+
+class _LargeCerdasValue extends StatelessWidget {
+  const _LargeCerdasValue({
+    required this.tenantId,
+    required this.siteId,
+    required this.plcId,
+    required this.repository,
+  });
+
+  final String? tenantId;
+  final String? siteId;
+  final String? plcId;
+  final CerdasRepository repository;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? tenantId = this.tenantId;
+    final String? siteId = this.siteId;
+    final String? plcId = this.plcId;
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty ||
+        plcId == null ||
+        plcId.isEmpty) {
+      return const _LargeExtraValueText('-');
+    }
+    return StreamBuilder<PigStatsRecord?>(
+      stream: repository.watchPigStats(
+        tenantId: tenantId,
+        siteId: siteId,
+        plcId: plcId,
+      ),
+      builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
+        final int? count = snapshot.data?.currentCount;
+        return _LargeExtraValueText(count == null ? '-' : '$count');
+      },
+    );
+  }
+}
+
+class _LargeExtraMetricRow extends StatelessWidget {
+  const _LargeExtraMetricRow({
+    required this.label,
+    this.value,
+    this.valueChild,
+  });
+
+  final String label;
+  final String? value;
+  final Widget? valueChild;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: Color(0xFF94A3B8),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        const SizedBox(width: 10),
+        valueChild ?? _LargeExtraValueText(value ?? '-'),
+      ],
+    );
+  }
+}
+
+class _LargeExtraValueText extends StatelessWidget {
+  const _LargeExtraValueText(this.value);
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      value,
+      textAlign: TextAlign.right,
+      style: const TextStyle(
+        color: Color(0xFFE5E7EB),
+        fontSize: 18,
+        fontWeight: FontWeight.w800,
+      ),
+    );
+  }
+}
+
+class _LargeEnvironmentAlarmLabel extends StatelessWidget {
+  const _LargeEnvironmentAlarmLabel();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Text(
+      'ALARMA',
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: Color(0xFFEF4444),
+        fontSize: 18,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+}
+
+class _LargeHumidityMetric extends StatelessWidget {
+  const _LargeHumidityMetric({required this.value, required this.color});
+
+  final double? value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PlainEnvironmentValue(
+      value: value?.toStringAsFixed(0),
+      unit: '%',
+      color: color,
+      fontSize: 94,
+      unitFontSize: 34,
+    );
+  }
+}
+
+class _HeaderExteriorTemperatureMetric extends StatelessWidget {
+  const _HeaderExteriorTemperatureMetric({required this.value});
+
+  final double? value;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = value == null
+        ? 'Ext: --'
+        : 'Ext: ${value!.toStringAsFixed(1)} °C';
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: FittedBox(
+        fit: BoxFit.scaleDown,
+        child: Text(
+          label,
+          maxLines: 1,
+          style: const TextStyle(
+            color: Color(0xFFCBD5E1),
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            height: 1,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HeaderTemperatureMetric extends StatelessWidget {
+  const _HeaderTemperatureMetric({
+    required this.value,
+    required this.color,
+    required this.heatingActive,
+    required this.coolingActive,
+  });
+
+  final double? value;
+  final Color color;
+  final bool heatingActive;
+  final bool coolingActive;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.local_fire_department,
+              size: 16,
+              color: heatingActive
+                  ? const Color(0xFFF97316)
+                  : const Color(0xFF64748B),
+            ),
+            const SizedBox(height: 4),
+            Icon(
+              Icons.ac_unit,
+              size: 15,
+              color: coolingActive
+                  ? const Color(0xFF38BDF8)
+                  : const Color(0xFF64748B),
+            ),
+          ],
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _PlainEnvironmentValue(
+            value: value?.toStringAsFixed(1),
+            unit: '°C',
+            color: color,
+            fontSize: 38,
+            unitFontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HeaderHumidityMetric extends StatelessWidget {
+  const _HeaderHumidityMetric({required this.value, required this.color});
+
+  final double? value;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return _PlainEnvironmentValue(
+      value: value?.toStringAsFixed(0),
+      unit: '%',
+      color: color,
+      fontSize: 42,
+      unitFontSize: 18,
+    );
+  }
+}
+
+class _PlainEnvironmentValue extends StatelessWidget {
+  const _PlainEnvironmentValue({
+    required this.value,
+    required this.unit,
+    required this.color,
+    required this.fontSize,
+    required this.unitFontSize,
+  });
+
+  final String? value;
+  final String unit;
+  final Color color;
+  final double fontSize;
+  final double unitFontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    return FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            value ?? '--',
+            maxLines: 1,
+            style: TextStyle(
+              color: color,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w800,
+              height: 0.94,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Padding(
+            padding: EdgeInsets.only(bottom: fontSize * 0.08),
+            child: Text(
+              unit,
+              style: TextStyle(
+                color: color,
+                fontSize: unitFontSize,
+                fontWeight: FontWeight.w700,
+                height: 1,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -3444,6 +4217,7 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
     'T. Ingreso Sala',
     'T. Salida Sala',
     '∆T (Ing-Egr)',
+    'Flujo térmico',
   ];
   static const double _actionColumnWidth = 26;
 
@@ -3475,6 +4249,8 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
                     egreso: munters1.tempInterior,
                     min: rangeSettings.temperatureMin,
                     max: rangeSettings.temperatureMax,
+                    flowThreshold: rangeSettings.thermalFlowThresholdC,
+                    markedFlowDelta: rangeSettings.thermalFlowMarkedDeltaC,
                     blocked: munters1Blocked,
                   ),
                 ),
@@ -3493,6 +4269,8 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
                     egreso: munters2.tempInterior,
                     min: rangeSettings.temperatureMin,
                     max: rangeSettings.temperatureMax,
+                    flowThreshold: rangeSettings.thermalFlowThresholdC,
+                    markedFlowDelta: rangeSettings.thermalFlowMarkedDeltaC,
                     blocked: munters2Blocked,
                   ),
                 ),
@@ -3511,7 +4289,7 @@ class _EnvironmentTemperatureLabels extends StatelessWidget {
 
   static const double _rowH = _EnvironmentTemperatureColumn._valueRowHeight;
   static const double _bracketWidth = 20;
-  static const int _labelCount = 4;
+  static const int _labelCount = 5;
 
   @override
   Widget build(BuildContext context) {
@@ -3623,6 +4401,8 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
     required this.egreso,
     required this.min,
     required this.max,
+    required this.flowThreshold,
+    required this.markedFlowDelta,
     required this.blocked,
   });
 
@@ -3631,12 +4411,15 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
   final double? egreso;
   final double min;
   final double max;
+  final double flowThreshold;
+  final double markedFlowDelta;
   final bool blocked;
 
   static const double _contentLeft = 0;
-  static const double _gaugeWidth = 104;
+  static const double _gaugeWidth = 150;
   static const double _valueRowHeight = 48;
-  static const double _blockHeight = 222;
+  static const double _diagramHeight = 136;
+  static const double _blockHeight = (_valueRowHeight * 4) + _diagramHeight;
 
   @override
   Widget build(BuildContext context) {
@@ -3676,6 +4459,14 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
                   blocked: blocked,
                   gaugeWidth: _gaugeWidth,
                 ),
+                _ThermalFlowDiagram(
+                  exterior: exterior,
+                  ingreso: ingreso,
+                  egreso: egreso,
+                  blocked: blocked,
+                  threshold: flowThreshold,
+                  markedDelta: markedFlowDelta,
+                ),
               ],
             ),
           ),
@@ -3687,6 +4478,342 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+class _ThermalFlowDiagram extends StatelessWidget {
+  const _ThermalFlowDiagram({
+    required this.exterior,
+    required this.ingreso,
+    required this.egreso,
+    required this.blocked,
+    required this.threshold,
+    required this.markedDelta,
+  });
+
+  final double? exterior;
+  final double? ingreso;
+  final double? egreso;
+  final bool blocked;
+  final double threshold;
+  final double markedDelta;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool hasAnyData =
+        !blocked && (exterior != null || ingreso != null || egreso != null);
+    final bool hasGradient = ingreso != null && egreso != null;
+    final _ThermalCondition condition = _resolveThermalCondition(
+      exterior: exterior,
+      interiorReference: ingreso ?? egreso,
+      threshold: threshold,
+    );
+    final double delta = hasGradient ? egreso! - ingreso! : 0;
+    final _ThermalFlowPositions positions = _ThermalFlowPositions.resolve(
+      const Size(
+        _EnvironmentTemperatureColumn._gaugeWidth,
+        _EnvironmentTemperatureColumn._diagramHeight,
+      ),
+      delta: delta,
+      threshold: threshold,
+      markedDelta: markedDelta,
+      blocked: !hasAnyData,
+    );
+
+    return SizedBox(
+      width: _EnvironmentTemperatureColumn._gaugeWidth,
+      height: _EnvironmentTemperatureColumn._diagramHeight,
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          Positioned.fill(
+            child: CustomPaint(
+              painter: _ThermalFlowPainter(
+                delta: delta,
+                threshold: threshold,
+                markedDelta: markedDelta,
+                blocked: !hasAnyData,
+                forceNeutral: !hasGradient,
+              ),
+            ),
+          ),
+          Positioned(
+            left: 14,
+            top: positions.ingresoY - 27,
+            child: _DiagramTempLabel(
+              value: exterior,
+              blocked: !hasAnyData,
+              alignRight: false,
+            ),
+          ),
+          Positioned(
+            left: 41,
+            top: positions.ingresoY - 11,
+            child: _DiagramTempLabel(
+              value: ingreso,
+              blocked: !hasAnyData,
+              alignRight: false,
+            ),
+          ),
+          Positioned(
+            right: 16,
+            top: positions.egresoY - 11,
+            child: _DiagramTempLabel(
+              value: egreso,
+              blocked: !hasAnyData,
+              alignRight: true,
+            ),
+          ),
+          Positioned(
+            left: 18,
+            top: positions.ingresoY + 3,
+            child: Icon(
+              switch (condition) {
+                _ThermalCondition.heating => Icons.local_fire_department,
+                _ThermalCondition.cooling => Icons.ac_unit,
+                _ThermalCondition.neutral => Icons.remove,
+              },
+              size: 18,
+              color: switch (condition) {
+                _ThermalCondition.heating => const Color(0xFFF97316),
+                _ThermalCondition.cooling => const Color(0xFF38BDF8),
+                _ThermalCondition.neutral => const Color(0xFF94A3B8),
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiagramTempLabel extends StatelessWidget {
+  const _DiagramTempLabel({
+    required this.value,
+    required this.blocked,
+    required this.alignRight,
+  });
+
+  final double? value;
+  final bool blocked;
+  final bool alignRight;
+
+  @override
+  Widget build(BuildContext context) {
+    final String label = blocked || value == null ? '-' : '${value!.round()}°';
+    return SizedBox(
+      width: 42,
+      child: Text(
+        label,
+        textAlign: alignRight ? TextAlign.right : TextAlign.left,
+        style: TextStyle(
+          color: blocked ? const Color(0xFF64748B) : const Color(0xFFE5E7EB),
+          fontSize: 15,
+          fontWeight: FontWeight.w400,
+        ),
+      ),
+    );
+  }
+}
+
+enum _ThermalCondition { heating, cooling, neutral }
+
+_ThermalCondition _resolveThermalCondition({
+  required double? exterior,
+  required double? interiorReference,
+  required double threshold,
+}) {
+  if (exterior == null || interiorReference == null) {
+    return _ThermalCondition.neutral;
+  }
+  final double delta = interiorReference - exterior;
+  if (delta.abs() <= threshold) {
+    return _ThermalCondition.neutral;
+  }
+  return delta > 0 ? _ThermalCondition.heating : _ThermalCondition.cooling;
+}
+
+class _ThermalFlowPositions {
+  const _ThermalFlowPositions({
+    required this.room,
+    required this.ingresoY,
+    required this.egresoY,
+  });
+
+  final Rect room;
+  final double ingresoY;
+  final double egresoY;
+
+  static _ThermalFlowPositions resolve(
+    Size size, {
+    required double delta,
+    required double threshold,
+    required double markedDelta,
+    required bool blocked,
+  }) {
+    final Rect room = Rect.fromLTWH(36, 18, size.width - 48, size.height - 34);
+    final double centerY = room.center.dy;
+    if (blocked || delta.abs() <= threshold) {
+      return _ThermalFlowPositions(
+        room: room,
+        ingresoY: centerY,
+        egresoY: centerY,
+      );
+    }
+
+    final double offset = delta.abs() >= markedDelta ? 31 : 16;
+    final double upperY = (centerY - offset).clamp(
+      room.top + 22,
+      room.bottom - 22,
+    );
+    final double lowerY = (centerY + offset).clamp(
+      room.top + 22,
+      room.bottom - 22,
+    );
+
+    if (delta > 0) {
+      return _ThermalFlowPositions(
+        room: room,
+        ingresoY: lowerY,
+        egresoY: upperY,
+      );
+    }
+    return _ThermalFlowPositions(room: room, ingresoY: upperY, egresoY: lowerY);
+  }
+}
+
+class _ThermalFlowPainter extends CustomPainter {
+  const _ThermalFlowPainter({
+    required this.delta,
+    required this.threshold,
+    required this.markedDelta,
+    required this.blocked,
+    required this.forceNeutral,
+  });
+
+  final double delta;
+  final double threshold;
+  final double markedDelta;
+  final bool blocked;
+  final bool forceNeutral;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final _ThermalFlowPositions positions = _ThermalFlowPositions.resolve(
+      size,
+      delta: delta,
+      threshold: threshold,
+      markedDelta: markedDelta,
+      blocked: blocked,
+    );
+    final Rect room = positions.room;
+    final Paint roomPaint = Paint()
+      ..color = blocked ? const Color(0xFF334155) : const Color(0xFF64748B)
+      ..strokeWidth = 1.3
+      ..style = PaintingStyle.stroke;
+    canvas.drawRect(room, roomPaint);
+
+    final Paint inletPaint = Paint()
+      ..color = const Color(0xFFCBD5E1)
+      ..strokeWidth = 1.6
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      Offset(10, positions.ingresoY),
+      Offset(room.left - 8, positions.ingresoY),
+      inletPaint,
+    );
+    _drawArrowHead(
+      canvas,
+      tip: Offset(room.left - 8, positions.ingresoY),
+      angle: 0,
+      color: const Color(0xFFCBD5E1),
+      size: 5,
+    );
+    canvas.drawLine(
+      Offset(room.right + 7, positions.egresoY),
+      Offset(size.width - 4, positions.egresoY),
+      inletPaint,
+    );
+    _drawArrowHead(
+      canvas,
+      tip: Offset(size.width - 4, positions.egresoY),
+      angle: 0,
+      color: const Color(0xFFCBD5E1),
+      size: 5,
+    );
+
+    if (blocked || forceNeutral || delta.abs() <= threshold) {
+      final Paint neutralPaint = Paint()
+        ..color = const Color(0xFF94A3B8)
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round;
+      final Offset start = Offset(room.left + 28, positions.ingresoY);
+      final Offset end = Offset(room.right - 28, positions.egresoY);
+      canvas.drawLine(start, end, neutralPaint);
+      _drawArrowHead(
+        canvas,
+        tip: end,
+        angle: 0,
+        color: const Color(0xFF94A3B8),
+        size: 9,
+      );
+      return;
+    }
+
+    final bool marked = delta.abs() >= markedDelta;
+    final Offset start = Offset(room.left + 28, positions.ingresoY);
+    final Offset end = Offset(room.right - 28, positions.egresoY);
+    final Color arrowColor = delta > 0
+        ? const Color(0xFFF97316)
+        : const Color(0xFF38BDF8);
+    final Paint arrowPaint = Paint()
+      ..color = arrowColor
+      ..strokeWidth = marked ? 4 : 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(start, end, arrowPaint);
+    _drawArrowHead(
+      canvas,
+      tip: end,
+      angle: math.atan2(end.dy - start.dy, end.dx - start.dx),
+      color: arrowColor,
+      size: marked ? 13 : 10,
+    );
+  }
+
+  void _drawArrowHead(
+    Canvas canvas, {
+    required Offset tip,
+    required double angle,
+    required Color color,
+    required double size,
+  }) {
+    final Paint paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+    final double leftAngle = angle + math.pi - math.pi / 7;
+    final double rightAngle = angle + math.pi + math.pi / 7;
+    final Path path = Path()
+      ..moveTo(tip.dx, tip.dy)
+      ..lineTo(
+        tip.dx + math.cos(leftAngle) * size,
+        tip.dy + math.sin(leftAngle) * size,
+      )
+      ..lineTo(
+        tip.dx + math.cos(rightAngle) * size,
+        tip.dy + math.sin(rightAngle) * size,
+      )
+      ..close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _ThermalFlowPainter oldDelegate) {
+    return oldDelegate.delta != delta ||
+        oldDelegate.threshold != threshold ||
+        oldDelegate.markedDelta != markedDelta ||
+        oldDelegate.blocked != blocked ||
+        oldDelegate.forceNeutral != forceNeutral;
   }
 }
 

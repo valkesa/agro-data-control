@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>Analisis de consumo de cuota Firestore</title>
+  <style>
+    @page { size: A4; margin: 22mm 18mm; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #111827;
+      line-height: 1.45;
+      font-size: 12.5px;
+    }
+    h1 { font-size: 25px; margin: 0 0 8px; }
+    h2 { font-size: 17px; margin: 24px 0 8px; border-bottom: 1px solid #d1d5db; padding-bottom: 4px; }
+    h3 { font-size: 14px; margin: 16px 0 6px; }
+    p { margin: 6px 0; }
+    ul { margin: 6px 0 8px 20px; padding: 0; }
+    li { margin: 3px 0; }
+    code {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11.5px;
+      background: #f3f4f6;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+    pre {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 11.2px;
+      background: #f3f4f6;
+      padding: 9px 11px;
+      border-radius: 6px;
+      white-space: pre-wrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0 14px;
+      font-size: 11.8px;
+    }
+    th, td {
+      border: 1px solid #d1d5db;
+      padding: 7px 8px;
+      vertical-align: top;
+    }
+    th {
+      background: #e5e7eb;
+      text-align: left;
+    }
+    .note {
+      background: #fff7ed;
+      border: 1px solid #fed7aa;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .ok {
+      background: #ecfdf5;
+      border: 1px solid #a7f3d0;
+      padding: 10px 12px;
+      border-radius: 6px;
+      margin: 10px 0;
+    }
+    .muted { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <h1>Analisis de consumo de cuota de Firestore</h1>
+  <p class="muted">Proyecto: <strong>agro-data-control</strong> | Fecha: 2 de junio de 2026</p>
+
+  <h2>Resumen ejecutivo</h2>
+  <p>
+    El problema del indicador de usuarios conectados y del historial no fue una falla visual del "ojito".
+    El sistema alcanzo el limite diario de escrituras de Cloud Firestore en el plan Spark.
+  </p>
+  <pre>Cloud Firestore writes: 20k / 20k por dia
+Error observado: 429 RESOURCE_EXHAUSTED - Quota exceeded</pre>
+  <p>
+    Cuando Firestore queda sin cuota, el SDK web deja escrituras en estado local <code>pending</code>.
+    Por eso cada usuario puede verse a si mismo, pero otros usuarios no lo ven: el dato nunca llega al servidor.
+  </p>
+
+  <h2>Hallazgo principal</h2>
+  <p>
+    El mayor consumidor potencial de cuota son los heartbeats de <code>runtimeEvents</code> generados por el backend.
+    El backend toma datos del PLC cada 5 segundos y, para equipos activos, escribe heartbeats en Firestore.
+  </p>
+  <pre>pollingIntervalMs: 5000
+1 ciclo cada 5 segundos = 17.280 ciclos por dia</pre>
+  <p>
+    Una sola escritura cada 5 segundos consume practicamente toda la cuota diaria gratuita.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Frecuencia</th>
+        <th>Escrituras por dispositivo activo</th>
+        <th>Impacto diario</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Cada 5 segundos</td>
+        <td>1 write por ciclo</td>
+        <td>17.280 writes/dia</td>
+      </tr>
+      <tr>
+        <td>Cada 60 segundos</td>
+        <td>1 write por minuto</td>
+        <td>1.440 writes/dia</td>
+      </tr>
+      <tr>
+        <td>Cada 5 minutos</td>
+        <td>1 write cada 5 minutos</td>
+        <td>288 writes/dia</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Impacto estimado de runtimeEvents</h2>
+  <p>
+    La configuracion actual contiene 2 PLCs: <code>munters1</code> y <code>munters2</code>.
+    Por cada PLC se trackean hasta 4 tipos de runtime:
+  </p>
+  <ul>
+    <li>Bomba humidificador</li>
+    <li>Resistencia 1</li>
+    <li>Resistencia 2</li>
+    <li>Ventiladores</li>
+  </ul>
+  <p>
+    Eso da hasta 8 heartbeats posibles cada 5 segundos.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Dispositivos activos constantes</th>
+        <th>Writes/dia estimados con heartbeat cada 5s</th>
+        <th>Comparacion contra Spark</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>1</td>
+        <td>17.280</td>
+        <td>86% de la cuota diaria</td>
+      </tr>
+      <tr>
+        <td>2</td>
+        <td>34.560</td>
+        <td>173% de la cuota diaria</td>
+      </tr>
+      <tr>
+        <td>4</td>
+        <td>69.120</td>
+        <td>346% de la cuota diaria</td>
+      </tr>
+      <tr>
+        <td>8</td>
+        <td>138.240</td>
+        <td>691% de la cuota diaria</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="note">
+    <strong>Conclusion:</strong> con solo dos dispositivos activos constantes, el sistema supera el limite gratuito de Firestore.
+    Si los ventiladores de ambos Munters estan activos, eso solo ya puede consumir aproximadamente 34.560 escrituras por dia.
+  </div>
+
+  <h2>Relacion con consumos de energia</h2>
+  <p>
+    El agregado de consumos de energia probablemente disparo o hizo visible el problema, no por la pantalla de consumo en si,
+    sino porque los heartbeats empezaron a persistir campos que cambian con el tiempo.
+  </p>
+  <pre>activeDurationSec
+powerWatts
+energyKwh
+observedAt</pre>
+  <p>
+    Como <code>activeDurationSec</code> y <code>energyKwh</code> cambian continuamente mientras el equipo esta activo,
+    el backend actualiza el documento en Firestore en cada poll de 5 segundos.
+    Aunque se reutilice el mismo documento, cada actualizacion cuenta como una escritura.
+  </p>
+
+  <h2>Otros consumidores de cuota</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Modulo</th>
+        <th>Tipo de escritura</th>
+        <th>Impacto estimado</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>runtimeEvents</code></td>
+        <td>Heartbeats y eventos ON/OFF de equipos</td>
+        <td>Muy alto si escribe cada 5s</td>
+      </tr>
+      <tr>
+        <td><code>presence</code></td>
+        <td>Usuarios conectados e historial de sesiones</td>
+        <td>Medio/bajo; aprox. 1.440 writes/dia por heartbeat/minuto por usuario</td>
+      </tr>
+      <tr>
+        <td><code>temperatureHistory</code></td>
+        <td>Historicos horarios y recalculo diario</td>
+        <td>Bajo; aprox. decenas a ~100 writes/dia para 2 PLCs</td>
+      </tr>
+      <tr>
+        <td><code>differentialPressureHistory</code></td>
+        <td>Muestras agregadas por ventana</td>
+        <td>Bajo/medio, depende frecuencia configurada</td>
+      </tr>
+      <tr>
+        <td><code>doorOpenings</code></td>
+        <td>Apertura/cierre de puertas</td>
+        <td>Bajo; ocurre por transicion, no por poll constante</td>
+      </tr>
+      <tr>
+        <td>Configuracion desde UI</td>
+        <td>Guardar settings, usuarios, costos, visibilidad</td>
+        <td>Bajo; escrituras manuales y esporadicas</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Que no consume escrituras directamente</h2>
+  <p>
+    La lectura del frontend cada 5 segundos consulta al backend por HTTP.
+    Esa llamada no escribe en Firestore por si misma.
+  </p>
+  <pre>Frontend -> HTTP GET backend snapshot cada 5s
+No es Firestore write directo</pre>
+  <p>
+    El consumo de escrituras aparece cuando el backend, durante su propio ciclo de polling,
+    decide persistir runtime heartbeats, eventos o historicos en Firestore.
+  </p>
+
+  <h2>Recomendaciones tecnicas</h2>
+  <h3>1. No escribir heartbeats cada 5 segundos</h3>
+  <p>
+    Cambiar <code>runtimeEvents</code> para que los heartbeats se escriban como maximo cada 60 segundos
+    o cada 5 minutos por dispositivo activo.
+  </p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Throttle heartbeat</th>
+        <th>2 dispositivos activos</th>
+        <th>8 dispositivos activos</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>5 segundos</td>
+        <td>34.560 writes/dia</td>
+        <td>138.240 writes/dia</td>
+      </tr>
+      <tr>
+        <td>60 segundos</td>
+        <td>2.880 writes/dia</td>
+        <td>11.520 writes/dia</td>
+      </tr>
+      <tr>
+        <td>5 minutos</td>
+        <td>576 writes/dia</td>
+        <td>2.304 writes/dia</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>2. Guardar inmediatamente los cambios ON/OFF</h3>
+  <p>
+    Los eventos de cambio de estado deben persistirse en el momento:
+    equipo prende, equipo apaga, cambia potencia de ventiladores, etc.
+    Eso conserva precision sin escribir en cada poll.
+  </p>
+
+  <h3>3. Calcular energia activa sin persistir cada 5 segundos</h3>
+  <p>
+    Para un evento abierto, la UI puede calcular energia en vivo usando:
+  </p>
+  <pre>energia_kWh = potencia_kW * horas_transcurridas</pre>
+  <p>
+    Al cerrar el evento, se guarda una unica escritura final con duracion y energia consolidada.
+  </p>
+
+  <h3>4. Evaluar Firebase Blaze o mover heartbeats fuera de Firestore</h3>
+  <p>
+    Si se necesita telemetria frecuente real-time, Firestore Spark no es el lugar adecuado.
+    Alternativas:
+  </p>
+  <ul>
+    <li>Subir a plan Blaze.</li>
+    <li>Usar Firebase Realtime Database para presencia/estado vivo.</li>
+    <li>Mantener estado vivo en backend memory/HTTP snapshot y guardar en Firestore solo eventos consolidados.</li>
+  </ul>
+
+  <h2>Decision sugerida</h2>
+  <div class="ok">
+    <strong>Recomendacion:</strong> implementar throttle de heartbeats de runtime a 60 segundos o 5 minutos,
+    guardar ON/OFF inmediatamente y calcular energia activa en UI sin persistir cada 5 segundos.
+    Esto reduce el consumo de cuota en uno o dos ordenes de magnitud sin perder informacion importante.
+  </div>
+</body>
+</html>

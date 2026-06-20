@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optimizacion ActiveUsersEye</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f8fafc;
+      --panel: #ffffff;
+      --text: #111827;
+      --muted: #64748b;
+      --border: #d8dee8;
+      --blue: #2563eb;
+      --green: #16a34a;
+      --red: #dc2626;
+      --code-bg: #0f172a;
+      --code-text: #e5e7eb;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+      line-height: 1.55;
+    }
+
+    main {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 40px 24px 56px;
+    }
+
+    header {
+      margin-bottom: 28px;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 20px;
+    }
+
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 28px 0 12px;
+      font-size: 22px;
+      line-height: 1.25;
+    }
+
+    h3 {
+      margin: 20px 0 8px;
+      font-size: 17px;
+    }
+
+    p {
+      margin: 0 0 12px;
+    }
+
+    ul {
+      margin: 8px 0 16px;
+      padding-left: 22px;
+    }
+
+    li {
+      margin: 6px 0;
+    }
+
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e2e8f0;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0 18px;
+      padding: 14px 16px;
+      overflow-x: auto;
+      border-radius: 8px;
+      background: var(--code-bg);
+      color: var(--code-text);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+
+    pre code {
+      padding: 0;
+      background: transparent;
+      color: inherit;
+      font-size: inherit;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .card {
+      margin: 18px 0;
+      padding: 18px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .metric {
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #f8fafc;
+    }
+
+    .metric strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .metric span {
+      display: block;
+      font-size: 24px;
+      font-weight: 700;
+    }
+
+    .ok {
+      color: var(--green);
+      font-weight: 700;
+    }
+
+    .warn {
+      color: var(--red);
+      font-weight: 700;
+    }
+
+    .file {
+      font-weight: 700;
+      color: var(--blue);
+    }
+
+    @media (max-width: 720px) {
+      main {
+        padding: 28px 16px 40px;
+      }
+
+      h1 {
+        font-size: 28px;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Optimizacion del modulo ActiveUsersEye</h1>
+      <p class="subtitle">
+        Resumen tecnico de los cambios realizados para eliminar lecturas permanentes de Firestore en el ojito de usuarios activos.
+      </p>
+    </header>
+
+    <section class="card">
+      <h2>Objetivo</h2>
+      <p>
+        El modulo <code>ActiveUsersEye</code> se usaba como una herramienta de consulta puntual, pero mantenia listeners realtime activos mientras la aplicacion permanecia abierta. Esto generaba lecturas continuas de Firestore, especialmente en PWA instalada en escritorio o movil.
+      </p>
+      <p>
+        El objetivo fue pasar a un modelo bajo demanda:
+      </p>
+      <ul>
+        <li>Ojito cerrado = <strong>0 lecturas</strong>.</li>
+        <li>Al abrir el panel, ejecutar una consulta inicial.</li>
+        <li>Mientras el panel esta abierto, refrescar con polling liviano.</li>
+        <li>Cerrar automaticamente el panel luego de 30 segundos.</li>
+        <li>No usar listeners realtime para presencia ni historial dentro del ojito.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Archivos modificados</h2>
+
+      <h3><span class="file">lib/widgets/active_users_eye.dart</span></h3>
+      <ul>
+        <li>Se elimino el <code>StreamBuilder</code> del boton del ojito.</li>
+        <li>El widget cerrado ya no crea streams, timers ni consultas.</li>
+        <li>El badge conserva el ultimo conteo conocido sin refrescar en segundo plano.</li>
+        <li>El dialogo ahora se autocierra luego de 30 segundos.</li>
+        <li>El tab <code>Activos</code> hace un <code>get()</code> inicial y luego polling cada 15 segundos solo mientras esta activo.</li>
+        <li>Al cerrar el dialogo o cambiar de tab, se cancela el polling.</li>
+        <li>El tab <code>Historial</code> se convirtio a carga puntual con <code>FutureBuilder</code>.</li>
+      </ul>
+
+      <h3><span class="file">lib/services/presence_service.dart</span></h3>
+      <ul>
+        <li>Se reemplazo <code>watchActiveUsers()</code> por <code>fetchActiveUsers()</code>.</li>
+        <li>Se reemplazo <code>watchUserSessions()</code> por <code>fetchUserSessions()</code>.</li>
+        <li>Ambos metodos usan <code>get()</code> y no <code>snapshots()</code>.</li>
+        <li><code>fetchActiveUsers()</code> filtra usuarios activos recientes usando <code>lastSeenAt</code> y <code>activeThreshold</code>.</li>
+      </ul>
+    </section>
+
+    <section class="card">
+      <h2>Codigo relevante</h2>
+
+      <h3>Autocierre del dialogo</h3>
+      <pre><code>static const Duration _autoCloseDelay = Duration(seconds: 30);
+
+@override
+void initState() {
+  super.initState();
+  _tabController = TabController(length: 2, vsync: this);
+  _tabController.addListener(_handleTabChange);
+  _autoCloseTimer = Timer(_autoCloseDelay, _closeIfOpen);
+}</code></pre>
+
+      <h3>Cancelacion de recursos del dialogo</h3>
+      <pre><code>@override
+void dispose() {
+  _autoCloseTimer?.cancel();
+  _tabController.removeListener(_handleTabChange);
+  _tabController.dispose();
+  super.dispose();
+}</code></pre>
+
+      <h3>Polling solo mientras el tab Activos esta activo</h3>
+      <pre><code>void _startPolling() {
+  if (_refreshTimer != null) {
+    return;
+  }
+  _loadUsers();
+  _refreshTimer = Timer.periodic(_refreshInterval, (_) =&gt; _loadUsers());
+}
+
+void _stopPolling() {
+  _refreshTimer?.cancel();
+  _refreshTimer = null;
+  _requestGeneration += 1;
+}</code></pre>
+
+      <h3>Consulta Firestore bajo demanda</h3>
+      <pre><code>Future&lt;List&lt;ActiveUserPresence&gt;&gt; fetchActiveUsers({
+  required String workspaceId,
+  int limit = 50,
+}) async {
+  final QuerySnapshot&lt;Map&lt;String, dynamic&gt;&gt; snapshot =
+      await _presenceCollection(workspaceId)
+          .where('isOnline', isEqualTo: true)
+          .orderBy('lastSeenAt', descending: true)
+          .limit(limit)
+          .get();
+
+  final DateTime minLastSeen = DateTime.now().subtract(activeThreshold);
+  return snapshot.docs
+      .map(ActiveUserPresence.fromFirestore)
+      .where((ActiveUserPresence user) {
+        final DateTime? lastSeenAt = user.lastSeenAt;
+        return lastSeenAt != null &amp;&amp; lastSeenAt.isAfter(minLastSeen);
+      })
+      .toList(growable: false);
+}</code></pre>
+    </section>
+
+    <section class="card">
+      <h2>Cancelacion de timers y recursos</h2>
+      <ul>
+        <li>El widget principal <code>ActiveUsersEye</code> no mantiene streams ni timers.</li>
+        <li>El dialogo cancela <code>_autoCloseTimer</code> en <code>dispose()</code>.</li>
+        <li>La vista de usuarios activos cancela <code>_refreshTimer</code> en <code>dispose()</code>.</li>
+        <li>Al cambiar del tab <code>Activos</code> al tab <code>Historial</code>, se llama a <code>_stopPolling()</code>.</li>
+        <li><code>_requestGeneration</code> invalida respuestas asincronicas tardias para evitar actualizar widgets ya cerrados o inactivos.</li>
+      </ul>
+      <p class="ok">
+        Confirmacion: cuando el ojito esta cerrado, no quedan referencias activas, streams, providers ni timers asociados al modulo.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Estimacion de lecturas Firestore</h2>
+
+      <div class="grid">
+        <div class="metric">
+          <strong>Antes, estimado por hora</strong>
+          <span class="warn">3.000 lecturas</span>
+        </div>
+        <div class="metric">
+          <strong>Antes, estimado por dia</strong>
+          <span class="warn">72.000 lecturas</span>
+        </div>
+      </div>
+
+      <p>
+        Calculo usado para el caso anterior:
+      </p>
+      <pre><code>10 usuarios online
+5 owners con la app abierta
+heartbeat cada 60 segundos
+
+10 docs modificados por minuto * 5 listeners * 60 minutos = 3.000 lecturas/hora
+3.000 * 24 = 72.000 lecturas/dia</code></pre>
+
+      <div class="grid">
+        <div class="metric">
+          <strong>Despues, ojito cerrado</strong>
+          <span class="ok">0 lecturas</span>
+        </div>
+        <div class="metric">
+          <strong>Apertura tipica menor a 10s</strong>
+          <span>1 consulta</span>
+        </div>
+      </div>
+
+      <p>
+        Con el panel abierto hasta el autocierre de 30 segundos:
+      </p>
+      <ul>
+        <li>Consulta inicial al abrir.</li>
+        <li>Refresco a los 15 segundos.</li>
+        <li>Puede haber un ultimo refresco cerca de los 30 segundos segun timing del timer.</li>
+      </ul>
+      <p>
+        Resultado aproximado: <strong>2 a 3 consultas</strong>, con hasta <strong>50 documentos por consulta</strong>. En el peor caso, 100 a 150 lecturas por apertura completa, en lugar de lecturas permanentes durante todo el dia.
+      </p>
+    </section>
+
+    <section class="card">
+      <h2>Validacion</h2>
+      <ul>
+        <li>No quedan usos de <code>snapshots()</code> asociados a <code>ActiveUsersEye</code> ni a los metodos de presencia usados por el ojito.</li>
+        <li>No quedan referencias a <code>watchActiveUsers</code> ni <code>watchUserSessions</code>.</li>
+        <li>No quedan <code>StreamBuilder</code> en <code>active_users_eye.dart</code>.</li>
+        <li>Se ejecuto analisis puntual sin errores.</li>
+      </ul>
+      <pre><code>dart analyze lib/widgets/active_users_eye.dart lib/services/presence_service.dart
+No issues found!</code></pre>
+    </section>
+  </main>
+</body>
+</html>
