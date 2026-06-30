@@ -14,6 +14,7 @@ class HumidityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double displayValue = value.clamp(0, 100).toDouble();
     final Color accent = value >= 65
         ? const Color(0xFFFACC15)
         : const Color(0xFF38BDF8);
@@ -45,7 +46,7 @@ class HumidityCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Text(
-                  value.toStringAsFixed(0),
+                  displayValue.toStringAsFixed(0),
                   style: const TextStyle(
                     color: Color(0xFFE5E7EB),
                     fontSize: 28,

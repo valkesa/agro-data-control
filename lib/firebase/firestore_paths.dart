@@ -115,6 +115,11 @@ class FirestorePaths {
     required String plcId,
   }) => 'tenants/$tenantId/sites/$siteId/plcs/$plcId/runtimeEvents';
 
+  static String roomWashEventsCollection({
+    required String tenantId,
+    required String siteId,
+  }) => 'tenants/$tenantId/sites/$siteId/room_wash_events';
+
   static String electricalCostSettings(String tenantId, String siteId) =>
       'tenants/$tenantId/sites/$siteId/settings/electricalCost';
 

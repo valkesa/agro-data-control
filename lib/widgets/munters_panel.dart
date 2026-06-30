@@ -52,7 +52,7 @@ class MuntersPanel extends StatelessWidget {
                 const SizedBox(height: 4),
                 _MetricRow(
                   label: 'Humedad interior',
-                  value: _formatDecimal(unit.humInterior, 0),
+                  value: _formatDecimal(unit.displayHumInterior, 0),
                   unit: '%',
                 ),
                 const SizedBox(height: 4),
@@ -64,7 +64,7 @@ class MuntersPanel extends StatelessWidget {
                 const SizedBox(height: 4),
                 _MetricRow(
                   label: 'Humedad exterior',
-                  value: _formatDecimal(unit.humExterior, 0),
+                  value: _formatDecimal(unit.displayHumExterior, 0),
                   unit: '%',
                 ),
               ],

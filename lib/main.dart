@@ -18,6 +18,7 @@ import 'models/munters_model.dart';
 import 'models/plc_display_config.dart';
 import 'models/plc_maintenance_settings.dart';
 import 'models/plc_unit_diagnostics.dart';
+import 'models/room_wash_event.dart';
 import 'models/unit_visibility_settings.dart';
 import 'models/water_shortage_summary.dart';
 import 'pages/comparison_page.dart';
@@ -33,6 +34,7 @@ import 'services/electrical_cost_service.dart';
 import 'services/firebase_email_auth_service.dart';
 import 'services/plc_dashboard_service.dart';
 import 'services/presence_service.dart';
+import 'services/room_wash_events_service.dart';
 import 'services/site_config_service.dart';
 import 'services/site_plc_config_service.dart';
 import 'services/tenant_membership_service.dart';
@@ -245,6 +247,8 @@ class _AgroDataShellState extends State<AgroDataShell>
   bool _presenceStartInFlight = false;
   final WaterShortageRepository _waterShortageRepo =
       const WaterShortageRepository();
+  final RoomWashEventsService _roomWashEventsService =
+      const RoomWashEventsService();
   final Map<String, bool?> _prevNivelAguaAlarma = {};
   Map<String, WaterShortageSummary> _waterShortageSummaries = {};
   late final BrowserExitGuardDisposer _disposeBrowserExitGuard;
@@ -1508,10 +1512,17 @@ class _AgroDataShellState extends State<AgroDataShell>
   Future<void> _openVisualConfig() async {
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     if (!mounted) return;
-    if (bootstrap.userContext.role != UserAppRole.owner) return;
-    final String? tenantId = bootstrap.userContext.activeTenantId;
+    if (_userRole != UserAppRole.owner) return;
+    final String? tenantId = bootstrap.effectiveTenantId;
     final String siteId = bootstrap.siteId;
-    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) return;
+    if (tenantId == null || tenantId.isEmpty || siteId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay contexto de tenant/sala para configurar.'),
+        ),
+      );
+      return;
+    }
 
     final bool? saved = await showDialog<bool>(
       // ignore: use_build_context_synchronously
@@ -1520,7 +1531,7 @@ class _AgroDataShellState extends State<AgroDataShell>
         tenantId: tenantId,
         siteId: siteId,
         siteName: _activeSiteName ?? siteId,
-        plcConfigs: _plcConfigs,
+        plcConfigs: _effectivePlcConfigs(_plcConfigs),
         service: _sitePlcConfigService,
       ),
     );
@@ -1706,26 +1717,36 @@ class _AgroDataShellState extends State<AgroDataShell>
       return;
     }
 
+    DateTime? successfulSnapshotAt;
+    DashboardSnapshot? successfulSnapshot;
+    bool? successfulSnapshotStale;
+    if (result.isSuccess) {
+      successfulSnapshotAt =
+          result.receivedAt ?? result.snapshot!.lastUpdatedAt ?? DateTime.now();
+      final DashboardSnapshot nextSnapshot = _withUpdateDeltas(
+        next: result.snapshot!,
+        previous: _snapshot,
+      );
+      successfulSnapshot = await _attachRecentRoomWashEvents(
+        snapshot: nextSnapshot,
+      );
+      successfulSnapshotStale = _isSnapshotStale(nextSnapshot);
+      if (!mounted) {
+        return;
+      }
+    }
+
     setState(() {
       _liveRequestInFlight = false;
 
       if (result.isSuccess) {
-        final DateTime successfulSnapshotAt =
-            result.receivedAt ??
-            result.snapshot!.lastUpdatedAt ??
-            DateTime.now();
-        final DashboardSnapshot nextSnapshot = _withUpdateDeltas(
-          next: result.snapshot!,
-          previous: _snapshot,
-        );
-        final bool snapshotStale = _isSnapshotStale(nextSnapshot);
         _snapshot = _applyBackendConnectivity(
-          snapshot: _attachBackendMetadata(snapshot: nextSnapshot),
+          snapshot: _attachBackendMetadata(snapshot: successfulSnapshot!),
           backendOnline: true,
-          snapshotStale: snapshotStale,
+          snapshotStale: successfulSnapshotStale!,
         );
         _backendOnline = true;
-        _snapshotStale = snapshotStale;
+        _snapshotStale = successfulSnapshotStale;
         _lastSuccessfulSnapshotAt = successfulSnapshotAt;
         _showSnapshotPulse = true;
         debugPrint(
@@ -1835,6 +1856,56 @@ class _AgroDataShellState extends State<AgroDataShell>
     setState(() {
       _waterShortageSummaries = summaries;
     });
+  }
+
+  Future<DashboardSnapshot> _attachRecentRoomWashEvents({
+    required DashboardSnapshot snapshot,
+  }) async {
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _historySiteId;
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty ||
+        snapshot.units.isEmpty) {
+      return snapshot;
+    }
+
+    final DateTime since = DateTime.now().subtract(
+      RoomWashEvent.defaultHumidityShadingWindow,
+    );
+    final List<MuntersModel> units = List<MuntersModel>.of(snapshot.units);
+    await Future.wait(
+      <int>[0, 1].where((index) => index < units.length).map((index) async {
+        final int roomNumber = index + 1;
+        try {
+          final RoomWashEvent? event = await _roomWashEventsService
+              .fetchLatestRecentForRoom(
+                tenantId: tenantId,
+                siteId: siteId,
+                roomNumber: roomNumber,
+                since: since,
+              );
+          units[index] = _copyMuntersModel(
+            source: units[index],
+            recentRoomWashEvent: event,
+          );
+        } catch (error) {
+          debugPrint(
+            '[room-wash] Error cargando ultimo lavado sala $roomNumber: $error',
+          );
+        }
+      }),
+    );
+
+    return DashboardSnapshot(
+      units: units,
+      doorEvents: snapshot.doorEvents,
+      backendOnline: snapshot.backendOnline,
+      startedAt: snapshot.startedAt,
+      lastUpdatedAt: snapshot.lastUpdatedAt,
+      clientName: snapshot.clientName,
+    );
   }
 
   DashboardSnapshot _withUpdateDeltas({
@@ -1981,6 +2052,7 @@ class _AgroDataShellState extends State<AgroDataShell>
     DateTime? lastUpdatedAt,
     DateTime? previousLastUpdatedAt,
     int? updateDeltaSeconds,
+    RoomWashEvent? recentRoomWashEvent,
   }) {
     return MuntersModel(
       name: source.name,
@@ -2003,6 +2075,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       lastHeartbeatValue: source.lastHeartbeatValue,
       lastHeartbeatChangeAt: source.lastHeartbeatChangeAt,
       lastError: source.lastError,
+      recentRoomWashEvent: recentRoomWashEvent ?? source.recentRoomWashEvent,
       tempInterior: source.tempInterior,
       tempIngresoSala: source.tempIngresoSala,
       humInterior: source.humInterior,
@@ -2125,45 +2198,46 @@ class _AgroDataShellState extends State<AgroDataShell>
           body: SafeArea(
             child: Column(
               children: [
-                DashboardHeader(
-                  selectedTab: _selectedTab,
-                  screenTitle: screenTitle,
-                  onSignOut: () async {
-                    final bool shouldSignOut = await _confirmSignOut();
-                    if (!shouldSignOut || !mounted) {
-                      return;
-                    }
-                    await _signOut();
-                  },
-                  onOpenSettings: _openSettings,
-                  onSelectComparison: _goHomeDashboard,
-                  onLogoTap: _goHomeDashboard,
-                  userEmail: widget.user.email,
-                  farmName: _activeTenantName ?? _historyTenantId,
-                  roomName: _activeSiteName,
-                  activeTenantId: _historyTenantId,
-                  availableTenants: _availableTenants,
-                  onTenantChanged: _switchTenant,
-                  activeSiteId: _activeSiteId,
-                  availableSites: _availableSites,
-                  onSiteChanged: _switchSite,
-                  canSelectSite: _userRole == UserAppRole.owner,
-                  activeUsersIndicator:
-                      _userRole == UserAppRole.owner &&
-                          presenceWorkspaceId != null
-                      ? ActiveUsersEye(
-                          workspaceId: presenceWorkspaceId,
-                          currentUser: widget.user,
-                          currentRole: _userRole,
-                        )
-                      : null,
-                  onRuntimeEvents:
-                      _userRole == UserAppRole.owner &&
-                          _historyTenantId != null &&
-                          _historySiteId?.isNotEmpty == true
-                      ? _goRuntimeEvents
-                      : null,
-                ),
+                if (_selectedTab != 'environmentOverview')
+                  DashboardHeader(
+                    selectedTab: _selectedTab,
+                    screenTitle: screenTitle,
+                    onSignOut: () async {
+                      final bool shouldSignOut = await _confirmSignOut();
+                      if (!shouldSignOut || !mounted) {
+                        return;
+                      }
+                      await _signOut();
+                    },
+                    onOpenSettings: _openSettings,
+                    onSelectComparison: _goHomeDashboard,
+                    onLogoTap: _goHomeDashboard,
+                    userEmail: widget.user.email,
+                    farmName: _activeTenantName ?? _historyTenantId,
+                    roomName: _activeSiteName,
+                    activeTenantId: _historyTenantId,
+                    availableTenants: _availableTenants,
+                    onTenantChanged: _switchTenant,
+                    activeSiteId: _activeSiteId,
+                    availableSites: _availableSites,
+                    onSiteChanged: _switchSite,
+                    canSelectSite: _userRole == UserAppRole.owner,
+                    activeUsersIndicator:
+                        _userRole == UserAppRole.owner &&
+                            presenceWorkspaceId != null
+                        ? ActiveUsersEye(
+                            workspaceId: presenceWorkspaceId,
+                            currentUser: widget.user,
+                            currentRole: _userRole,
+                          )
+                        : null,
+                    onRuntimeEvents:
+                        _userRole == UserAppRole.owner &&
+                            _historyTenantId != null &&
+                            _historySiteId?.isNotEmpty == true
+                        ? _goRuntimeEvents
+                        : null,
+                  ),
                 if (_snapshotStale)
                   _StaleSnapshotBanner(
                     backendOnline: _backendOnline,
@@ -2195,16 +2269,6 @@ class _AgroDataShellState extends State<AgroDataShell>
                             if (_unitVisibilitySettings.showMunters1) munters1,
                             if (_unitVisibilitySettings.showMunters2) munters2,
                           ];
-                          final List<String> visibleLabels = <String>[
-                            if (_unitVisibilitySettings.showMunters1)
-                              _plcConfigs.isNotEmpty
-                                  ? _plcConfigs[0].columnLabel
-                                  : 'M1',
-                            if (_unitVisibilitySettings.showMunters2)
-                              _plcConfigs.length > 1
-                                  ? _plcConfigs[1].columnLabel
-                                  : 'M2',
-                          ];
                           final List<String?> visiblePlcIds = <String?>[
                             if (_unitVisibilitySettings.showMunters1)
                               _plcConfigs.isNotEmpty
@@ -2215,9 +2279,19 @@ class _AgroDataShellState extends State<AgroDataShell>
                                   ? _plcConfigs[1].plcId
                                   : munters2.historyPlcId,
                           ];
+                          final List<String> visiblePlcLabels = <String>[
+                            if (_unitVisibilitySettings.showMunters1)
+                              _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].columnLabel
+                                  : 'M1',
+                            if (_unitVisibilitySettings.showMunters2)
+                              _plcConfigs.length > 1
+                                  ? _plcConfigs[1].columnLabel
+                                  : 'M2',
+                          ];
                           return EnvironmentOverviewPage(
                             units: visibleUnits,
-                            labels: visibleLabels,
+                            labels: visiblePlcLabels,
                             plcIds: visiblePlcIds,
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
@@ -2247,6 +2321,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                               onModuleOrderChanged:
                                   _updateComparisonModuleOrder,
                               homeGeneration: _dashboardHomeGeneration,
+                              currentUser: widget.user,
                               plc1ColumnLabel: _plcConfigs.isNotEmpty
                                   ? _plcConfigs[0].columnLabel
                                   : null,
@@ -2274,6 +2349,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                             child: MuntersPage(
                               data: selectedUnit,
+                              rangeSettings: _rangeSettings,
                               snapshotStale: _snapshotStale,
                               showSnapshotPulse: _showSnapshotPulse,
                               waterShortageSummary:
@@ -2296,6 +2372,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                                   child: DashboardPage(
                                     units: units,
                                     selectedUnitName: selectedUnit.name,
+                                    rangeSettings: _rangeSettings,
                                     waterShortageSummaries:
                                         visibleWaterShortageSummaries,
                                   ),
@@ -2305,6 +2382,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                                   flex: 4,
                                   child: MuntersPage(
                                     data: selectedUnit,
+                                    rangeSettings: _rangeSettings,
                                     snapshotStale: _snapshotStale,
                                     showSnapshotPulse: _showSnapshotPulse,
                                     waterShortageSummary:
@@ -2325,12 +2403,14 @@ class _AgroDataShellState extends State<AgroDataShell>
                               DashboardPage(
                                 units: units,
                                 selectedUnitName: selectedUnit.name,
+                                rangeSettings: _rangeSettings,
                                 waterShortageSummaries:
                                     visibleWaterShortageSummaries,
                               ),
                               const SizedBox(height: 12),
                               MuntersPage(
                                 data: selectedUnit,
+                                rangeSettings: _rangeSettings,
                                 snapshotStale: _snapshotStale,
                                 showSnapshotPulse: _showSnapshotPulse,
                                 waterShortageSummary:
@@ -2411,6 +2491,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       lastHeartbeatValue: null,
       lastHeartbeatChangeAt: null,
       lastError: null,
+      recentRoomWashEvent: null,
       tempInterior: null,
       tempIngresoSala: null,
       humInterior: null,
@@ -2491,6 +2572,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       lastHeartbeatValue: source.lastHeartbeatValue,
       lastHeartbeatChangeAt: source.lastHeartbeatChangeAt,
       lastError: source.lastError,
+      recentRoomWashEvent: source.recentRoomWashEvent,
       tempInterior: source.tempInterior,
       tempIngresoSala: source.tempIngresoSala,
       humInterior: source.humInterior,
@@ -5541,6 +5623,7 @@ class _VisualConfigDialogState extends State<_VisualConfigDialog> {
           plcId: widget.plcConfigs[i].plcId,
           displayName: _displayNameCtrls[i].text.trim(),
           columnLabel: _columnLabelCtrls[i].text.trim(),
+          sortOrder: widget.plcConfigs[i].sortOrder,
         );
       }
       if (mounted) {

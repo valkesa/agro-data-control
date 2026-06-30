@@ -1,4 +1,5 @@
 import 'plc_unit_diagnostics.dart';
+import 'room_wash_event.dart';
 
 class MuntersModel {
   const MuntersModel({
@@ -21,6 +22,7 @@ class MuntersModel {
     this.lastHeartbeatValue,
     this.lastHeartbeatChangeAt,
     this.lastError,
+    this.recentRoomWashEvent,
     required this.tempInterior,
     required this.tempIngresoSala,
     required this.humInterior,
@@ -74,6 +76,7 @@ class MuntersModel {
       lastHeartbeatValue = null,
       lastHeartbeatChangeAt = null,
       lastError = null,
+      recentRoomWashEvent = null,
       tempInterior = null,
       tempIngresoSala = null,
       humInterior = null,
@@ -126,6 +129,7 @@ class MuntersModel {
   final Object? lastHeartbeatValue;
   final DateTime? lastHeartbeatChangeAt;
   final String? lastError;
+  final RoomWashEvent? recentRoomWashEvent;
   final double? tempInterior;
   final double? tempIngresoSala;
   final double? humInterior;
@@ -164,4 +168,7 @@ class MuntersModel {
   int? get contadorAperturasMunter => aperturasMunter;
   int? get cantidadApagadasMunter => cantidadApagadas;
   String? get estadoMunter => estadoEquipo;
+
+  double? get displayHumInterior => humInterior?.clamp(0, 100).toDouble();
+  double? get displayHumExterior => humExterior?.clamp(0, 100).toDouble();
 }

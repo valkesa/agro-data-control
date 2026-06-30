@@ -70,6 +70,7 @@ class SitePlcConfigService {
     required String plcId,
     required String displayName,
     required String columnLabel,
+    required int sortOrder,
   }) async {
     final String displayNameTrimmed = displayName.trim();
     final String columnLabelTrimmed = columnLabel.trim();
@@ -79,6 +80,8 @@ class SitePlcConfigService {
       'displayName': displayNameTrimmed,
       'columnLabel': columnLabelTrimmed,
       'technicalId': plcId,
+      'active': true,
+      'sortOrder': sortOrder,
       'updatedAt': FieldValue.serverTimestamp(),
     }, SetOptions(merge: true));
     debugPrint(

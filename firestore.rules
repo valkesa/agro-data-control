@@ -248,6 +248,50 @@ service cloud.firestore {
         );
     }
 
+    function isValidRoomWashEvent(tenantId) {
+      return request.resource.data.keys().hasOnly([
+          'tenantId',
+          'roomId',
+          'roomNumber',
+          'muntersId',
+          'washedAt',
+          'createdAt',
+          'createdByUid',
+          'createdByName',
+          'source'
+        ])
+        && request.resource.data.keys().hasAll([
+          'tenantId',
+          'roomId',
+          'roomNumber',
+          'muntersId',
+          'washedAt',
+          'createdAt',
+          'createdByUid',
+          'createdByName',
+          'source'
+        ])
+        && request.resource.data.tenantId == tenantId
+        && request.resource.data.createdByUid == request.auth.uid
+        && request.resource.data.createdByName is string
+        && request.resource.data.createdByName.size() > 0
+        && request.resource.data.source == 'operator'
+        && request.resource.data.washedAt is timestamp
+        && request.resource.data.createdAt is timestamp
+        && (
+          (
+            request.resource.data.roomId == 'room_1'
+            && request.resource.data.roomNumber == 1
+            && request.resource.data.muntersId == 'munters1'
+          )
+          || (
+            request.resource.data.roomId == 'room_2'
+            && request.resource.data.roomNumber == 2
+            && request.resource.data.muntersId == 'munters2'
+          )
+        );
+    }
+
     // A user can switch their own active site, provided the new siteId is
     // already listed in their allowedSiteIds (prevents access to unlisted sites).
     function isOwnSiteSwitch(uid) {
@@ -528,6 +572,13 @@ service cloud.firestore {
             allow delete: if isOwner();
             allow create, update: if false;
           }
+        }
+
+        match /room_wash_events/{eventId} {
+          allow read: if canReadTenant(tenantId);
+          allow create: if (isTenantMember(tenantId) || isOwner())
+            && isValidRoomWashEvent(tenantId);
+          allow update, delete: if false;
         }
       }
     }

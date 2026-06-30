@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../models/dashboard_range_settings.dart';
 import '../models/munters_model.dart';
 import '../models/plc_unit_diagnostics.dart';
+import '../models/room_wash_event.dart';
 import '../models/water_shortage_summary.dart';
 import '../widgets/status_indicator.dart';
 
@@ -11,12 +13,14 @@ class MuntersPage extends StatefulWidget {
   const MuntersPage({
     super.key,
     required this.data,
+    required this.rangeSettings,
     required this.snapshotStale,
     required this.showSnapshotPulse,
     this.waterShortageSummary,
   });
 
   final MuntersModel data;
+  final DashboardRangeSettings rangeSettings;
   final bool snapshotStale;
   final bool showSnapshotPulse;
   final WaterShortageSummary? waterShortageSummary;
@@ -116,9 +120,19 @@ class _MuntersPageState extends State<MuntersPage> {
             const SizedBox(height: 4),
             _ValueRow(
               label: 'Humedad interior',
-              value: _formatDecimal(data.humInterior, 0),
+              value: _formatDecimal(data.displayHumInterior, 0),
               unit: '%',
             ),
+            if (_isHighHumidityExplainedByRecentWash(
+              data,
+              widget.rangeSettings,
+            )) ...[
+              const SizedBox(height: 4),
+              _ValueRow(
+                label: 'Lavado',
+                value: _formatRoomWashNotice(data.recentRoomWashEvent),
+              ),
+            ],
             const SizedBox(height: 4),
             _ValueRow(
               label: 'T. Exterior',
@@ -128,7 +142,7 @@ class _MuntersPageState extends State<MuntersPage> {
             const SizedBox(height: 4),
             _ValueRow(
               label: 'Humedad exterior',
-              value: _formatDecimal(data.humExterior, 0),
+              value: _formatDecimal(data.displayHumExterior, 0),
               unit: '%',
             ),
             const SizedBox(height: 4),
@@ -860,6 +874,37 @@ String _formatInt(int? value) {
   }
 
   return value.toString();
+}
+
+bool _isHighHumidityExplainedByRecentWash(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  final double? rawHumidity = unit.humInterior;
+  final RoomWashEvent? event = unit.recentRoomWashEvent;
+  if (rawHumidity == null ||
+      event == null ||
+      rawHumidity <= rangeSettings.humidityMax) {
+    return false;
+  }
+  final DateTime now = DateTime.now();
+  return !event.washedAt.isAfter(now) &&
+      now.difference(event.washedAt) <=
+          RoomWashEvent.defaultHumidityShadingWindow;
+}
+
+String _formatRoomWashNotice(RoomWashEvent? event) {
+  if (event == null) {
+    return '';
+  }
+  final Duration age = DateTime.now().difference(event.washedAt);
+  if (!age.isNegative && age.inMinutes < 60) {
+    return 'Sala lavada hace ${age.inMinutes} min';
+  }
+  final DateTime local = event.washedAt.toLocal();
+  final String hh = local.hour.toString().padLeft(2, '0');
+  final String mm = local.minute.toString().padLeft(2, '0');
+  return 'Lavado registrado a las $hh:$mm';
 }
 
 String _formatRawValue(Object? value) {
