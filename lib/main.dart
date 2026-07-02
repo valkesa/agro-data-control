@@ -314,6 +314,18 @@ class _AgroDataShellState extends State<AgroDataShell>
                 thermalFlowMarkedDeltaC:
                     t.thermalFlowMarkedDeltaC ??
                     _rangeSettings.thermalFlowMarkedDeltaC,
+                humidityAlarmYellowMin:
+                    t.humidityAlarmYellowMinInclusive ??
+                    _rangeSettings.humidityAlarmYellowMin,
+                humidityAlarmRedMinExclusive:
+                    t.humidityAlarmRedMinExclusive ??
+                    _rangeSettings.humidityAlarmRedMinExclusive,
+                dewPointMarginAlarmRedMax:
+                    t.dewPointMarginAlarmRedMaxInclusive ??
+                    _rangeSettings.dewPointMarginAlarmRedMax,
+                dewPointMarginAlarmYellowMaxExclusive:
+                    t.dewPointMarginAlarmYellowMaxExclusive ??
+                    _rangeSettings.dewPointMarginAlarmYellowMaxExclusive,
               );
             });
           }
@@ -1019,6 +1031,11 @@ class _AgroDataShellState extends State<AgroDataShell>
       filterPressureMax: updated.filterPressureMax,
       thermalFlowThresholdC: updated.thermalFlowThresholdC,
       thermalFlowMarkedDeltaC: updated.thermalFlowMarkedDeltaC,
+      humidityAlarmYellowMinInclusive: updated.humidityAlarmYellowMin,
+      humidityAlarmRedMinExclusive: updated.humidityAlarmRedMinExclusive,
+      dewPointMarginAlarmRedMaxInclusive: updated.dewPointMarginAlarmRedMax,
+      dewPointMarginAlarmYellowMaxExclusive:
+          updated.dewPointMarginAlarmYellowMaxExclusive,
     );
 
     final ControlDashboardSaveResult saveResult = await _dashboardConfigService
@@ -1072,6 +1089,20 @@ class _AgroDataShellState extends State<AgroDataShell>
             thermalFlowMarkedDeltaC:
                 refreshedConfig.thresholds.thermalFlowMarkedDeltaC ??
                 updated.thermalFlowMarkedDeltaC,
+            humidityAlarmYellowMin:
+                refreshedConfig.thresholds.humidityAlarmYellowMinInclusive ??
+                updated.humidityAlarmYellowMin,
+            humidityAlarmRedMinExclusive:
+                refreshedConfig.thresholds.humidityAlarmRedMinExclusive ??
+                updated.humidityAlarmRedMinExclusive,
+            dewPointMarginAlarmRedMax:
+                refreshedConfig.thresholds.dewPointMarginAlarmRedMaxInclusive ??
+                updated.dewPointMarginAlarmRedMax,
+            dewPointMarginAlarmYellowMaxExclusive:
+                refreshedConfig
+                    .thresholds
+                    .dewPointMarginAlarmYellowMaxExclusive ??
+                updated.dewPointMarginAlarmYellowMaxExclusive,
           )
         : updated;
 
@@ -2296,6 +2327,8 @@ class _AgroDataShellState extends State<AgroDataShell>
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
                             rangeSettings: _rangeSettings,
+                            showSnapshotPulse: _showSnapshotPulse,
+                            snapshotStale: _snapshotStale,
                             onTapBack: _goHomeDashboard,
                           );
                         }
@@ -2997,6 +3030,19 @@ class _DashboardBootstrapResult {
       thermalFlowMarkedDeltaC:
           thresholds.thermalFlowMarkedDeltaC ??
           const DashboardRangeSettings.defaults().thermalFlowMarkedDeltaC,
+      humidityAlarmYellowMin:
+          thresholds.humidityAlarmYellowMinInclusive ??
+          const DashboardRangeSettings.defaults().humidityAlarmYellowMin,
+      humidityAlarmRedMinExclusive:
+          thresholds.humidityAlarmRedMinExclusive ??
+          const DashboardRangeSettings.defaults().humidityAlarmRedMinExclusive,
+      dewPointMarginAlarmRedMax:
+          thresholds.dewPointMarginAlarmRedMaxInclusive ??
+          const DashboardRangeSettings.defaults().dewPointMarginAlarmRedMax,
+      dewPointMarginAlarmYellowMaxExclusive:
+          thresholds.dewPointMarginAlarmYellowMaxExclusive ??
+          const DashboardRangeSettings.defaults()
+              .dewPointMarginAlarmYellowMaxExclusive,
     );
   }
 
@@ -4243,6 +4289,10 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   late final TextEditingController _humidityMaxController;
   late final TextEditingController _thermalFlowThresholdController;
   late final TextEditingController _thermalFlowMarkedDeltaController;
+  late final TextEditingController _humidityAlarmYellowMinController;
+  late final TextEditingController _humidityAlarmRedMinController;
+  late final TextEditingController _dewPointMarginAlarmRedMaxController;
+  late final TextEditingController _dewPointMarginAlarmYellowMaxController;
   String? _errorText;
 
   @override
@@ -4266,6 +4316,19 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     _thermalFlowMarkedDeltaController = TextEditingController(
       text: widget.initialSettings.thermalFlowMarkedDeltaC.toString(),
     );
+    _humidityAlarmYellowMinController = TextEditingController(
+      text: widget.initialSettings.humidityAlarmYellowMin.toString(),
+    );
+    _humidityAlarmRedMinController = TextEditingController(
+      text: widget.initialSettings.humidityAlarmRedMinExclusive.toString(),
+    );
+    _dewPointMarginAlarmRedMaxController = TextEditingController(
+      text: widget.initialSettings.dewPointMarginAlarmRedMax.toString(),
+    );
+    _dewPointMarginAlarmYellowMaxController = TextEditingController(
+      text: widget.initialSettings.dewPointMarginAlarmYellowMaxExclusive
+          .toString(),
+    );
   }
 
   @override
@@ -4276,6 +4339,10 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     _humidityMaxController.dispose();
     _thermalFlowThresholdController.dispose();
     _thermalFlowMarkedDeltaController.dispose();
+    _humidityAlarmYellowMinController.dispose();
+    _humidityAlarmRedMinController.dispose();
+    _dewPointMarginAlarmRedMaxController.dispose();
+    _dewPointMarginAlarmYellowMaxController.dispose();
     super.dispose();
   }
 
@@ -4290,13 +4357,29 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     final double? thermalFlowMarkedDelta = _parseInput(
       _thermalFlowMarkedDeltaController.text,
     );
+    final double? humidityAlarmYellowMin = _parseInput(
+      _humidityAlarmYellowMinController.text,
+    );
+    final double? humidityAlarmRedMin = _parseInput(
+      _humidityAlarmRedMinController.text,
+    );
+    final double? dewPointMarginAlarmRedMax = _parseInput(
+      _dewPointMarginAlarmRedMaxController.text,
+    );
+    final double? dewPointMarginAlarmYellowMax = _parseInput(
+      _dewPointMarginAlarmYellowMaxController.text,
+    );
 
     if (temperatureMin == null ||
         temperatureMax == null ||
         humidityMin == null ||
         humidityMax == null ||
         thermalFlowThreshold == null ||
-        thermalFlowMarkedDelta == null) {
+        thermalFlowMarkedDelta == null ||
+        humidityAlarmYellowMin == null ||
+        humidityAlarmRedMin == null ||
+        dewPointMarginAlarmRedMax == null ||
+        dewPointMarginAlarmYellowMax == null) {
       setState(() {
         _errorText = 'Completa todos los valores con numeros validos.';
       });
@@ -4306,6 +4389,22 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     if (temperatureMin >= temperatureMax || humidityMin >= humidityMax) {
       setState(() {
         _errorText = 'Cada minimo debe ser menor que su maximo.';
+      });
+      return;
+    }
+
+    if (humidityAlarmYellowMin >= humidityAlarmRedMin) {
+      setState(() {
+        _errorText =
+            'En HR interior, el umbral amarillo debe ser menor que el rojo.';
+      });
+      return;
+    }
+
+    if (dewPointMarginAlarmRedMax >= dewPointMarginAlarmYellowMax) {
+      setState(() {
+        _errorText =
+            'En punto de rocio, el umbral rojo debe ser menor que el amarillo.';
       });
       return;
     }
@@ -4334,6 +4433,10 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
         filterPressureMax: widget.initialSettings.filterPressureMax,
         thermalFlowThresholdC: thermalFlowThreshold,
         thermalFlowMarkedDeltaC: thermalFlowMarkedDelta,
+        humidityAlarmYellowMin: humidityAlarmYellowMin,
+        humidityAlarmRedMinExclusive: humidityAlarmRedMin,
+        dewPointMarginAlarmRedMax: dewPointMarginAlarmRedMax,
+        dewPointMarginAlarmYellowMaxExclusive: dewPointMarginAlarmYellowMax,
       ),
     );
   }
@@ -4386,7 +4489,58 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
                 label: 'Humedad interior maxima',
                 suffix: '%',
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 16),
+              const Text(
+                'Alarmas - Humedad Relativa Interior',
+                style: TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _humidityAlarmYellowMinController,
+                label: 'Amarillo desde',
+                suffix: '%',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _humidityAlarmRedMinController,
+                label: 'Rojo mayor a',
+                suffix: '%',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Alarmas - Punto de Rocio',
+                style: TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _dewPointMarginAlarmRedMaxController,
+                label: 'Rojo si margen <=',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _dewPointMarginAlarmYellowMaxController,
+                label: 'Amarillo si margen <',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'Seteos Flujo termico sala',
+                style: TextStyle(
+                  color: Color(0xFFE5E7EB),
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              const SizedBox(height: 10),
               _RangeField(
                 controller: _thermalFlowThresholdController,
                 label: 'Umbral flecha flujo termico',

@@ -7,6 +7,10 @@ class DashboardRangeSettings {
     required this.filterPressureMax,
     required this.thermalFlowThresholdC,
     required this.thermalFlowMarkedDeltaC,
+    required this.humidityAlarmYellowMin,
+    required this.humidityAlarmRedMinExclusive,
+    required this.dewPointMarginAlarmRedMax,
+    required this.dewPointMarginAlarmYellowMaxExclusive,
   });
 
   const DashboardRangeSettings.defaults()
@@ -16,7 +20,11 @@ class DashboardRangeSettings {
       humidityMax = 80,
       filterPressureMax = 30,
       thermalFlowThresholdC = 0.5,
-      thermalFlowMarkedDeltaC = 2;
+      thermalFlowMarkedDeltaC = 2,
+      humidityAlarmYellowMin = 85,
+      humidityAlarmRedMinExclusive = 95,
+      dewPointMarginAlarmRedMax = 1,
+      dewPointMarginAlarmYellowMaxExclusive = 3;
 
   final double temperatureMin;
   final double temperatureMax;
@@ -25,6 +33,10 @@ class DashboardRangeSettings {
   final double filterPressureMax;
   final double thermalFlowThresholdC;
   final double thermalFlowMarkedDeltaC;
+  final double humidityAlarmYellowMin;
+  final double humidityAlarmRedMinExclusive;
+  final double dewPointMarginAlarmRedMax;
+  final double dewPointMarginAlarmYellowMaxExclusive;
 
   DashboardRangeSettings copyWith({
     double? temperatureMin,
@@ -34,6 +46,10 @@ class DashboardRangeSettings {
     double? filterPressureMax,
     double? thermalFlowThresholdC,
     double? thermalFlowMarkedDeltaC,
+    double? humidityAlarmYellowMin,
+    double? humidityAlarmRedMinExclusive,
+    double? dewPointMarginAlarmRedMax,
+    double? dewPointMarginAlarmYellowMaxExclusive,
   }) {
     return DashboardRangeSettings(
       temperatureMin: temperatureMin ?? this.temperatureMin,
@@ -45,6 +61,15 @@ class DashboardRangeSettings {
           thermalFlowThresholdC ?? this.thermalFlowThresholdC,
       thermalFlowMarkedDeltaC:
           thermalFlowMarkedDeltaC ?? this.thermalFlowMarkedDeltaC,
+      humidityAlarmYellowMin:
+          humidityAlarmYellowMin ?? this.humidityAlarmYellowMin,
+      humidityAlarmRedMinExclusive:
+          humidityAlarmRedMinExclusive ?? this.humidityAlarmRedMinExclusive,
+      dewPointMarginAlarmRedMax:
+          dewPointMarginAlarmRedMax ?? this.dewPointMarginAlarmRedMax,
+      dewPointMarginAlarmYellowMaxExclusive:
+          dewPointMarginAlarmYellowMaxExclusive ??
+          this.dewPointMarginAlarmYellowMaxExclusive,
     );
   }
 }

@@ -45,3 +45,6 @@ ios/Flutter/
 
 # backend config files
 backend/config/*.json
+
+# Local visual debug sandboxes
+Debug iconos/

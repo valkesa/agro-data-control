@@ -104,6 +104,19 @@ class ControlDashboardConfigService {
               'min': thresholds.humidityInteriorMin,
               'opt': thresholds.humidityInteriorOpt,
               'max': thresholds.humidityInteriorMax,
+              'alarm': <String, Object?>{
+                'yellowMinInclusive':
+                    thresholds.humidityAlarmYellowMinInclusive,
+                'redMinExclusive': thresholds.humidityAlarmRedMinExclusive,
+              },
+            },
+            'dewPointMargin': <String, Object?>{
+              'alarm': <String, Object?>{
+                'redMaxInclusive':
+                    thresholds.dewPointMarginAlarmRedMaxInclusive,
+                'yellowMaxExclusive':
+                    thresholds.dewPointMarginAlarmYellowMaxExclusive,
+              },
             },
             'presionDiferencial': <String, Object?>{
               'max': thresholds.filterPressureMax,
@@ -596,6 +609,10 @@ class ControlDashboardThresholds {
     required this.filterPressureMax,
     required this.thermalFlowThresholdC,
     required this.thermalFlowMarkedDeltaC,
+    required this.humidityAlarmYellowMinInclusive,
+    required this.humidityAlarmRedMinExclusive,
+    required this.dewPointMarginAlarmRedMaxInclusive,
+    required this.dewPointMarginAlarmYellowMaxExclusive,
   });
 
   const ControlDashboardThresholds.empty()
@@ -607,7 +624,11 @@ class ControlDashboardThresholds {
       humidityInteriorMax = null,
       filterPressureMax = null,
       thermalFlowThresholdC = null,
-      thermalFlowMarkedDeltaC = null;
+      thermalFlowMarkedDeltaC = null,
+      humidityAlarmYellowMinInclusive = null,
+      humidityAlarmRedMinExclusive = null,
+      dewPointMarginAlarmRedMaxInclusive = null,
+      dewPointMarginAlarmYellowMaxExclusive = null;
 
   factory ControlDashboardThresholds.fromRaw(Map<String, dynamic> rawData) {
     return ControlDashboardThresholds(
@@ -663,6 +684,34 @@ class ControlDashboardThresholds {
         'thermalFlow',
         'markedDeltaC',
       ]),
+      humidityAlarmYellowMinInclusive: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'humidityInterior',
+        'alarm',
+        'yellowMinInclusive',
+      ]),
+      humidityAlarmRedMinExclusive: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'humidityInterior',
+        'alarm',
+        'redMinExclusive',
+      ]),
+      dewPointMarginAlarmRedMaxInclusive: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'dewPointMargin',
+        'alarm',
+        'redMaxInclusive',
+      ]),
+      dewPointMarginAlarmYellowMaxExclusive: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'dewPointMargin',
+        'alarm',
+        'yellowMaxExclusive',
+      ]),
     );
   }
 
@@ -675,6 +724,10 @@ class ControlDashboardThresholds {
   final double? filterPressureMax;
   final double? thermalFlowThresholdC;
   final double? thermalFlowMarkedDeltaC;
+  final double? humidityAlarmYellowMinInclusive;
+  final double? humidityAlarmRedMinExclusive;
+  final double? dewPointMarginAlarmRedMaxInclusive;
+  final double? dewPointMarginAlarmYellowMaxExclusive;
 
   static double? _readDouble(Map<String, dynamic> source, List<String> path) {
     Object? current = source;
