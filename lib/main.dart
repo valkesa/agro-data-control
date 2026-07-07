@@ -32,6 +32,7 @@ import 'services/door_openings_repository.dart';
 import 'services/electric_consumption_settings_service.dart';
 import 'services/electrical_cost_service.dart';
 import 'services/firebase_email_auth_service.dart';
+import 'services/notification_api_service.dart';
 import 'services/plc_dashboard_service.dart';
 import 'services/presence_service.dart';
 import 'services/room_wash_events_service.dart';
@@ -895,6 +896,9 @@ class _AgroDataShellState extends State<AgroDataShell>
         case _SettingsMenuAction.electricCostSettings:
           await _openElectricCostSettings();
           continue;
+        case _SettingsMenuAction.whatsappTest:
+          await _openWhatsAppTest();
+          continue;
         case _SettingsMenuAction.visualConfig:
           await _openVisualConfig();
           continue;
@@ -1587,6 +1591,24 @@ class _AgroDataShellState extends State<AgroDataShell>
         },
       );
     });
+  }
+
+  Future<void> _openWhatsAppTest() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) return;
+    final bool canUse =
+        bootstrap.userContext.role == UserAppRole.owner ||
+        bootstrap.userContext.role == UserAppRole.tenantAdmin;
+    if (!canUse) return;
+
+    await showDialog<void>(
+      context: context,
+      builder: (context) => _WhatsAppTestDialog(
+        service: NotificationApiService(
+          backendSnapshotEndpoint: _activeBackendEndpoint,
+        ),
+      ),
+    );
   }
 
   Future<void> _openDoorOpeningsCleanup(
@@ -3305,6 +3327,7 @@ enum _SettingsMenuAction {
   maintenanceSettings,
   electricConsumptionSettings,
   electricCostSettings,
+  whatsappTest,
   manageUsers,
   doorOpeningsCleanup,
   rolesHelp,
@@ -3532,6 +3555,26 @@ class _SettingsMenuDialog extends StatelessWidget {
               if (userRole == UserAppRole.owner ||
                   userRole == UserAppRole.tenantAdmin) ...[
                 const SizedBox(height: 18),
+                const _SettingsMenuSectionTitle('Notificaciones'),
+                const SizedBox(height: 8),
+                FilledButton.tonal(
+                  onPressed: () => Navigator.of(
+                    context,
+                  ).pop(_SettingsMenuAction.whatsappTest),
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size(0, 42),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  child: const Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.chat_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Text('Prueba WhatsApp'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 18),
                 const _SettingsMenuSectionTitle('Ayuda'),
                 const SizedBox(height: 8),
                 FilledButton.tonal(
@@ -3687,6 +3730,140 @@ class _SettingsMenuSectionTitle extends StatelessWidget {
         fontSize: 14,
         fontWeight: FontWeight.w700,
       ),
+    );
+  }
+}
+
+class _WhatsAppTestDialog extends StatefulWidget {
+  const _WhatsAppTestDialog({required this.service});
+
+  final NotificationApiService service;
+
+  @override
+  State<_WhatsAppTestDialog> createState() => _WhatsAppTestDialogState();
+}
+
+class _WhatsAppTestDialogState extends State<_WhatsAppTestDialog> {
+  final TextEditingController _toController = TextEditingController();
+  final TextEditingController _messageController = TextEditingController(
+    text: 'Mensaje de prueba desde AgroData Control',
+  );
+  bool _sending = false;
+  String? _statusMessage;
+  bool _statusOk = false;
+
+  @override
+  void dispose() {
+    _toController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _send() async {
+    final String to = _toController.text.trim();
+    final String message = _messageController.text.trim();
+    if (to.isEmpty || message.isEmpty || _sending) {
+      setState(() {
+        _statusOk = false;
+        _statusMessage = to.isEmpty
+            ? 'Ingresá un teléfono destino.'
+            : 'Ingresá un mensaje.';
+      });
+      return;
+    }
+
+    setState(() {
+      _sending = true;
+      _statusMessage = null;
+    });
+
+    final WhatsAppTestMessageResult result = await widget.service
+        .sendWhatsAppTestMessage(to: to, message: message);
+
+    if (!mounted) return;
+    setState(() {
+      _sending = false;
+      _statusOk = result.ok;
+      _statusMessage = result.ok
+          ? 'Mensaje enviado${result.messageId?.isNotEmpty == true ? ' (${result.messageId})' : ''}.'
+          : [
+              result.message ?? 'No se pudo enviar el mensaje.',
+              if (result.details?.isNotEmpty == true) result.details!,
+            ].join(' ');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Color statusColor = _statusOk
+        ? const Color(0xFF86EFAC)
+        : const Color(0xFFFCA5A5);
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Prueba WhatsApp',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _toController,
+              enabled: !_sending,
+              keyboardType: TextInputType.phone,
+              style: const TextStyle(color: Color(0xFFE5E7EB)),
+              decoration: const InputDecoration(
+                labelText: 'Teléfono destino',
+                hintText: '54911XXXXXXXX',
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _messageController,
+              enabled: !_sending,
+              minLines: 3,
+              maxLines: 5,
+              maxLength: 1000,
+              style: const TextStyle(color: Color(0xFFE5E7EB)),
+              decoration: const InputDecoration(labelText: 'Mensaje'),
+            ),
+            if (_statusMessage != null) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  _statusMessage!,
+                  style: TextStyle(
+                    color: statusColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _sending ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cerrar'),
+        ),
+        FilledButton.icon(
+          onPressed: _sending ? null : _send,
+          icon: _sending
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.send_rounded, size: 18),
+          label: const Text('Enviar prueba'),
+        ),
+      ],
     );
   }
 }

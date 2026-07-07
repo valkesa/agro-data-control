@@ -16,8 +16,8 @@ class PlcDashboardService {
   const PlcDashboardService({
     String? endpoint,
     Map<String, String> plcNames = const <String, String>{},
-  })  : _endpoint = endpoint,
-        _plcNames = plcNames;
+  }) : _endpoint = endpoint,
+       _plcNames = plcNames;
 
   final String? _endpoint;
   // plcId → displayName, loaded from Firestore via SitePlcConfigService.
@@ -365,28 +365,24 @@ class PlcDashboardService {
           ['hr45'],
         ]),
       ),
-      // TEMPORAL: sensor ING sala de Munters 2 desconectado — el backend devuelve 0
-      // en vez de null. Revertir a _parseSignedHoldingRegister(...) cuando se reconecte.
-      tempIngresoSala: unitKey == 'munters2'
-          ? null
-          : _parseSignedHoldingRegister(
-              _read(unitRaw, fallbackRaw, const [
-                ['tempIngresoSala'],
-                ['temperaturaIngresoSala'],
-                ['tempSalaIngreso'],
-                ['clima', 'tempIngresoSala'],
-                ['vm224'],
-                ['VM224'],
-                ['vw224'],
-                ['VW224'],
-                ['holdingRegisters', '112'],
-                ['holdingRegisters', 'HR112'],
-                ['registers', 'HR112'],
-                ['registers', '112'],
-                ['hr', '112'],
-                ['hr112'],
-              ]),
-            ),
+      tempIngresoSala: _parseSignedHoldingRegister(
+        _read(unitRaw, fallbackRaw, const [
+          ['tempIngresoSala'],
+          ['temperaturaIngresoSala'],
+          ['tempSalaIngreso'],
+          ['clima', 'tempIngresoSala'],
+          ['vm224'],
+          ['VM224'],
+          ['vw224'],
+          ['VW224'],
+          ['holdingRegisters', '112'],
+          ['holdingRegisters', 'HR112'],
+          ['registers', 'HR112'],
+          ['registers', '112'],
+          ['hr', '112'],
+          ['hr112'],
+        ]),
+      ),
       humInterior: _parseSignedHoldingRegister(
         _read(unitRaw, fallbackRaw, const [
           ['humedadInterior'],

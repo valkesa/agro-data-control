@@ -64,7 +64,8 @@ flutter:
 
   assets:
     - web/favicon.png
-    - web/branding/Logo.png
+    - web/branding/logo_valke_192_0.png
+    - web/branding/logo_valke_animated.gif
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

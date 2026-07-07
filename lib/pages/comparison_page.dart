@@ -1009,21 +1009,23 @@ class _ComparisonPageState extends State<ComparisonPage> {
     ];
     final List<_PlcModuleIconData> aperturasPlcIconData = <_PlcModuleIconData>[
       _PlcModuleIconData(
-        icon: _hasDoorAlarm(munters1)
-            ? Icons.meeting_room_outlined
-            : Icons.door_front_door_outlined,
+        icon: Icons.door_front_door_outlined,
         iconColor: _hasDoorAlarm(munters1)
             ? const Color(0xFFFACC15)
             : const Color(0xFF94A3B8),
+        iconWidget: _hasDoorAlarm(munters1)
+            ? const _DoorOpenIcon(color: Color(0xFFFACC15), size: 14)
+            : null,
         status: _resolveAperturasStatusForUnit(munters1),
       ),
       _PlcModuleIconData(
-        icon: _hasDoorAlarm(munters2)
-            ? Icons.meeting_room_outlined
-            : Icons.door_front_door_outlined,
+        icon: Icons.door_front_door_outlined,
         iconColor: _hasDoorAlarm(munters2)
             ? const Color(0xFFFACC15)
             : const Color(0xFF94A3B8),
+        iconWidget: _hasDoorAlarm(munters2)
+            ? const _DoorOpenIcon(color: Color(0xFFFACC15), size: 14)
+            : null,
         status: _resolveAperturasStatusForUnit(munters2),
       ),
     ];
@@ -2480,7 +2482,8 @@ class _LargeEnvironmentUnitCard extends StatelessWidget {
                       unit: unit,
                       rangeSettings: rangeSettings,
                       blocked: blocked,
-                      doorOpen: blocked ? null : _hasDoorAlarm(unit),
+                      salaDoorOpen: blocked ? null : unit.salaAbierta,
+                      muntersDoorOpen: blocked ? null : unit.munterAbierto,
                       nh3: blocked ? null : unit.nh3,
                       ventilationPower: blocked
                           ? null
@@ -3542,7 +3545,8 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
     required this.unit,
     required this.rangeSettings,
     required this.blocked,
-    required this.doorOpen,
+    required this.salaDoorOpen,
+    required this.muntersDoorOpen,
     required this.nh3,
     required this.ventilationPower,
     required this.differentialPressure,
@@ -3555,7 +3559,8 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
   final MuntersModel unit;
   final DashboardRangeSettings rangeSettings;
   final bool blocked;
-  final bool? doorOpen;
+  final bool? salaDoorOpen;
+  final bool? muntersDoorOpen;
   final double? nh3;
   final double? ventilationPower;
   final double? differentialPressure;
@@ -3567,6 +3572,9 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
   Widget build(BuildContext context) {
     const Color baseIconColor = Color(0xFFCBD5E1);
     final _ModuleStatus ventilationStatus = _resolveVentilationStatusForUnit(
+      unit,
+    );
+    final Color ventilationIconColor = _resolveVentilationIconColorForUnit(
       unit,
     );
     final Color? ventilationBorderColor = switch (ventilationStatus.kind) {
@@ -3586,10 +3594,19 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
         !blocked &&
         differentialPressure != null &&
         differentialPressure! > rangeSettings.filterPressureMax;
+    final Color filterIconColor = differentialPressure == null
+        ? baseIconColor
+        : filterAlarm
+        ? const Color(0xFFEF4444)
+        : const Color(0xFF22C55E);
 
     final double gap = _LargeEnvironmentUnitCard._miniBoxGapBase * scale;
     final double iconSize =
         _LargeEnvironmentUnitCard._extraMiniBoxIconBaseSize * scale;
+    final double emphasizedIconSize = iconSize + (4 * scale);
+    final double pigBodyIconHeight = iconSize + (8 * scale);
+    final double pigBodyIconWidth = pigBodyIconHeight * 2;
+    final double doorIconSize = iconSize + (16 * scale);
 
     Widget boxRow(Widget left, Widget? right) {
       return Row(
@@ -3605,26 +3622,29 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       children: [
         boxRow(
-          _LargeEnvironmentAuxMetricTile(
-            icon: doorOpen == true
-                ? Icons.meeting_room_outlined
-                : Icons.door_front_door_outlined,
-            iconColor: baseIconColor,
-            borderColor: doorOpen == true ? const Color(0xFFEF4444) : null,
-            borderWidth: doorOpen == true ? 2.4 * scale : null,
-            tooltip: doorOpen == true ? 'Puerta abierta' : 'Puerta cerrada',
-            value: null,
-            unit: '',
+          _LargeDoorMiniBox(
+            label: 'Sala',
+            open: salaDoorOpen,
             scale: scale,
+            iconSize: doorIconSize,
           ),
+          _LargeDoorMiniBox(
+            label: 'Munters',
+            open: muntersDoorOpen,
+            scale: scale,
+            iconSize: doorIconSize,
+          ),
+        ),
+        SizedBox(height: gap),
+        boxRow(
           _LargeEnvironmentAuxMetricTile(
             iconWidget: _SpinningIcon(
               icon: Icons.cyclone_rounded,
-              color: baseIconColor,
-              size: iconSize,
-              spinning: (ventilationPower ?? 0) > 0,
+              color: ventilationIconColor,
+              size: emphasizedIconSize,
+              spinning: _isVentilationFullyRunning(unit),
             ),
-            iconColor: baseIconColor,
+            iconColor: ventilationIconColor,
             borderColor: ventilationBorderColor,
             borderWidth: ventilationBorderWidth,
             value: ventilationPower == null
@@ -3633,24 +3653,28 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             unit: '%',
             scale: scale,
           ),
-        ),
-        SizedBox(height: gap),
-        boxRow(
           _LargeEnvironmentAuxMetricTile(
             iconWidget: _SquareAirFilterIcon(
-              color: baseIconColor,
+              color: filterIconColor,
               denseMesh: true,
               size: iconSize,
             ),
-            iconColor: baseIconColor,
+            iconColor: filterIconColor,
             borderColor: filterAlarm ? const Color(0xFFEF4444) : null,
             borderWidth: filterAlarm ? 2.4 * scale : null,
             value: differentialPressure?.toStringAsFixed(0),
             unit: 'Pa',
             scale: scale,
           ),
+        ),
+        SizedBox(height: gap),
+        boxRow(
           _LargeAdditionalMiniBox(
-            marker: Icon(Icons.pets, color: baseIconColor, size: iconSize),
+            marker: _PigBodyIcon(
+              color: baseIconColor,
+              width: pigBodyIconWidth,
+              height: pigBodyIconHeight,
+            ),
             valueChild: _LargeCerdasValue(
               tenantId: tenantId,
               siteId: siteId,
@@ -3660,19 +3684,20 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             ),
             scale: scale,
           ),
-        ),
-        SizedBox(height: gap),
-        boxRow(
           _LargeAdditionalMiniBox(
             marker: _LargeChemicalMarker('NH3', scale: scale),
             value: nh3 == null ? '-' : nh3!.toStringAsFixed(0),
             scale: scale,
           ),
+        ),
+        SizedBox(height: gap),
+        boxRow(
           _LargeAdditionalMiniBox(
             marker: _LargeChemicalMarker('CO2', scale: scale),
             value: '-',
             scale: scale,
           ),
+          null,
         ),
         SizedBox(height: gap),
         boxRow(
@@ -3680,7 +3705,7 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             marker: Icon(
               Icons.water_drop_outlined,
               color: baseIconColor,
-              size: iconSize,
+              size: emphasizedIconSize,
             ),
             value: '-',
             scale: scale,
@@ -3688,6 +3713,104 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
           null,
         ),
       ],
+    );
+  }
+}
+
+class _DoorOpenIcon extends StatelessWidget {
+  const _DoorOpenIcon({required this.color, required this.size});
+
+  final Color color;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _DoorOpenIconPainter(color)),
+    );
+  }
+}
+
+class _DoorOpenIconPainter extends CustomPainter {
+  const _DoorOpenIconPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double scale = math.min(size.width, size.height) / 24;
+    final double dx = (size.width - (24 * scale)) / 2;
+    final double dy = (size.height - (24 * scale)) / 2;
+    canvas.save();
+    canvas.translate(dx, dy);
+    canvas.scale(scale);
+
+    final Paint stroke = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2
+      ..strokeCap = StrokeCap.round
+      ..strokeJoin = StrokeJoin.round;
+    final Paint fill = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final Path frame = Path()
+      ..moveTo(5, 21)
+      ..lineTo(5, 4)
+      ..lineTo(15, 4)
+      ..lineTo(15, 6);
+    final Path door = Path()
+      ..moveTo(15, 5)
+      ..lineTo(20, 7)
+      ..lineTo(20, 19)
+      ..lineTo(15, 21)
+      ..close();
+    canvas.drawPath(frame, stroke);
+    canvas.drawPath(door, stroke);
+    canvas.drawCircle(const Offset(17.4, 13), 0.9, fill);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _DoorOpenIconPainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
+}
+
+class _LargeDoorMiniBox extends StatelessWidget {
+  const _LargeDoorMiniBox({
+    required this.label,
+    required this.open,
+    required this.scale,
+    required this.iconSize,
+  });
+
+  final String label;
+  final bool? open;
+  final double scale;
+  final double iconSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isOpen = open == true;
+    final Color color = isOpen
+        ? const Color(0xFFEF4444)
+        : const Color(0xFF22C55E);
+    return _LargeEnvironmentAuxMetricTile(
+      icon: Icons.door_front_door_outlined,
+      iconWidget: isOpen ? _DoorOpenIcon(color: color, size: iconSize) : null,
+      iconColor: color,
+      borderColor: isOpen ? const Color(0xFFEF4444) : null,
+      borderWidth: isOpen ? 2.4 * scale : null,
+      tooltip: isOpen ? '$label abierta' : '$label cerrada',
+      value: null,
+      unit: '',
+      label: label,
+      scale: scale,
+      iconSizeOverride: iconSize,
     );
   }
 }
@@ -3703,6 +3826,8 @@ class _LargeEnvironmentAuxMetricTile extends StatelessWidget {
     this.borderColor,
     this.borderWidth,
     this.tooltip,
+    this.iconSizeOverride,
+    this.label,
   }) : assert(icon != null || iconWidget != null);
 
   final IconData? icon;
@@ -3714,11 +3839,18 @@ class _LargeEnvironmentAuxMetricTile extends StatelessWidget {
   final Color? borderColor;
   final double? borderWidth;
   final String? tooltip;
+  final double? iconSizeOverride;
+  final String? label;
+
+  static const double _markerTopFactor = 0.16;
+  static const double _valueTopFactor = 0.52;
 
   @override
   Widget build(BuildContext context) {
     final bool hasValue = value != null && value!.isNotEmpty;
+    final bool hasLabel = label != null && label!.isNotEmpty;
     final double iconSize =
+        iconSizeOverride ??
         _LargeEnvironmentUnitCard._extraMiniBoxIconBaseSize * scale;
     final Widget effectiveIcon =
         iconWidget ?? Icon(icon, size: iconSize, color: iconColor);
@@ -3732,30 +3864,56 @@ class _LargeEnvironmentAuxMetricTile extends StatelessWidget {
           final bool blinkBorder =
               effectiveBorderColor == const Color(0xFFEF4444) &&
               effectiveBorderWidth > 1;
-          final Widget content = hasValue
+          final Widget content = hasValue || hasLabel
               ? Stack(
                   children: [
-                    Positioned.fill(
-                      top: constraints.maxHeight * 0.46,
-                      child: Align(
-                        alignment: Alignment.topCenter,
-                        child: _EnvironmentScaledValue(
-                          value: value,
-                          unit: unit,
-                          color: const Color(0xFFE5E7EB),
-                          fontSize:
-                              _LargeEnvironmentUnitCard
-                                  ._extraMiniBoxValueBaseSize *
-                              scale,
-                          unitFontSize:
-                              _LargeEnvironmentUnitCard
-                                  ._extraMiniBoxValueBaseSize *
-                              scale,
+                    if (hasValue)
+                      Positioned.fill(
+                        top: constraints.maxHeight * _valueTopFactor,
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: _EnvironmentScaledValue(
+                            value: value,
+                            unit: unit,
+                            color: const Color(0xFFE5E7EB),
+                            fontSize:
+                                _LargeEnvironmentUnitCard
+                                    ._extraMiniBoxValueBaseSize *
+                                scale,
+                            unitFontSize:
+                                _LargeEnvironmentUnitCard
+                                    ._extraMiniBoxValueBaseSize *
+                                scale,
+                          ),
+                        ),
+                      )
+                    else if (hasLabel)
+                      Positioned.fill(
+                        top: constraints.maxHeight * 0.60,
+                        left: 5 * scale,
+                        right: 5 * scale,
+                        child: Align(
+                          alignment: Alignment.topCenter,
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            child: Text(
+                              label!,
+                              maxLines: 1,
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                color: const Color(0xFFE5E7EB),
+                                fontSize: 15 * scale,
+                                fontWeight: FontWeight.w800,
+                                height: 1,
+                              ),
+                            ),
+                          ),
                         ),
                       ),
-                    ),
                     Positioned(
-                      top: constraints.maxHeight * 0.16,
+                      top:
+                          constraints.maxHeight *
+                          (hasLabel ? 0.11 : _markerTopFactor),
                       left: 0,
                       right: 0,
                       child: Center(child: effectiveIcon),
@@ -3796,6 +3954,11 @@ class _LargeAdditionalMiniBox extends StatelessWidget {
   final Widget? valueChild;
   final double scale;
 
+  static const double _markerTopFactor =
+      _LargeEnvironmentAuxMetricTile._markerTopFactor;
+  static const double _valueTopFactor =
+      _LargeEnvironmentAuxMetricTile._valueTopFactor;
+
   @override
   Widget build(BuildContext context) {
     return AspectRatio(
@@ -3812,7 +3975,7 @@ class _LargeAdditionalMiniBox extends StatelessWidget {
             child: Stack(
               children: [
                 Positioned.fill(
-                  top: constraints.maxHeight * 0.46,
+                  top: constraints.maxHeight * _valueTopFactor,
                   child: Align(
                     alignment: Alignment.topCenter,
                     child:
@@ -3821,7 +3984,7 @@ class _LargeAdditionalMiniBox extends StatelessWidget {
                   ),
                 ),
                 Positioned(
-                  top: constraints.maxHeight * 0.16,
+                  top: constraints.maxHeight * _markerTopFactor,
                   left: 0,
                   right: 0,
                   child: Center(child: marker),
@@ -3898,6 +4061,102 @@ class _LargeCerdasValue extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class _PigBodyIcon extends StatelessWidget {
+  const _PigBodyIcon({
+    required this.color,
+    required this.width,
+    required this.height,
+  });
+
+  final Color color;
+  final double width;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      height: height,
+      child: CustomPaint(painter: _PigBodyIconPainter(color)),
+    );
+  }
+}
+
+class _PigBodyIconPainter extends CustomPainter {
+  const _PigBodyIconPainter(this.color);
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final double scale = math.min(size.width / 96, size.height / 48);
+    final double dx = (size.width - (96 * scale)) / 2;
+    final double dy = (size.height - (48 * scale)) / 2;
+    canvas.save();
+    canvas.translate(dx, dy);
+    canvas.scale(scale);
+
+    final Paint fill = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final Path body = Path()
+      ..moveTo(16.1, 7)
+      ..lineTo(15.3, 1.7)
+      ..lineTo(21.3, 4.9)
+      ..cubicTo(26, 2.9, 31.8, 1.8, 38.4, 1.8)
+      ..lineTo(55.1, 1.8)
+      ..cubicTo(69.8, 1.8, 80.9, 7.4, 85.1, 16.9)
+      ..lineTo(90.7, 12.5)
+      ..cubicTo(91.8, 11.6, 88.91, 15.95, 87.55, 15.95)
+      ..cubicTo(87.52, 15.95, 86.11, 21.92, 86.11, 21.92)
+      ..cubicTo(86.4, 33.53, 84.54, 35.4, 81.5, 41.6)
+      ..lineTo(81, 46.7)
+      ..cubicTo(80.9, 47.5, 80.3, 48, 79.5, 48)
+      ..lineTo(73.3, 48)
+      ..cubicTo(72.7, 48, 72.2, 47.6, 71.9, 47.1)
+      ..lineTo(70.2, 43.4)
+      ..cubicTo(66.4, 44.2, 62.1, 44.6, 57.5, 44.6)
+      ..lineTo(42.8, 44.6)
+      ..cubicTo(38.4, 44.6, 34.4, 44.2, 30.8, 43.5)
+      ..lineTo(28.8, 47.2)
+      ..cubicTo(28.5, 47.7, 28, 48, 27.4, 48)
+      ..lineTo(21.2, 48)
+      ..cubicTo(20.4, 48, 19.7, 47.3, 19.7, 46.5)
+      ..lineTo(19.7, 40.6)
+      ..cubicTo(17.6, 39.1, 15.9, 37.3, 14.7, 35.2)
+      ..cubicTo(14.7, 35.2, 6.26, 37.23, 6.91, 35.46)
+      ..lineTo(4.72, 35.52)
+      ..cubicTo(4.93, 31.86, 4.72, 29.78, 3.81, 25.06)
+      ..cubicTo(4.75, 25.74, 6.2, 25.3, 6.2, 25.3)
+      ..cubicTo(6.2, 25.3, 14.07, 17.59, 16.1, 7)
+      ..close();
+    final Path tail = Path()
+      ..moveTo(84.1, 18.5)
+      ..cubicTo(86.2, 14.8, 89.3, 10.6, 93.4, 12.6)
+      ..cubicTo(96.1, 13.9, 95.7, 17.8, 93, 18.5)
+      ..cubicTo(91.7, 18.8, 90.2, 18.4, 88.7, 17.4)
+      ..cubicTo(87.9, 18.3, 87.2, 19.4, 86.5, 20.5)
+      ..close();
+    final Path tailTip = Path()
+      ..moveTo(89.9, 15.1)
+      ..cubicTo(90.8, 15.8, 91.7, 16, 92.4, 15.8)
+      ..cubicTo(93.1, 15.6, 93.2, 14.6, 92.5, 14.2)
+      ..cubicTo(91.7, 13.8, 90.8, 14.2, 89.9, 15.1)
+      ..close();
+
+    canvas.drawPath(body, fill);
+    canvas.drawPath(tail, fill);
+    canvas.drawPath(tailTip, fill);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _PigBodyIconPainter oldDelegate) {
+    return oldDelegate.color != color;
   }
 }
 
@@ -6094,7 +6353,7 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
                     flowThreshold: rangeSettings.thermalFlowThresholdC,
                     markedFlowDelta: rangeSettings.thermalFlowMarkedDeltaC,
                     blocked: munters2Blocked,
-                    showThermalFlowDiagram: false,
+                    showThermalFlowDiagram: true,
                   ),
                 ),
               ),
@@ -7893,7 +8152,9 @@ class _DeltaTemperatureValue extends StatelessWidget {
         gaugeWidth: gaugeWidth,
       );
     }
-    final double clampedDelta = delta!.abs().clamp(0.0, _maxDelta);
+    final double realDelta = delta!.abs();
+    final double clampedDelta = realDelta.clamp(0.0, _maxDelta);
+    final bool overMax = realDelta > _maxDelta;
     return SizedBox(
       height: 48,
       width: gaugeWidth,
@@ -7906,7 +8167,7 @@ class _DeltaTemperatureValue extends StatelessWidget {
             child: Align(
               alignment: Alignment.center,
               child: Text(
-                '∆T: ${clampedDelta.toStringAsFixed(1)} °C',
+                '∆T: ${realDelta.toStringAsFixed(1)} °C',
                 style: const TextStyle(
                   color: Color(0xFFE5E7EB),
                   fontSize: 12,
@@ -7917,17 +8178,19 @@ class _DeltaTemperatureValue extends StatelessWidget {
           ),
           SizedBox(
             width: gaugeWidth,
-            height: 18,
+            height: 24,
             child: CustomPaint(
               painter: _DeltaTrianglePainter(
                 delta: clampedDelta,
                 maxDelta: _maxDelta,
                 width: gaugeWidth,
+                overMax: overMax,
               ),
             ),
           ),
           SizedBox(
             width: gaugeWidth,
+            height: 10,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: const [
@@ -8020,47 +8283,81 @@ class _DeltaTrianglePainter extends CustomPainter {
     required this.delta,
     required this.maxDelta,
     required this.width,
+    required this.overMax,
   });
 
   final double delta;
   final double maxDelta;
   final double width;
+  final bool overMax;
 
   @override
   void paint(Canvas canvas, Size size) {
-    final double h = size.height;
+    const double overflowTop = 11;
+    final double chartTop = overMax ? overflowTop : 0;
+    final double h = size.height - chartTop;
     final double w = size.width;
+    final double chartBottom = chartTop + h;
 
-    // Triangle: bottom-left(0,h) → bottom-right(w,h) → top-right(w,0)
+    // Triangle: bottom-left(0,bottom) → bottom-right(w,bottom) → top-right(w,top)
     // Hypotenuse goes from bottom-left to top-right.
     final Path triangle = Path()
-      ..moveTo(0, h)
-      ..lineTo(w, h)
-      ..lineTo(w, 0)
+      ..moveTo(0, chartBottom)
+      ..lineTo(w, chartBottom)
+      ..lineTo(w, chartTop)
       ..close();
 
     final Paint fillPaint = Paint()
       ..shader = const LinearGradient(
         colors: [Color(0xFF1E3A5F), Color(0xFF3B82F6)],
-      ).createShader(Rect.fromLTWH(0, 0, w, h));
+      ).createShader(Rect.fromLTWH(0, chartTop, w, h));
     canvas.drawPath(triangle, fillPaint);
 
     // Vertical bar at delta position (cursor)
     final double barX = (delta / maxDelta) * w;
     // Height of the triangle at barX = (barX / w) * h
-    final double barTop = h - (barX / w) * h;
+    final double barTop = chartBottom - (barX / w) * h;
     const double barWidth = 3;
 
     final Paint barPaint = Paint()
       ..color = const Color(0xFFE2E8F0)
       ..strokeWidth = barWidth
       ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(barX, barTop), Offset(barX, h), barPaint);
+    canvas.drawLine(Offset(barX, barTop), Offset(barX, chartBottom), barPaint);
+
+    if (overMax) {
+      const TextSpan plus = TextSpan(
+        text: '+',
+        style: TextStyle(
+          color: Color(0xFFE2E8F0),
+          fontSize: 9,
+          fontWeight: FontWeight.w800,
+          height: 1,
+        ),
+      );
+      final TextPainter textPainter = TextPainter(
+        text: plus,
+        textDirection: TextDirection.ltr,
+      )..layout();
+      textPainter.paint(
+        canvas,
+        Offset(
+          barX - (textPainter.width / 2),
+          (barTop - textPainter.height - 2).clamp(
+            0.0,
+            chartTop - textPainter.height,
+          ),
+        ),
+      );
+    }
   }
 
   @override
   bool shouldRepaint(_DeltaTrianglePainter old) =>
-      old.delta != delta || old.maxDelta != maxDelta || old.width != width;
+      old.delta != delta ||
+      old.maxDelta != maxDelta ||
+      old.width != width ||
+      old.overMax != overMax;
 }
 
 class _LinearGauge extends StatelessWidget {

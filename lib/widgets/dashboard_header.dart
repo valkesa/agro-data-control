@@ -427,17 +427,35 @@ class _ValkeLogo extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final double size = compact ? 42 : 50;
+
     return Tooltip(
       message: 'Ir al Dashboard',
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-        child: Image.asset(
-          'web/branding/Logo.png',
-          width: compact ? 44 : 52,
-          height: compact ? 44 : 52,
-          fit: BoxFit.contain,
-          filterQuality: FilterQuality.high,
+        child: SizedBox.square(
+          dimension: size,
+          child: Image.asset(
+            'web/branding/logo_valke_animated.gif',
+            width: size,
+            height: size,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            filterQuality: FilterQuality.high,
+            errorBuilder: (BuildContext context, Object error, _) {
+              return Image.asset(
+                'web/branding/logo_valke_192_0.png',
+                width: size,
+                height: size,
+                fit: BoxFit.contain,
+                filterQuality: FilterQuality.high,
+                errorBuilder: (BuildContext context, Object error, _) {
+                  return const SizedBox.shrink();
+                },
+              );
+            },
+          ),
         ),
       ),
     );
