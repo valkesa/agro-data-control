@@ -48,3 +48,6 @@ backend/config/*.json
 
 # Local visual debug sandboxes
 Debug iconos/
+
+# Local files intentionally excluded from Git synchronization
+no_git/

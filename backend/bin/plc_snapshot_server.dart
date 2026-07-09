@@ -28,6 +28,7 @@ Future<void> main(List<String> args) async {
     serviceAccountJsonPath: config.runtimeEvents.firestoreServiceAccountPath,
   );
   final WhatsAppService whatsAppService = WhatsAppService();
+  final _OperationalEventHub operationalEventHub = _OperationalEventHub();
   runtime.start();
 
   final HttpServer server = await HttpServer.bind(
@@ -49,7 +50,13 @@ Future<void> main(List<String> args) async {
       });
 
   await for (final HttpRequest request in server) {
-    await _handleRequest(request, runtime, authService, whatsAppService);
+    await _handleRequest(
+      request,
+      runtime,
+      authService,
+      whatsAppService,
+      operationalEventHub,
+    );
   }
 
   await sigintSub.cancel();
@@ -72,6 +79,7 @@ Future<void> _handleRequest(
   SnapshotRuntime runtime,
   FirebaseRequestAuthService authService,
   WhatsAppService whatsAppService,
+  _OperationalEventHub operationalEventHub,
 ) async {
   final Stopwatch stopwatch = Stopwatch()..start();
   final String path = request.uri.path;
@@ -85,6 +93,7 @@ Future<void> _handleRequest(
       runtime,
       authService,
       whatsAppService,
+      operationalEventHub,
     ).timeout(_httpHandlerTimeout);
   } on TimeoutException catch (error, stackTrace) {
     _logHttp('timeout path=$path operation=request_handler error=$error');
@@ -117,6 +126,7 @@ Future<void> _handleRequestInternal(
   SnapshotRuntime runtime,
   FirebaseRequestAuthService authService,
   WhatsAppService whatsAppService,
+  _OperationalEventHub operationalEventHub,
 ) async {
   _writeCorsHeaders(request.response);
 
@@ -129,7 +139,19 @@ Future<void> _handleRequestInternal(
   final String path = request.uri.path;
   if (request.method == 'GET' &&
       (path == '/snapshot' || path == '/api/snapshot')) {
-    await _writeJson(request.response, runtime.snapshotJson());
+    final Map<String, Object?> payload = Map<String, Object?>.from(
+      runtime.snapshotJson(),
+    );
+    final String tenantId = request.uri.queryParameters['tenantId'] ?? '';
+    final String siteId = request.uri.queryParameters['siteId'] ?? '';
+    final List<Map<String, Object?>> events = operationalEventHub.eventsFor(
+      tenantId: tenantId,
+      siteId: siteId,
+    );
+    if (events.isNotEmpty) {
+      payload['operationalEvents'] = events;
+    }
+    await _writeJson(request.response, payload);
     return;
   }
 
@@ -145,8 +167,17 @@ Future<void> _handleRequestInternal(
     return;
   }
 
-  if (request.method == 'POST' && path == '/api/notifications/whatsapp/test') {
+  if (request.method == 'POST' && _isWhatsAppTestPath(path)) {
     await _handleWhatsAppTestRequest(request, authService, whatsAppService);
+    return;
+  }
+
+  if (request.method == 'POST' && _isOperationalEventPath(path)) {
+    await _handleOperationalEventRequest(
+      request,
+      authService,
+      operationalEventHub,
+    );
     return;
   }
 
@@ -154,6 +185,84 @@ Future<void> _handleRequestInternal(
     'error': 'Not found',
     'path': path,
   }, statusCode: HttpStatus.notFound);
+}
+
+bool _isWhatsAppTestPath(String path) {
+  return path == '/api/notifications/whatsapp/test' ||
+      path == '/notifications/whatsapp/test';
+}
+
+bool _isOperationalEventPath(String path) {
+  return path == '/api/operational-events/room-wash' ||
+      path == '/operational-events/room-wash';
+}
+
+Future<void> _handleOperationalEventRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  _OperationalEventHub operationalEventHub,
+) async {
+  AuthenticatedBackendUser user;
+  try {
+    user = await authService.requireAuthenticated(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+
+  final Map<String, Object?> body;
+  try {
+    body = await _readJsonBody(request);
+  } on FormatException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Invalid request body',
+      'details': error.message,
+    }, statusCode: HttpStatus.badRequest);
+    return;
+  }
+
+  final String tenantId = body['tenantId']?.toString().trim() ?? '';
+  final String siteId = body['siteId']?.toString().trim() ?? '';
+  final int? roomNumber = int.tryParse(body['roomNumber']?.toString() ?? '');
+  final String washedAt = body['washedAt']?.toString().trim() ?? '';
+  if (tenantId.isEmpty ||
+      siteId.isEmpty ||
+      roomNumber == null ||
+      roomNumber <= 0 ||
+      washedAt.isEmpty) {
+    await _writeValidationError(
+      request.response,
+      '"tenantId", "siteId", "roomNumber" and "washedAt" are required',
+    );
+    return;
+  }
+
+  final Map<String, Object?> event = operationalEventHub.publish(
+    tenantId: tenantId,
+    siteId: siteId,
+    eventType: 'roomWash',
+    payload: <String, Object?>{
+      'roomNumber': roomNumber,
+      'washedAt': washedAt,
+      if (body['operatorName'] != null)
+        'operatorName': body['operatorName'].toString(),
+      if (body['operatorId'] != null)
+        'operatorId': body['operatorId'].toString(),
+    },
+  );
+  _logHttp(
+    'operational event published uid=${user.uid} type=roomWash tenant=$tenantId site=$siteId room=$roomNumber eventId=${event['id']}',
+  );
+  await _writeJson(request.response, <String, Object?>{
+    'ok': true,
+    'success': true,
+    'event': event,
+  });
 }
 
 Future<void> _handleWhatsAppTestRequest(
@@ -211,30 +320,42 @@ Future<void> _handleWhatsAppTestRequest(
       : 'unknown';
   try {
     _logHttp(
-      'whatsapp test send requested uid=${user.uid} role=${user.role ?? ''} tenant=$tenantId to=${_maskPhone(to)} messageLength=${message.length}',
+      'whatsapp test requested uid=${user.uid} role=${user.role ?? ''} tenant=$tenantId to=${_maskPhone(to)} messageLength=${message.length} modeAttempted=template',
     );
-    final WhatsAppSendResult result = await whatsAppService.sendTextMessage(
+    final WhatsAppSendResult result = await whatsAppService.sendWhatsAppMessage(
       tenantId: tenantId,
       to: to,
       message: message,
+      preferText: false,
     );
     _logHttp(
-      'whatsapp test send success uid=${user.uid} tenant=$tenantId to=${_maskPhone(to)} messageId=${result.messageId ?? ''}',
+      'whatsapp test success uid=${user.uid} tenant=$tenantId to=${_maskPhone(to)} modeFinal=${result.mode} template=${result.templateName ?? ''} language=${result.languageCode ?? ''} fallbackUsed=${result.fallbackUsed} metaStatusCode=${result.metaStatusCode} messageId=${result.messageId ?? ''}',
     );
     await _writeJson(request.response, <String, Object?>{
       'ok': true,
+      'success': true,
       'provider': WhatsAppService.provider,
       'status': 'sent',
       'messageId': result.messageId,
+      'wamid': result.messageId,
+      'mode': result.mode,
+      'templateName': result.templateName,
+      'languageCode': result.languageCode,
+      'fallbackUsed': result.fallbackUsed,
+      'metaStatusCode': result.metaStatusCode,
     });
   } on WhatsAppServiceException catch (error) {
     _logHttp(
-      'whatsapp test send failed uid=${user.uid} tenant=$tenantId to=${_maskPhone(to)} status=${error.metaStatusCode ?? error.statusCode} kind=${error.kind.name} error=${error.message}',
+      'whatsapp test send failed uid=${user.uid} tenant=$tenantId to=${_maskPhone(to)} status=${error.metaStatusCode ?? error.statusCode} kind=${error.kind.name} modeFinal=${error.finalMode ?? ''} fallbackUsed=${error.fallbackUsed} metaErrorCode=${error.metaErrorCode ?? ''} metaErrorMessage=${error.metaErrorMessage ?? error.message} metaError=${error.details ?? ''}',
     );
     await _writeJson(request.response, <String, Object?>{
       'ok': false,
+      'success': false,
       'error': error.message,
       'details': error.details?.toString() ?? error.kind.name,
+      'mode': error.finalMode,
+      'fallbackUsed': error.fallbackUsed,
+      'metaStatusCode': error.metaStatusCode,
     }, statusCode: _safeErrorStatus(error.statusCode));
   } catch (error) {
     _logHttp(
@@ -242,6 +363,7 @@ Future<void> _handleWhatsAppTestRequest(
     );
     await _writeJson(request.response, <String, Object?>{
       'ok': false,
+      'success': false,
       'error': 'Unexpected WhatsApp error',
       'details': error.toString(),
     }, statusCode: HttpStatus.badGateway);
@@ -340,4 +462,77 @@ int _safeErrorStatus(int statusCode) {
     return statusCode;
   }
   return HttpStatus.badGateway;
+}
+
+class _OperationalEventHub {
+  static const Duration _retention = Duration(minutes: 5);
+  final List<_StoredOperationalEvent> _events = <_StoredOperationalEvent>[];
+  int _sequence = 0;
+
+  Map<String, Object?> publish({
+    required String tenantId,
+    required String siteId,
+    required String eventType,
+    required Map<String, Object?> payload,
+  }) {
+    _prune();
+    final DateTime now = DateTime.now().toUtc();
+    _sequence += 1;
+    final Map<String, Object?> event = <String, Object?>{
+      'id': '${now.microsecondsSinceEpoch}-$_sequence',
+      'type': 'operationalEvent',
+      'eventType': eventType,
+      'tenantId': tenantId,
+      'siteId': siteId,
+      'createdAt': now.toIso8601String(),
+      'payload': payload,
+    };
+    _events.add(
+      _StoredOperationalEvent(
+        tenantId: tenantId,
+        siteId: siteId,
+        createdAt: now,
+        json: event,
+      ),
+    );
+    return event;
+  }
+
+  List<Map<String, Object?>> eventsFor({
+    required String tenantId,
+    required String siteId,
+  }) {
+    _prune();
+    if (tenantId.trim().isEmpty || siteId.trim().isEmpty) {
+      return const <Map<String, Object?>>[];
+    }
+    return _events
+        .where(
+          (_StoredOperationalEvent event) =>
+              event.tenantId == tenantId && event.siteId == siteId,
+        )
+        .map((event) => Map<String, Object?>.from(event.json))
+        .toList(growable: false);
+  }
+
+  void _prune() {
+    final DateTime cutoff = DateTime.now().toUtc().subtract(_retention);
+    _events.removeWhere(
+      (_StoredOperationalEvent event) => event.createdAt.isBefore(cutoff),
+    );
+  }
+}
+
+class _StoredOperationalEvent {
+  const _StoredOperationalEvent({
+    required this.tenantId,
+    required this.siteId,
+    required this.createdAt,
+    required this.json,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final DateTime createdAt;
+  final Map<String, Object?> json;
 }

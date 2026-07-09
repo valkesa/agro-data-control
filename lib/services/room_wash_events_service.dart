@@ -1,5 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+import 'dart:convert';
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
+
+import '../app_config.dart';
 import '../firebase/firestore_paths.dart';
 import '../models/room_wash_event.dart';
 
@@ -25,6 +32,70 @@ class RoomWashEventsService {
         .doc();
     await doc.set(event.toCreatePayload());
     return doc.id;
+  }
+
+  Future<bool> publishOperationalEvent({
+    required String tenantId,
+    required String siteId,
+    required RoomWashEvent event,
+    String? backendSnapshotEndpoint,
+  }) async {
+    final User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      debugPrint('[room-wash] operational publish skipped: no Firebase user');
+      return false;
+    }
+
+    final String? token = await user.getIdToken();
+    if (token == null || token.isEmpty) {
+      debugPrint('[room-wash] operational publish skipped: empty token');
+      return false;
+    }
+
+    final Uri uri = _operationalEventUri(backendSnapshotEndpoint);
+    final Map<String, Object?> body = <String, Object?>{
+      'tenantId': tenantId,
+      'siteId': siteId,
+      'roomNumber': event.roomNumber,
+      'washedAt': event.washedAt.toUtc().toIso8601String(),
+      'operatorId': event.createdByUid,
+      'operatorName': event.createdByName,
+    };
+
+    try {
+      final http.Response response = await http
+          .post(
+            uri,
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 6));
+      final bool ok = response.statusCode >= 200 && response.statusCode < 300;
+      debugPrint(
+        '[room-wash] operational publish status=${response.statusCode} ok=$ok tenant=$tenantId site=$siteId room=${event.roomNumber}',
+      );
+      return ok;
+    } on TimeoutException catch (error) {
+      debugPrint('[room-wash] operational publish timeout: $error');
+      return false;
+    } catch (error) {
+      debugPrint('[room-wash] operational publish failed: $error');
+      return false;
+    }
+  }
+
+  Uri _operationalEventUri(String? backendSnapshotEndpoint) {
+    final String endpoint = backendSnapshotEndpoint?.trim().isNotEmpty == true
+        ? backendSnapshotEndpoint!.trim()
+        : AppConfig.currentBackendSnapshotUrl;
+    final Uri snapshotUri = Uri.parse(endpoint);
+    return snapshotUri.replace(
+      path: '/api/operational-events/room-wash',
+      query: '',
+    );
   }
 
   Future<List<RoomWashEvent>> fetchByRange({

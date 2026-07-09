@@ -23,8 +23,13 @@ class FirebaseRequestAuthService {
   final ServiceAccountAuth _auth;
   final HttpClient _httpClient;
 
+  static const Duration _userProfileCacheTtl = Duration(minutes: 10);
+  static const Duration _userProfileStaleTtl = Duration(hours: 6);
+
   Map<String, String>? _cachedFirebaseCerts;
   DateTime? _firebaseCertsExpireAt;
+  final Map<String, _CachedUserProfile> _userProfileCache =
+      <String, _CachedUserProfile>{};
 
   bool get isConfigured =>
       _projectId.trim().isNotEmpty && _databaseId.trim().isNotEmpty;
@@ -70,6 +75,29 @@ class FirebaseRequestAuthService {
       role: profile.role,
       tenantId: profile.activeTenantId,
     );
+  }
+
+  Future<AuthenticatedBackendUser> requireAuthenticated(
+    HttpRequest request,
+  ) async {
+    if (!isConfigured) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.serviceUnavailable,
+        message: 'Backend auth is not configured',
+      );
+    }
+
+    final String idToken = _readBearerToken(request);
+    final JWT jwt = await _verifyFirebaseIdToken(idToken);
+    final String uid = jwt.subject ?? '';
+    if (uid.isEmpty) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.unauthorized,
+        message: 'Invalid Firebase token subject',
+      );
+    }
+
+    return AuthenticatedBackendUser(uid: uid, role: null, tenantId: null);
   }
 
   String _readBearerToken(HttpRequest request) {
@@ -183,7 +211,22 @@ class FirebaseRequestAuthService {
   }
 
   Future<FirestoreUserProfile> _readUserProfile(String uid) async {
-    final String token = await _auth.getAccessToken();
+    final DateTime now = DateTime.now().toUtc();
+    final _CachedUserProfile? cached = _userProfileCache[uid];
+    if (cached != null && cached.expiresAt.isAfter(now)) {
+      return cached.profile;
+    }
+
+    final String token;
+    try {
+      token = await _auth.getAccessToken();
+    } catch (error) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.serviceUnavailable,
+        message: 'Could not authenticate Firestore service account',
+        details: error.toString(),
+      );
+    }
     final Uri uri = Uri.parse(
       'https://firestore.googleapis.com/v1/projects/$_projectId'
       '/databases/$_databaseId/documents/users/$uid',
@@ -193,27 +236,56 @@ class FirebaseRequestAuthService {
     final HttpClientResponse response = await request.close();
     final String body = await response.transform(utf8.decoder).join();
     if (response.statusCode == HttpStatus.notFound) {
+      _userProfileCache.remove(uid);
       throw BackendAuthException(
         statusCode: HttpStatus.forbidden,
         message: 'Forbidden: user profile not found',
+        details:
+            'firestore_status=${response.statusCode} path=users/${_maskUid(uid)} project=$_projectId database=$_databaseId',
       );
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
+      if (cached != null && cached.staleUntil.isAfter(now)) {
+        stdout.writeln(
+          '[auth] using stale user profile cache uid=${_maskUid(uid)} firestore_status=${response.statusCode} ${_firestoreErrorSummary(body)}',
+        );
+        return cached.profile;
+      }
       throw BackendAuthException(
         statusCode: HttpStatus.serviceUnavailable,
         message: 'Could not read user profile',
+        details:
+            'firestore_status=${response.statusCode} path=users/${_maskUid(uid)} project=$_projectId database=$_databaseId ${_firestoreErrorSummary(body)}',
       );
     }
     final Map<String, dynamic> decoded =
         jsonDecode(body) as Map<String, dynamic>;
     final Map<String, dynamic> fields =
         decoded['fields'] as Map<String, dynamic>? ?? <String, dynamic>{};
-    return FirestoreUserProfile(
+    final FirestoreUserProfile profile = FirestoreUserProfile(
       role: _stringField(fields['role']),
       active: _boolField(fields['active']),
       activeTenantId: _stringField(fields['activeTenantId']),
     );
+    _userProfileCache[uid] = _CachedUserProfile(
+      profile: profile,
+      expiresAt: now.add(_userProfileCacheTtl),
+      staleUntil: now.add(_userProfileStaleTtl),
+    );
+    return profile;
   }
+}
+
+class _CachedUserProfile {
+  const _CachedUserProfile({
+    required this.profile,
+    required this.expiresAt,
+    required this.staleUntil,
+  });
+
+  final FirestoreUserProfile profile;
+  final DateTime expiresAt;
+  final DateTime staleUntil;
 }
 
 class AuthenticatedBackendUser {
@@ -267,4 +339,55 @@ bool _boolField(Object? field) {
     return field['booleanValue'] as bool;
   }
   return false;
+}
+
+String _firestoreErrorSummary(String body) {
+  if (body.trim().isEmpty) {
+    return 'firestore_error=empty_response';
+  }
+  try {
+    final Object? decoded = jsonDecode(body);
+    if (decoded is Map) {
+      final Object? error = decoded['error'];
+      if (error is Map) {
+        final List<String> parts = <String>[];
+        final Object? status = error['status'];
+        final Object? code = error['code'];
+        final Object? message = error['message'];
+        if (status != null) {
+          parts.add('firestore_error_status=$status');
+        }
+        if (code != null) {
+          parts.add('firestore_error_code=$code');
+        }
+        if (message != null) {
+          parts.add('firestore_error_message=${_compact(message)}');
+        }
+        if (parts.isNotEmpty) {
+          return parts.join(' ');
+        }
+      }
+    }
+  } catch (_) {
+    // Fall through to compact raw body.
+  }
+  return 'firestore_error=${_compact(body)}';
+}
+
+String _compact(Object value) {
+  final String compacted = value
+      .toString()
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  if (compacted.length <= 240) {
+    return compacted;
+  }
+  return '${compacted.substring(0, 240)}...';
+}
+
+String _maskUid(String uid) {
+  if (uid.length <= 6) {
+    return '***';
+  }
+  return '${uid.substring(0, 3)}***${uid.substring(uid.length - 3)}';
 }

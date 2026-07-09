@@ -16,12 +16,18 @@ class PlcDashboardService {
   const PlcDashboardService({
     String? endpoint,
     Map<String, String> plcNames = const <String, String>{},
+    String? tenantId,
+    String? siteId,
   }) : _endpoint = endpoint,
-       _plcNames = plcNames;
+       _plcNames = plcNames,
+       _tenantId = tenantId,
+       _siteId = siteId;
 
   final String? _endpoint;
   // plcId → displayName, loaded from Firestore via SitePlcConfigService.
   final Map<String, String> _plcNames;
+  final String? _tenantId;
+  final String? _siteId;
 
   Future<DashboardSnapshot> fetchSnapshot() async {
     final LiveSnapshotResult result = await fetchLiveSnapshot();
@@ -37,7 +43,7 @@ class PlcDashboardService {
       );
     }
 
-    final Uri uri = Uri.parse(apiUrl);
+    final Uri uri = _snapshotUri(apiUrl);
 
     try {
       final http.Response response = await http
@@ -107,6 +113,25 @@ class PlcDashboardService {
         endpoint: apiUrl,
       );
     }
+  }
+
+  Uri _snapshotUri(String apiUrl) {
+    final Uri uri = Uri.parse(apiUrl);
+    final String? tenantId = _tenantId?.trim();
+    final String? siteId = _siteId?.trim();
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty) {
+      return uri;
+    }
+    return uri.replace(
+      queryParameters: <String, String>{
+        ...uri.queryParameters,
+        'tenantId': tenantId,
+        'siteId': siteId,
+      },
+    );
   }
 
   DashboardSnapshot _parseSnapshot(Map<String, dynamic> decoded) {

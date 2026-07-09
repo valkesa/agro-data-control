@@ -28,6 +28,7 @@ class ComparisonPage extends StatefulWidget {
     required this.doorEvents,
     this.tenantId,
     this.siteId,
+    this.backendSnapshotEndpoint,
     required this.showMunters1,
     required this.showMunters2,
     required this.snapshotStale,
@@ -111,6 +112,7 @@ class ComparisonPage extends StatefulWidget {
   final Map<String, DashboardDoorEvent> doorEvents;
   final String? tenantId;
   final String? siteId;
+  final String? backendSnapshotEndpoint;
   final bool showMunters1;
   final bool showMunters2;
   final bool snapshotStale;
@@ -759,6 +761,14 @@ class _ComparisonPageState extends State<ComparisonPage> {
         tenantId: tenantId,
         siteId: siteId,
         event: event,
+      );
+      unawaited(
+        _roomWashEventsService.publishOperationalEvent(
+          tenantId: tenantId,
+          siteId: siteId,
+          event: event,
+          backendSnapshotEndpoint: widget.backendSnapshotEndpoint,
+        ),
       );
       if (!mounted) {
         return;
@@ -3697,10 +3707,6 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             value: '-',
             scale: scale,
           ),
-          null,
-        ),
-        SizedBox(height: gap),
-        boxRow(
           _LargeAdditionalMiniBox(
             marker: Icon(
               Icons.water_drop_outlined,
@@ -3710,7 +3716,6 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             value: '-',
             scale: scale,
           ),
-          null,
         ),
       ],
     );
@@ -6331,6 +6336,8 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
                     flowThreshold: rangeSettings.thermalFlowThresholdC,
                     markedFlowDelta: rangeSettings.thermalFlowMarkedDeltaC,
                     blocked: munters1Blocked,
+                    coolingActive:
+                        !munters1Blocked && munters1.bombaHumidificador == true,
                     showThermalFlowDiagram: true,
                   ),
                 ),
@@ -6353,6 +6360,8 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
                     flowThreshold: rangeSettings.thermalFlowThresholdC,
                     markedFlowDelta: rangeSettings.thermalFlowMarkedDeltaC,
                     blocked: munters2Blocked,
+                    coolingActive:
+                        !munters2Blocked && munters2.bombaHumidificador == true,
                     showThermalFlowDiagram: true,
                   ),
                 ),
@@ -6487,6 +6496,7 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
     required this.flowThreshold,
     required this.markedFlowDelta,
     required this.blocked,
+    required this.coolingActive,
     required this.showThermalFlowDiagram,
   });
 
@@ -6499,6 +6509,7 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
   final double flowThreshold;
   final double markedFlowDelta;
   final bool blocked;
+  final bool coolingActive;
   final bool showThermalFlowDiagram;
 
   static const double _contentLeft = 0;
@@ -6560,6 +6571,7 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
                     ingreso: ingreso,
                     egreso: egreso,
                     blocked: blocked,
+                    coolingActive: coolingActive,
                     threshold: flowThreshold,
                     markedDelta: markedFlowDelta,
                   )
@@ -6612,6 +6624,7 @@ class _ThermalFlowDiagram extends StatelessWidget {
     required this.ingreso,
     required this.egreso,
     required this.blocked,
+    required this.coolingActive,
     required this.threshold,
     required this.markedDelta,
   });
@@ -6620,6 +6633,7 @@ class _ThermalFlowDiagram extends StatelessWidget {
   final double? ingreso;
   final double? egreso;
   final bool blocked;
+  final bool coolingActive;
   final double threshold;
   final double markedDelta;
 
@@ -6633,6 +6647,10 @@ class _ThermalFlowDiagram extends StatelessWidget {
       interiorReference: ingreso ?? egreso,
       threshold: threshold,
     );
+    final _ThermalCondition iconCondition =
+        condition == _ThermalCondition.cooling && !coolingActive
+        ? _ThermalCondition.neutral
+        : condition;
     final double delta = hasGradient ? egreso! - ingreso! : 0;
     final _ThermalFlowPositions positions = _ThermalFlowPositions.resolve(
       const Size(
@@ -6689,23 +6707,24 @@ class _ThermalFlowDiagram extends StatelessWidget {
               alignRight: true,
             ),
           ),
-          Positioned(
-            left: 18,
-            top: positions.ingresoY + 3,
-            child: Icon(
-              switch (condition) {
-                _ThermalCondition.heating => Icons.local_fire_department,
-                _ThermalCondition.cooling => Icons.ac_unit,
-                _ThermalCondition.neutral => Icons.remove,
-              },
-              size: 18,
-              color: switch (condition) {
-                _ThermalCondition.heating => const Color(0xFFF97316),
-                _ThermalCondition.cooling => const Color(0xFF38BDF8),
-                _ThermalCondition.neutral => const Color(0xFF94A3B8),
-              },
+          if (iconCondition != _ThermalCondition.neutral)
+            Positioned(
+              left: 18,
+              top: positions.ingresoY + 3,
+              child: Icon(
+                switch (iconCondition) {
+                  _ThermalCondition.heating => Icons.local_fire_department,
+                  _ThermalCondition.cooling => Icons.ac_unit,
+                  _ThermalCondition.neutral => Icons.remove,
+                },
+                size: 18,
+                color: switch (iconCondition) {
+                  _ThermalCondition.heating => const Color(0xFFF97316),
+                  _ThermalCondition.cooling => const Color(0xFF38BDF8),
+                  _ThermalCondition.neutral => const Color(0xFF94A3B8),
+                },
+              ),
             ),
-          ),
         ],
       ),
     );

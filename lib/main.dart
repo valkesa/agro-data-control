@@ -251,6 +251,8 @@ class _AgroDataShellState extends State<AgroDataShell>
   final RoomWashEventsService _roomWashEventsService =
       const RoomWashEventsService();
   final Map<String, bool?> _prevNivelAguaAlarma = {};
+  final Map<int, RoomWashEvent> _recentRoomWashByRoom = <int, RoomWashEvent>{};
+  final Set<String> _processedOperationalEventIds = <String>{};
   Map<String, WaterShortageSummary> _waterShortageSummaries = {};
   late final BrowserExitGuardDisposer _disposeBrowserExitGuard;
 
@@ -665,6 +667,8 @@ class _AgroDataShellState extends State<AgroDataShell>
         _plcConfigs = result.plcConfigs;
         _service = PlcDashboardService(
           endpoint: result.siteDocument?.backendUrl,
+          tenantId: result.effectiveTenantId,
+          siteId: result.siteId,
           plcNames: {
             for (final PlcDisplayConfig p in result.plcConfigs)
               p.plcId: p.displayName,
@@ -680,6 +684,12 @@ class _AgroDataShellState extends State<AgroDataShell>
           _startConfigStream(tenantId: tenantId, siteId: result.siteId);
           unawaited(
             _loadWaterShortageSummaries(
+              tenantId: tenantId,
+              siteId: result.siteId,
+            ),
+          );
+          unawaited(
+            _loadInitialRecentRoomWashEvents(
               tenantId: tenantId,
               siteId: result.siteId,
             ),
@@ -1586,6 +1596,8 @@ class _AgroDataShellState extends State<AgroDataShell>
       if (updatedSite != null) _activeSiteName = updatedSite.name;
       _service = PlcDashboardService(
         endpoint: _activeBackendEndpoint,
+        tenantId: tenantId,
+        siteId: siteId,
         plcNames: {
           for (final PlcDisplayConfig p in newConfigs) p.plcId: p.displayName,
         },
@@ -1672,12 +1684,23 @@ class _AgroDataShellState extends State<AgroDataShell>
     setState(() {
       _activeSiteId = siteId;
       _activeSiteName = siteDoc.name;
+      _activeBackendEndpoint = siteDoc.backendUrl;
       _historySiteId = siteId;
-      _service = PlcDashboardService(endpoint: siteDoc.backendUrl);
+      _recentRoomWashByRoom.clear();
+      _processedOperationalEventIds.clear();
+      _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
+      _service = PlcDashboardService(
+        endpoint: siteDoc.backendUrl,
+        tenantId: tenantId,
+        siteId: siteId,
+      );
     });
 
     _startConfigStream(tenantId: tenantId, siteId: siteId);
     unawaited(_loadWaterShortageSummaries(tenantId: tenantId, siteId: siteId));
+    unawaited(
+      _loadInitialRecentRoomWashEvents(tenantId: tenantId, siteId: siteId),
+    );
     unawaited(_refreshLiveSnapshot());
   }
 
@@ -1721,10 +1744,16 @@ class _AgroDataShellState extends State<AgroDataShell>
       _activeSiteId = siteDoc.siteId;
       _activeSiteName = siteDoc.name;
       _activeTenantName = tenantDoc?.name ?? tenantId;
+      _activeBackendEndpoint = siteDoc.backendUrl;
       _availableSites = sites;
       _plcConfigs = plcConfigs;
+      _recentRoomWashByRoom.clear();
+      _processedOperationalEventIds.clear();
+      _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
       _service = PlcDashboardService(
         endpoint: siteDoc.backendUrl,
+        tenantId: tenantId,
+        siteId: siteDoc.siteId,
         plcNames: {
           for (final PlcDisplayConfig p in plcConfigs) p.plcId: p.displayName,
         },
@@ -1748,6 +1777,12 @@ class _AgroDataShellState extends State<AgroDataShell>
     _startConfigStream(tenantId: tenantId, siteId: siteDoc.siteId);
     unawaited(
       _loadWaterShortageSummaries(tenantId: tenantId, siteId: siteDoc.siteId),
+    );
+    unawaited(
+      _loadInitialRecentRoomWashEvents(
+        tenantId: tenantId,
+        siteId: siteDoc.siteId,
+      ),
     );
     unawaited(_refreshLiveSnapshot());
   }
@@ -1774,15 +1809,14 @@ class _AgroDataShellState extends State<AgroDataShell>
     DashboardSnapshot? successfulSnapshot;
     bool? successfulSnapshotStale;
     if (result.isSuccess) {
+      _handleOperationalEvents(result.rawPayload);
       successfulSnapshotAt =
           result.receivedAt ?? result.snapshot!.lastUpdatedAt ?? DateTime.now();
       final DashboardSnapshot nextSnapshot = _withUpdateDeltas(
         next: result.snapshot!,
         previous: _snapshot,
       );
-      successfulSnapshot = await _attachRecentRoomWashEvents(
-        snapshot: nextSnapshot,
-      );
+      successfulSnapshot = _applyRecentRoomWashEvents(snapshot: nextSnapshot);
       successfulSnapshotStale = _isSnapshotStale(nextSnapshot);
       if (!mounted) {
         return;
@@ -1911,26 +1945,19 @@ class _AgroDataShellState extends State<AgroDataShell>
     });
   }
 
-  Future<DashboardSnapshot> _attachRecentRoomWashEvents({
-    required DashboardSnapshot snapshot,
+  Future<void> _loadInitialRecentRoomWashEvents({
+    required String tenantId,
+    required String siteId,
   }) async {
-    final String? tenantId = _historyTenantId;
-    final String? siteId = _historySiteId;
-    if (tenantId == null ||
-        tenantId.isEmpty ||
-        siteId == null ||
-        siteId.isEmpty ||
-        snapshot.units.isEmpty) {
-      return snapshot;
-    }
-
+    debugPrint(
+      '[room-wash] Firestore initial load started tenant=$tenantId site=$siteId',
+    );
+    final Map<int, RoomWashEvent> loaded = <int, RoomWashEvent>{};
     final DateTime since = DateTime.now().subtract(
       RoomWashEvent.defaultHumidityShadingWindow,
     );
-    final List<MuntersModel> units = List<MuntersModel>.of(snapshot.units);
     await Future.wait(
-      <int>[0, 1].where((index) => index < units.length).map((index) async {
-        final int roomNumber = index + 1;
+      <int>[1, 2].map((int roomNumber) async {
         try {
           final RoomWashEvent? event = await _roomWashEventsService
               .fetchLatestRecentForRoom(
@@ -1939,17 +1966,54 @@ class _AgroDataShellState extends State<AgroDataShell>
                 roomNumber: roomNumber,
                 since: since,
               );
-          units[index] = _copyMuntersModel(
-            source: units[index],
-            recentRoomWashEvent: event,
-          );
+          if (event != null) {
+            loaded[roomNumber] = event;
+          }
         } catch (error) {
           debugPrint(
-            '[room-wash] Error cargando ultimo lavado sala $roomNumber: $error',
+            '[room-wash] Error cargando lavado inicial sala $roomNumber: $error',
           );
         }
       }),
     );
+    if (!mounted || _historyTenantId != tenantId || _historySiteId != siteId) {
+      return;
+    }
+    setState(() {
+      _recentRoomWashByRoom
+        ..clear()
+        ..addAll(loaded);
+      _snapshot = _applyRecentRoomWashEvents(
+        snapshot: _clearRecentRoomWashEvents(snapshot: _snapshot),
+      );
+    });
+    debugPrint(
+      '[room-wash] Firestore initial load done tenant=$tenantId site=$siteId count=${loaded.length}',
+    );
+  }
+
+  DashboardSnapshot _applyRecentRoomWashEvents({
+    required DashboardSnapshot snapshot,
+  }) {
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _historySiteId;
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty ||
+        snapshot.units.isEmpty ||
+        _recentRoomWashByRoom.isEmpty) {
+      return snapshot;
+    }
+
+    final List<MuntersModel> units = List<MuntersModel>.of(snapshot.units);
+    for (int index = 0; index < units.length && index < 2; index += 1) {
+      final int roomNumber = index + 1;
+      units[index] = _copyMuntersModel(
+        source: units[index],
+        recentRoomWashEvent: _recentRoomWashByRoom[roomNumber],
+      );
+    }
 
     return DashboardSnapshot(
       units: units,
@@ -1959,6 +2023,88 @@ class _AgroDataShellState extends State<AgroDataShell>
       lastUpdatedAt: snapshot.lastUpdatedAt,
       clientName: snapshot.clientName,
     );
+  }
+
+  DashboardSnapshot _clearRecentRoomWashEvents({
+    required DashboardSnapshot snapshot,
+  }) {
+    return DashboardSnapshot(
+      units: snapshot.units
+          .map(
+            (MuntersModel unit) =>
+                _copyMuntersModel(source: unit, clearRecentRoomWashEvent: true),
+          )
+          .toList(growable: false),
+      doorEvents: snapshot.doorEvents,
+      backendOnline: snapshot.backendOnline,
+      startedAt: snapshot.startedAt,
+      lastUpdatedAt: snapshot.lastUpdatedAt,
+      clientName: snapshot.clientName,
+    );
+  }
+
+  void _handleOperationalEvents(Map<String, dynamic>? payload) {
+    final Object? rawEvents = payload?['operationalEvents'];
+    if (rawEvents is! List || rawEvents.isEmpty) {
+      return;
+    }
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _historySiteId;
+    if (tenantId == null || siteId == null) {
+      return;
+    }
+    var updated = false;
+    for (final Object? rawEvent in rawEvents) {
+      if (rawEvent is! Map) {
+        continue;
+      }
+      final Map<String, Object?> event = Map<String, Object?>.from(rawEvent);
+      final String id = event['id']?.toString() ?? '';
+      if (id.isNotEmpty && !_processedOperationalEventIds.add(id)) {
+        continue;
+      }
+      if (event['type']?.toString() != 'operationalEvent' ||
+          event['eventType']?.toString() != 'roomWash' ||
+          event['tenantId']?.toString() != tenantId ||
+          event['siteId']?.toString() != siteId) {
+        continue;
+      }
+      final Object? rawPayload = event['payload'];
+      if (rawPayload is! Map) {
+        continue;
+      }
+      final Map<String, Object?> eventPayload = Map<String, Object?>.from(
+        rawPayload,
+      );
+      final int? roomNumber = int.tryParse(
+        eventPayload['roomNumber']?.toString() ?? '',
+      );
+      final DateTime? washedAt = DateTime.tryParse(
+        eventPayload['washedAt']?.toString() ?? '',
+      );
+      if (roomNumber == null || washedAt == null) {
+        continue;
+      }
+      _recentRoomWashByRoom[roomNumber] = RoomWashEvent(
+        tenantId: tenantId,
+        roomId: 'room_$roomNumber',
+        roomNumber: roomNumber,
+        muntersId: roomNumber == 1 ? 'munters1' : 'munters2',
+        washedAt: washedAt,
+        createdByUid: eventPayload['operatorId']?.toString() ?? '',
+        createdByName: eventPayload['operatorName']?.toString() ?? '',
+        source: RoomWashEvent.operatorSource,
+      );
+      updated = true;
+      debugPrint(
+        '[room-wash] operational event received id=$id tenant=$tenantId site=$siteId room=$roomNumber washedAt=${washedAt.toIso8601String()}',
+      );
+    }
+    if (updated && mounted) {
+      setState(() {
+        _snapshot = _applyRecentRoomWashEvents(snapshot: _snapshot);
+      });
+    }
   }
 
   DashboardSnapshot _withUpdateDeltas({
@@ -2106,6 +2252,7 @@ class _AgroDataShellState extends State<AgroDataShell>
     DateTime? previousLastUpdatedAt,
     int? updateDeltaSeconds,
     RoomWashEvent? recentRoomWashEvent,
+    bool clearRecentRoomWashEvent = false,
   }) {
     return MuntersModel(
       name: source.name,
@@ -2128,7 +2275,9 @@ class _AgroDataShellState extends State<AgroDataShell>
       lastHeartbeatValue: source.lastHeartbeatValue,
       lastHeartbeatChangeAt: source.lastHeartbeatChangeAt,
       lastError: source.lastError,
-      recentRoomWashEvent: recentRoomWashEvent ?? source.recentRoomWashEvent,
+      recentRoomWashEvent: clearRecentRoomWashEvent
+          ? null
+          : recentRoomWashEvent ?? source.recentRoomWashEvent,
       tempInterior: source.tempInterior,
       tempIngresoSala: source.tempIngresoSala,
       humInterior: source.humInterior,
@@ -2364,6 +2513,7 @@ class _AgroDataShellState extends State<AgroDataShell>
                               doorEvents: _snapshot.doorEvents,
                               tenantId: _historyTenantId,
                               siteId: _historySiteId,
+                              backendSnapshotEndpoint: _activeBackendEndpoint,
                               showMunters1:
                                   _unitVisibilitySettings.showMunters1,
                               showMunters2:
@@ -3784,12 +3934,33 @@ class _WhatsAppTestDialogState extends State<_WhatsAppTestDialog> {
     setState(() {
       _sending = false;
       _statusOk = result.ok;
-      _statusMessage = result.ok
-          ? 'Mensaje enviado${result.messageId?.isNotEmpty == true ? ' (${result.messageId})' : ''}.'
-          : [
-              result.message ?? 'No se pudo enviar el mensaje.',
-              if (result.details?.isNotEmpty == true) result.details!,
-            ].join(' ');
+      if (result.ok) {
+        final String modeLabel = switch (result.mode) {
+          'text' => 'texto',
+          'template' => 'plantilla',
+          _ => result.mode ?? 'desconocido',
+        };
+        _statusMessage = [
+          'Solicitud aceptada por WhatsApp${result.messageId?.isNotEmpty == true ? ' (${result.messageId})' : ''}.',
+          'Modo: $modeLabel.',
+          if (result.fallbackUsed)
+            'Se intentó texto simple, pero se reintentó con plantilla.',
+        ].join(' ');
+      } else {
+        final String? modeLabel = switch (result.mode) {
+          'text' => 'texto',
+          'template' => 'plantilla',
+          null => null,
+          _ => result.mode,
+        };
+        _statusMessage = [
+          result.message ?? 'No se pudo enviar el mensaje.',
+          if (modeLabel != null) 'Modo: $modeLabel.',
+          if (result.fallbackUsed)
+            'Se intentó texto simple, pero se reintentó con plantilla.',
+          if (result.details?.isNotEmpty == true) result.details!,
+        ].join(' ');
+      }
     });
   }
 

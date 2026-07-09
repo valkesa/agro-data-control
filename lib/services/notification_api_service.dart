@@ -51,6 +51,9 @@ class NotificationApiService {
           _readString(decoded, 'error') ??
               'El backend respondio HTTP ${response.statusCode}.',
           details: _readString(decoded, 'details'),
+          mode: _readString(decoded, 'mode'),
+          fallbackUsed: _readBool(decoded, 'fallbackUsed'),
+          metaStatusCode: _readIntFromDecoded(decoded, 'metaStatusCode'),
           statusCode: response.statusCode,
         );
       }
@@ -67,12 +70,21 @@ class NotificationApiService {
         return WhatsAppTestMessageResult.error(
           payload['error']?.toString() ?? 'No se pudo enviar el mensaje.',
           details: payload['details']?.toString(),
+          mode: payload['mode']?.toString(),
+          fallbackUsed: payload['fallbackUsed'] == true,
+          metaStatusCode: _readInt(payload['metaStatusCode']),
           statusCode: response.statusCode,
         );
       }
 
       return WhatsAppTestMessageResult.success(
-        messageId: payload['messageId']?.toString(),
+        messageId:
+            payload['wamid']?.toString() ?? payload['messageId']?.toString(),
+        mode: payload['mode']?.toString(),
+        templateName: payload['templateName']?.toString(),
+        languageCode: payload['languageCode']?.toString(),
+        fallbackUsed: payload['fallbackUsed'] == true,
+        metaStatusCode: _readInt(payload['metaStatusCode']),
       );
     } on TimeoutException {
       return const WhatsAppTestMessageResult.error(
@@ -111,20 +123,45 @@ class WhatsAppTestMessageResult {
     this.message,
     this.details,
     this.messageId,
+    this.mode,
+    this.templateName,
+    this.languageCode,
+    this.fallbackUsed = false,
+    this.metaStatusCode,
     this.statusCode,
   });
 
-  const WhatsAppTestMessageResult.success({String? messageId})
-    : this._(ok: true, messageId: messageId);
+  const WhatsAppTestMessageResult.success({
+    String? messageId,
+    String? mode,
+    String? templateName,
+    String? languageCode,
+    bool fallbackUsed = false,
+    int? metaStatusCode,
+  }) : this._(
+         ok: true,
+         messageId: messageId,
+         mode: mode,
+         templateName: templateName,
+         languageCode: languageCode,
+         fallbackUsed: fallbackUsed,
+         metaStatusCode: metaStatusCode,
+       );
 
   const WhatsAppTestMessageResult.error(
     String message, {
     String? details,
+    String? mode,
+    bool fallbackUsed = false,
+    int? metaStatusCode,
     int? statusCode,
   }) : this._(
          ok: false,
          message: message,
          details: details,
+         mode: mode,
+         fallbackUsed: fallbackUsed,
+         metaStatusCode: metaStatusCode,
          statusCode: statusCode,
        );
 
@@ -132,6 +169,11 @@ class WhatsAppTestMessageResult {
   final String? message;
   final String? details;
   final String? messageId;
+  final String? mode;
+  final String? templateName;
+  final String? languageCode;
+  final bool fallbackUsed;
+  final int? metaStatusCode;
   final int? statusCode;
 }
 
@@ -151,4 +193,22 @@ String? _readString(Object? decoded, String key) {
     return decoded[key].toString();
   }
   return null;
+}
+
+bool _readBool(Object? decoded, String key) {
+  return decoded is Map && decoded[key] == true;
+}
+
+int? _readIntFromDecoded(Object? decoded, String key) {
+  if (decoded is Map) {
+    return _readInt(decoded[key]);
+  }
+  return null;
+}
+
+int? _readInt(Object? value) {
+  if (value is int) {
+    return value;
+  }
+  return int.tryParse(value?.toString() ?? '');
 }
