@@ -46,6 +46,7 @@ class FirebaseRequestAuthService {
 
     final String idToken = _readBearerToken(request);
     final JWT jwt = await _verifyFirebaseIdToken(idToken);
+    final Map<String, Object?> tokenPayload = _jwtPayload(jwt);
     final String uid = jwt.subject ?? '';
     if (uid.isEmpty) {
       throw BackendAuthException(
@@ -74,7 +75,19 @@ class FirebaseRequestAuthService {
       uid: uid,
       role: profile.role,
       tenantId: profile.activeTenantId,
+      email: tokenPayload['email']?.toString(),
+      displayName:
+          tokenPayload['name']?.toString() ??
+          tokenPayload['displayName']?.toString(),
     );
+  }
+
+  Future<AuthenticatedBackendUser?> tryAuthenticate(HttpRequest request) async {
+    try {
+      return await requireAuthenticated(request);
+    } on BackendAuthException {
+      return null;
+    }
   }
 
   Future<AuthenticatedBackendUser> requireAuthenticated(
@@ -89,6 +102,7 @@ class FirebaseRequestAuthService {
 
     final String idToken = _readBearerToken(request);
     final JWT jwt = await _verifyFirebaseIdToken(idToken);
+    final Map<String, Object?> tokenPayload = _jwtPayload(jwt);
     final String uid = jwt.subject ?? '';
     if (uid.isEmpty) {
       throw BackendAuthException(
@@ -97,7 +111,15 @@ class FirebaseRequestAuthService {
       );
     }
 
-    return AuthenticatedBackendUser(uid: uid, role: null, tenantId: null);
+    return AuthenticatedBackendUser(
+      uid: uid,
+      role: null,
+      tenantId: null,
+      email: tokenPayload['email']?.toString(),
+      displayName:
+          tokenPayload['name']?.toString() ??
+          tokenPayload['displayName']?.toString(),
+    );
   }
 
   String _readBearerToken(HttpRequest request) {
@@ -293,11 +315,15 @@ class AuthenticatedBackendUser {
     required this.uid,
     required this.role,
     required this.tenantId,
+    this.email,
+    this.displayName,
   });
 
   final String uid;
   final String? role;
   final String? tenantId;
+  final String? email;
+  final String? displayName;
 }
 
 class FirestoreUserProfile {
@@ -390,4 +416,14 @@ String _maskUid(String uid) {
     return '***';
   }
   return '${uid.substring(0, 3)}***${uid.substring(uid.length - 3)}';
+}
+
+Map<String, Object?> _jwtPayload(JWT jwt) {
+  final Object? payload = jwt.payload;
+  if (payload is Map) {
+    return payload.map(
+      (Object? key, Object? value) => MapEntry(key.toString(), value),
+    );
+  }
+  return const <String, Object?>{};
 }

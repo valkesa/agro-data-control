@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
@@ -18,16 +19,31 @@ class PlcDashboardService {
     Map<String, String> plcNames = const <String, String>{},
     String? tenantId,
     String? siteId,
+    User? user,
+    String? presenceSessionId,
+    bool Function()? includePresenceDetails,
+    String appVersion = '1.0.0+1',
+    String? deviceType,
   }) : _endpoint = endpoint,
        _plcNames = plcNames,
        _tenantId = tenantId,
-       _siteId = siteId;
+       _siteId = siteId,
+       _user = user,
+       _presenceSessionId = presenceSessionId,
+       _includePresenceDetails = includePresenceDetails,
+       _appVersion = appVersion,
+       _deviceType = deviceType;
 
   final String? _endpoint;
   // plcId → displayName, loaded from Firestore via SitePlcConfigService.
   final Map<String, String> _plcNames;
   final String? _tenantId;
   final String? _siteId;
+  final User? _user;
+  final String? _presenceSessionId;
+  final bool Function()? _includePresenceDetails;
+  final String _appVersion;
+  final String? _deviceType;
 
   Future<DashboardSnapshot> fetchSnapshot() async {
     final LiveSnapshotResult result = await fetchLiveSnapshot();
@@ -46,8 +62,9 @@ class PlcDashboardService {
     final Uri uri = _snapshotUri(apiUrl);
 
     try {
+      final Map<String, String> headers = await _snapshotHeaders();
       final http.Response response = await http
-          .get(uri)
+          .get(uri, headers: headers.isEmpty ? null : headers)
           .timeout(_requestTimeout);
       if (response.statusCode < 200 || response.statusCode >= 300) {
         return LiveSnapshotResult.error(
@@ -130,8 +147,33 @@ class PlcDashboardService {
         ...uri.queryParameters,
         'tenantId': tenantId,
         'siteId': siteId,
+        if (_includePresenceDetails?.call() == true) 'presenceDetails': '1',
       },
     );
+  }
+
+  Future<Map<String, String>> _snapshotHeaders() async {
+    final Map<String, String> headers = <String, String>{};
+    final String sessionId = _presenceSessionId?.trim() ?? '';
+    if (sessionId.isNotEmpty) {
+      headers['X-AgroData-Session-Id'] = sessionId;
+    }
+    final String appVersion = _appVersion.trim();
+    if (appVersion.isNotEmpty) {
+      headers['X-AgroData-App-Version'] = appVersion;
+    }
+    final String deviceType = _deviceType?.trim() ?? '';
+    if (deviceType.isNotEmpty) {
+      headers['X-AgroData-Device-Type'] = deviceType;
+    }
+    final User? user = _user;
+    if (user != null) {
+      final String? token = await user.getIdToken();
+      if (token != null && token.trim().isNotEmpty) {
+        headers['Authorization'] = 'Bearer ${token.trim()}';
+      }
+    }
+    return headers;
   }
 
   DashboardSnapshot _parseSnapshot(Map<String, dynamic> decoded) {

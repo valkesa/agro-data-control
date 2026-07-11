@@ -1,14 +1,17 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
 import 'firebase/firestore_paths.dart';
 import 'models/alert_settings.dart';
+import 'models/backend_presence_snapshot.dart';
 import 'models/dashboard_range_settings.dart';
 import 'models/electric_consumption_settings.dart';
 import 'models/dashboard_snapshot.dart';
@@ -35,7 +38,6 @@ import 'services/electrical_cost_service.dart';
 import 'services/firebase_email_auth_service.dart';
 import 'services/notification_api_service.dart';
 import 'services/plc_dashboard_service.dart';
-import 'services/presence_service.dart';
 import 'services/room_wash_events_service.dart';
 import 'services/site_config_service.dart';
 import 'services/site_plc_config_service.dart';
@@ -60,6 +62,11 @@ Future<void> main() async {
     ),
   );
   runApp(const AgroDataControlApp());
+}
+
+String _createPresenceSessionId() {
+  final Random random = Random();
+  return '${DateTime.now().microsecondsSinceEpoch}-${random.nextInt(0x7fffffff)}';
 }
 
 class AgroDataControlApp extends StatelessWidget {
@@ -183,12 +190,8 @@ class AgroDataShell extends StatefulWidget {
   State<AgroDataShell> createState() => _AgroDataShellState();
 }
 
-class _AgroDataShellState extends State<AgroDataShell>
-    with WidgetsBindingObserver {
+class _AgroDataShellState extends State<AgroDataShell> {
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
-  static const Duration _presenceHeartbeatInterval = Duration(seconds: 60);
-  static const Duration _presenceActiveThreshold = Duration(minutes: 5);
-  static const Duration _presenceInteractionThrottle = Duration(seconds: 15);
   static const Duration _snapshotStaleThreshold = Duration(seconds: 20);
   static const Duration _snapshotPulseDuration = Duration(milliseconds: 400);
 
@@ -201,7 +204,6 @@ class _AgroDataShellState extends State<AgroDataShell>
       const ElectricConsumptionSettingsService();
   final ElectricalCostService _electricalCostService =
       const ElectricalCostService();
-  final PresenceService _presenceService = const PresenceService();
   PlcDashboardService _service = const PlcDashboardService();
   String? _activeSiteId;
   String? _activeSiteName;
@@ -218,7 +220,6 @@ class _AgroDataShellState extends State<AgroDataShell>
   String _selectedTab = 'comparativo';
   DashboardSnapshot _snapshot = DashboardSnapshot.placeholder();
   Timer? _refreshTimer;
-  Timer? _presenceHeartbeatTimer;
   Timer? _maintenanceExpiryTimer;
   DashboardRangeSettings _rangeSettings =
       const DashboardRangeSettings.defaults();
@@ -238,17 +239,17 @@ class _AgroDataShellState extends State<AgroDataShell>
   bool _showSnapshotPulse = false;
   bool _backendOnline = false;
   bool _snapshotStale = false;
+  late final String _presenceSessionId = _createPresenceSessionId();
+  final ValueNotifier<BackendPresenceSnapshot?> _presenceSnapshotNotifier =
+      ValueNotifier<BackendPresenceSnapshot?>(null);
+  final ValueNotifier<bool> _presenceDetailsRequested = ValueNotifier<bool>(
+    false,
+  );
   DateTime? _lastSuccessfulSnapshotAt;
-  DateTime _lastPresenceActivityAt = DateTime.now();
-  DateTime? _lastPresenceWriteAt;
   Timer? _snapshotPulseTimer;
   String? _historyTenantId;
   String? _historySiteId;
   String? _userRole;
-  String? _presenceWorkspaceId;
-  String? _presenceSessionId;
-  bool _presenceVisible = true;
-  bool _presenceStartInFlight = false;
   final WaterShortageRepository _waterShortageRepo =
       const WaterShortageRepository();
   final RoomWashEventsService _roomWashEventsService =
@@ -262,30 +263,61 @@ class _AgroDataShellState extends State<AgroDataShell>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     _disposeBrowserExitGuard = registerBrowserExitGuard();
     _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
   }
 
   @override
   void dispose() {
-    unawaited(
-      _stopPresence(markOffline: false, closeReason: 'session_replaced'),
-    );
     _disposeBrowserExitGuard();
     _refreshTimer?.cancel();
     _maintenanceExpiryTimer?.cancel();
     _snapshotPulseTimer?.cancel();
     _configSubscription?.cancel();
-    WidgetsBinding.instance.removeObserver(this);
+    _presenceSnapshotNotifier.dispose();
+    _presenceDetailsRequested.dispose();
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    _presenceVisible = state == AppLifecycleState.resumed;
-    if (state == AppLifecycleState.resumed) {
-      _recordPresenceActivity();
+  PlcDashboardService _buildPlcDashboardService({
+    String? endpoint,
+    required String? tenantId,
+    required String siteId,
+    Map<String, String> plcNames = const <String, String>{},
+  }) {
+    return PlcDashboardService(
+      endpoint: endpoint,
+      tenantId: tenantId,
+      siteId: siteId,
+      plcNames: plcNames,
+      user: widget.user,
+      presenceSessionId: _presenceSessionId,
+      includePresenceDetails: () => _presenceDetailsRequested.value,
+      deviceType: _presenceDeviceType(),
+    );
+  }
+
+  String _presenceDeviceType() {
+    final MediaQueryData? mediaQuery = MediaQuery.maybeOf(context);
+    final double shortestSide = mediaQuery?.size.shortestSide ?? 0;
+    if (shortestSide > 0) {
+      if (shortestSide < 600) {
+        return 'Mobile';
+      }
+      if (shortestSide < 900) {
+        return 'Tablet';
+      }
+      return 'Desktop';
+    }
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.android:
+      case TargetPlatform.iOS:
+        return 'Mobile';
+      case TargetPlatform.fuchsia:
+      case TargetPlatform.linux:
+      case TargetPlatform.macOS:
+      case TargetPlatform.windows:
+        return kIsWeb ? 'Desktop' : 'Desktop';
     }
   }
 
@@ -346,7 +378,6 @@ class _AgroDataShellState extends State<AgroDataShell>
     setState(() {
       _selectedTab = tab;
     });
-    _touchPresence();
   }
 
   void _goHomeDashboard() {
@@ -354,159 +385,22 @@ class _AgroDataShellState extends State<AgroDataShell>
       _selectedTab = 'comparativo';
       _dashboardHomeGeneration += 1;
     });
-    _touchPresence();
   }
 
   void _goRuntimeEvents() {
     setState(() {
       _selectedTab = 'runtimeEvents';
     });
-    _touchPresence();
   }
 
   void _goEnvironmentOverview() {
     setState(() {
       _selectedTab = 'environmentOverview';
     });
-    _touchPresence();
   }
 
   Future<void> _signOut() async {
-    await _stopPresence(markOffline: true, closeReason: 'manual_logout');
     await widget.authService.signOut();
-  }
-
-  Future<void> _startPresence({
-    required String workspaceId,
-    required String? role,
-  }) async {
-    debugPrint(
-      '[Presence] start requested workspace=$workspaceId role=${role ?? ''} '
-      'currentWorkspace=${_presenceWorkspaceId ?? ''} '
-      'hasSession=${_presenceSessionId != null}',
-    );
-    if (_presenceWorkspaceId == workspaceId) {
-      if (_presenceSessionId == null) {
-        await _refreshPresenceSession();
-      } else {
-        _touchPresence(force: true);
-      }
-      return;
-    }
-
-    await _stopPresence(markOffline: true, closeReason: 'session_replaced');
-    if (mounted) {
-      setState(() {
-        _presenceWorkspaceId = workspaceId;
-      });
-    } else {
-      _presenceWorkspaceId = workspaceId;
-    }
-    _lastPresenceActivityAt = DateTime.now();
-    final String? sessionId = await _presenceService.markOnline(
-      workspaceId: workspaceId,
-      user: widget.user,
-      role: role,
-    );
-    _presenceSessionId = sessionId;
-    _lastPresenceWriteAt = sessionId == null ? null : DateTime.now();
-    debugPrint(
-      '[Presence] start result workspace=$workspaceId '
-      'sessionId=${sessionId ?? 'null'}',
-    );
-    _presenceHeartbeatTimer = Timer.periodic(
-      _presenceHeartbeatInterval,
-      (_) => _touchPresence(),
-    );
-  }
-
-  Future<void> _refreshPresenceSession() async {
-    if (_presenceStartInFlight) {
-      return;
-    }
-    final String? workspaceId = _presenceWorkspaceId;
-    if (workspaceId == null) {
-      return;
-    }
-    _presenceStartInFlight = true;
-    debugPrint('[Presence] refresh requested workspace=$workspaceId');
-    try {
-      final String? sessionId = await _presenceService.markOnline(
-        workspaceId: workspaceId,
-        user: widget.user,
-        role: _userRole,
-      );
-      if (sessionId != null) {
-        _presenceSessionId = sessionId;
-        _lastPresenceWriteAt = DateTime.now();
-      }
-      debugPrint(
-        '[Presence] refresh result workspace=$workspaceId '
-        'sessionId=${sessionId ?? 'null'}',
-      );
-    } finally {
-      _presenceStartInFlight = false;
-    }
-  }
-
-  Future<void> _stopPresence({
-    required bool markOffline,
-    required String closeReason,
-    User? user,
-  }) async {
-    _presenceHeartbeatTimer?.cancel();
-    _presenceHeartbeatTimer = null;
-    final String? workspaceId = _presenceWorkspaceId;
-    final String? sessionId = _presenceSessionId;
-    _presenceWorkspaceId = null;
-    _presenceSessionId = null;
-    if (markOffline && workspaceId != null) {
-      await _presenceService.markOffline(
-        workspaceId: workspaceId,
-        user: user ?? widget.user,
-        closeReason: closeReason,
-        sessionId: sessionId,
-      );
-    }
-  }
-
-  void _touchPresence({bool force = false}) {
-    final String? workspaceId = _presenceWorkspaceId;
-    final String? sessionId = _presenceSessionId;
-    if (workspaceId == null || sessionId == null) {
-      return;
-    }
-    final DateTime now = DateTime.now();
-    if (!force && !_presenceVisible) {
-      return;
-    }
-    final DateTime? lastWrite = _lastPresenceWriteAt;
-    if (!force &&
-        lastWrite != null &&
-        now.difference(lastWrite) < _presenceInteractionThrottle) {
-      return;
-    }
-    _lastPresenceWriteAt = now;
-    unawaited(
-      _presenceService.heartbeat(
-        workspaceId: workspaceId,
-        user: widget.user,
-        role: _userRole,
-        sessionId: sessionId,
-      ),
-    );
-  }
-
-  void _recordPresenceActivity() {
-    final DateTime now = DateTime.now();
-    final bool wasInactive =
-        now.difference(_lastPresenceActivityAt) > _presenceActiveThreshold;
-    _lastPresenceActivityAt = now;
-    if (wasInactive || _presenceSessionId == null) {
-      unawaited(_refreshPresenceSession());
-      return;
-    }
-    _touchPresence();
   }
 
   void _scheduleMaintenanceExpiryTimer() {
@@ -605,13 +499,6 @@ class _AgroDataShellState extends State<AgroDataShell>
   void didUpdateWidget(covariant AgroDataShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.uid != widget.user.uid) {
-      unawaited(
-        _stopPresence(
-          markOffline: true,
-          closeReason: 'session_replaced',
-          user: oldWidget.user,
-        ),
-      );
       _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
     }
   }
@@ -619,7 +506,6 @@ class _AgroDataShellState extends State<AgroDataShell>
   Future<_DashboardBootstrapResult> _createDashboardBootstrapFuture() async {
     final _DashboardBootstrapResult result = await _loadDashboardBootstrap();
     if (!result.canReadConfig) {
-      await _stopPresence(markOffline: true, closeReason: 'session_replaced');
       return result;
     }
 
@@ -671,7 +557,7 @@ class _AgroDataShellState extends State<AgroDataShell>
         _availableSites = result.availableSites;
         _availableTenants = result.availableTenants;
         _plcConfigs = result.plcConfigs;
-        _service = PlcDashboardService(
+        _service = _buildPlcDashboardService(
           endpoint: result.siteDocument?.backendUrl,
           tenantId: result.effectiveTenantId,
           siteId: result.siteId,
@@ -683,9 +569,6 @@ class _AgroDataShellState extends State<AgroDataShell>
       });
       final String? tenantId = result.effectiveTenantId;
       if (tenantId != null) {
-        unawaited(
-          _startPresence(workspaceId: tenantId, role: result.userContext.role),
-        );
         if (result.siteId.isNotEmpty) {
           _startConfigStream(tenantId: tenantId, siteId: result.siteId);
           unawaited(
@@ -1719,7 +1602,7 @@ class _AgroDataShellState extends State<AgroDataShell>
     setState(() {
       _plcConfigs = newConfigs;
       if (updatedSite != null) _activeSiteName = updatedSite.name;
-      _service = PlcDashboardService(
+      _service = _buildPlcDashboardService(
         endpoint: _activeBackendEndpoint,
         tenantId: tenantId,
         siteId: siteId,
@@ -1814,7 +1697,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
-      _service = PlcDashboardService(
+      _service = _buildPlcDashboardService(
         endpoint: siteDoc.backendUrl,
         tenantId: tenantId,
         siteId: siteId,
@@ -1875,7 +1758,7 @@ class _AgroDataShellState extends State<AgroDataShell>
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
-      _service = PlcDashboardService(
+      _service = _buildPlcDashboardService(
         endpoint: siteDoc.backendUrl,
         tenantId: tenantId,
         siteId: siteDoc.siteId,
@@ -1933,8 +1816,13 @@ class _AgroDataShellState extends State<AgroDataShell>
     DateTime? successfulSnapshotAt;
     DashboardSnapshot? successfulSnapshot;
     bool? successfulSnapshotStale;
+    BackendPresenceSnapshot? presenceSnapshot;
     if (result.isSuccess) {
       _handleOperationalEvents(result.rawPayload);
+      presenceSnapshot = BackendPresenceSnapshot.fromSnapshotPayload(
+        result.rawPayload,
+        receivedAt: result.receivedAt,
+      );
       successfulSnapshotAt =
           result.receivedAt ?? result.snapshot!.lastUpdatedAt ?? DateTime.now();
       final DashboardSnapshot nextSnapshot = _withUpdateDeltas(
@@ -1959,6 +1847,9 @@ class _AgroDataShellState extends State<AgroDataShell>
         );
         _backendOnline = true;
         _snapshotStale = successfulSnapshotStale;
+        if (presenceSnapshot != null) {
+          _presenceSnapshotNotifier.value = presenceSnapshot;
+        }
         _lastSuccessfulSnapshotAt = successfulSnapshotAt;
         _showSnapshotPulse = true;
         debugPrint(
@@ -1972,6 +1863,11 @@ class _AgroDataShellState extends State<AgroDataShell>
         );
         _backendOnline = false;
         _snapshotStale = true;
+        final BackendPresenceSnapshot? lastPresence =
+            _presenceSnapshotNotifier.value;
+        if (lastPresence != null && !lastPresence.stale) {
+          _presenceSnapshotNotifier.value = lastPresence.copyWith(stale: true);
+        }
         debugPrint(
           '[frontend-fetch] snapshot fetch failed source=${result.source} backendOnline=$_backendOnline snapshotStale=$_snapshotStale lastSuccessfulSnapshotAt=${_lastSuccessfulSnapshotAt?.toIso8601String()} error=${result.message ?? result.statusLabel}',
         );
@@ -2492,8 +2388,6 @@ class _AgroDataShellState extends State<AgroDataShell>
         : _selectedTab == 'environmentOverview'
         ? 'Ambiente'
         : selectedUnit.name;
-    final String? presenceWorkspaceId =
-        _presenceWorkspaceId ?? _historyTenantId;
     final Map<String, WaterShortageSummary> visibleWaterShortageSummaries =
         _waterShortageSummariesWithoutMaintenance();
 
@@ -2504,180 +2398,232 @@ class _AgroDataShellState extends State<AgroDataShell>
       '[frontend-render] backendOnline=$_backendOnline snapshotStale=$_snapshotStale lastSuccessfulSnapshotAt=${_lastSuccessfulSnapshotAt?.toIso8601String()} munters1.configured=${munters1.configured} munters1.plcReachable=${munters1.plcReachable} munters1.dataFresh=${munters1.dataFresh} munters1.estadoEquipo=${munters1.estadoEquipo} munters2.configured=${munters2.configured} munters2.plcReachable=${munters2.plcReachable} munters2.dataFresh=${munters2.dataFresh} munters2.estadoEquipo=${munters2.estadoEquipo}',
     );
 
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: (_) => _recordPresenceActivity(),
-      onPointerMove: (_) => _recordPresenceActivity(),
-      onPointerSignal: (_) => _recordPresenceActivity(),
-      child: PopScope(
-        canPop: false,
-        onPopInvokedWithResult: (bool didPop, Object? result) async {
-          if (didPop) {
-            return;
-          }
-          final bool shouldExit = await _confirmExit();
-          if (!shouldExit) {
-            return;
-          }
-          await SystemNavigator.pop();
-        },
-        child: Scaffold(
-          body: SafeArea(
-            child: Column(
-              children: [
-                if (_selectedTab != 'environmentOverview')
-                  DashboardHeader(
-                    selectedTab: _selectedTab,
-                    screenTitle: screenTitle,
-                    onSignOut: () async {
-                      final bool shouldSignOut = await _confirmSignOut();
-                      if (!shouldSignOut || !mounted) {
-                        return;
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, Object? result) async {
+        if (didPop) {
+          return;
+        }
+        final bool shouldExit = await _confirmExit();
+        if (!shouldExit) {
+          return;
+        }
+        await SystemNavigator.pop();
+      },
+      child: Scaffold(
+        body: SafeArea(
+          child: Column(
+            children: [
+              if (_selectedTab != 'environmentOverview')
+                DashboardHeader(
+                  selectedTab: _selectedTab,
+                  screenTitle: screenTitle,
+                  onSignOut: () async {
+                    final bool shouldSignOut = await _confirmSignOut();
+                    if (!shouldSignOut || !mounted) {
+                      return;
+                    }
+                    await _signOut();
+                  },
+                  onOpenSettings: _openSettings,
+                  onSelectComparison: _goHomeDashboard,
+                  onLogoTap: _goHomeDashboard,
+                  userEmail: widget.user.email,
+                  farmName: _activeTenantName ?? _historyTenantId,
+                  roomName: _activeSiteName,
+                  activeTenantId: _historyTenantId,
+                  availableTenants: _availableTenants,
+                  onTenantChanged: _switchTenant,
+                  activeSiteId: _activeSiteId,
+                  availableSites: _availableSites,
+                  onSiteChanged: _switchSite,
+                  canSelectSite: _userRole == UserAppRole.owner,
+                  activeUsersIndicator:
+                      _userRole == UserAppRole.owner && _historyTenantId != null
+                      ? ActiveUsersEye(
+                          currentUser: widget.user,
+                          currentRole: _userRole,
+                          presenceListenable: _presenceSnapshotNotifier,
+                          presenceDetailsRequested: _presenceDetailsRequested,
+                        )
+                      : null,
+                  onRuntimeEvents:
+                      _userRole == UserAppRole.owner &&
+                          _historyTenantId != null &&
+                          _historySiteId?.isNotEmpty == true
+                      ? _goRuntimeEvents
+                      : null,
+                ),
+              if (_snapshotStale)
+                _StaleSnapshotBanner(
+                  backendOnline: _backendOnline,
+                  lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
+                ),
+              Expanded(
+                child: PressMagnifierRegion(
+                  controller: _magnifierController,
+                  settings: _magnifierSettings,
+                  child: LayoutBuilder(
+                    builder: (context, constraints) {
+                      if (_selectedTab == 'runtimeEvents') {
+                        final String tenantId = _historyTenantId ?? '';
+                        final String siteId = _historySiteId ?? '';
+                        final List<String> plcIds = _plcConfigs.isNotEmpty
+                            ? _plcConfigs.map((c) => c.plcId).toList()
+                            : <String>['munters1', 'munters2'];
+                        return RuntimeEventsPage(
+                          tenantId: tenantId,
+                          siteId: siteId,
+                          plcIds: plcIds,
+                          onBack: _goHomeDashboard,
+                        );
                       }
-                      await _signOut();
-                    },
-                    onOpenSettings: _openSettings,
-                    onSelectComparison: _goHomeDashboard,
-                    onLogoTap: _goHomeDashboard,
-                    userEmail: widget.user.email,
-                    farmName: _activeTenantName ?? _historyTenantId,
-                    roomName: _activeSiteName,
-                    activeTenantId: _historyTenantId,
-                    availableTenants: _availableTenants,
-                    onTenantChanged: _switchTenant,
-                    activeSiteId: _activeSiteId,
-                    availableSites: _availableSites,
-                    onSiteChanged: _switchSite,
-                    canSelectSite: _userRole == UserAppRole.owner,
-                    activeUsersIndicator:
-                        _userRole == UserAppRole.owner &&
-                            presenceWorkspaceId != null
-                        ? ActiveUsersEye(
-                            workspaceId: presenceWorkspaceId,
-                            currentUser: widget.user,
-                            currentRole: _userRole,
-                          )
-                        : null,
-                    onRuntimeEvents:
-                        _userRole == UserAppRole.owner &&
-                            _historyTenantId != null &&
-                            _historySiteId?.isNotEmpty == true
-                        ? _goRuntimeEvents
-                        : null,
-                  ),
-                if (_snapshotStale)
-                  _StaleSnapshotBanner(
-                    backendOnline: _backendOnline,
-                    lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
-                  ),
-                Expanded(
-                  child: PressMagnifierRegion(
-                    controller: _magnifierController,
-                    settings: _magnifierSettings,
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        if (_selectedTab == 'runtimeEvents') {
-                          final String tenantId = _historyTenantId ?? '';
-                          final String siteId = _historySiteId ?? '';
-                          final List<String> plcIds = _plcConfigs.isNotEmpty
-                              ? _plcConfigs.map((c) => c.plcId).toList()
-                              : <String>['munters1', 'munters2'];
-                          return RuntimeEventsPage(
-                            tenantId: tenantId,
-                            siteId: siteId,
-                            plcIds: plcIds,
-                            onBack: _goHomeDashboard,
-                          );
-                        }
 
-                        if (_selectedTab == 'environmentOverview') {
-                          final List<MuntersModel>
-                          visibleUnits = <MuntersModel>[
-                            if (_unitVisibilitySettings.showMunters1) munters1,
-                            if (_unitVisibilitySettings.showMunters2) munters2,
-                          ];
-                          final List<String?> visiblePlcIds = <String?>[
-                            if (_unitVisibilitySettings.showMunters1)
-                              _plcConfigs.isNotEmpty
-                                  ? _plcConfigs[0].plcId
-                                  : munters1.historyPlcId,
-                            if (_unitVisibilitySettings.showMunters2)
-                              _plcConfigs.length > 1
-                                  ? _plcConfigs[1].plcId
-                                  : munters2.historyPlcId,
-                          ];
-                          final List<String> visiblePlcLabels = <String>[
-                            if (_unitVisibilitySettings.showMunters1)
-                              _plcConfigs.isNotEmpty
-                                  ? _plcConfigs[0].columnLabel
-                                  : 'M1',
-                            if (_unitVisibilitySettings.showMunters2)
-                              _plcConfigs.length > 1
-                                  ? _plcConfigs[1].columnLabel
-                                  : 'M2',
-                          ];
-                          return EnvironmentOverviewPage(
-                            units: visibleUnits,
-                            labels: visiblePlcLabels,
-                            plcIds: visiblePlcIds,
+                      if (_selectedTab == 'environmentOverview') {
+                        final List<MuntersModel> visibleUnits = <MuntersModel>[
+                          if (_unitVisibilitySettings.showMunters1) munters1,
+                          if (_unitVisibilitySettings.showMunters2) munters2,
+                        ];
+                        final List<String?> visiblePlcIds = <String?>[
+                          if (_unitVisibilitySettings.showMunters1)
+                            _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].plcId
+                                : munters1.historyPlcId,
+                          if (_unitVisibilitySettings.showMunters2)
+                            _plcConfigs.length > 1
+                                ? _plcConfigs[1].plcId
+                                : munters2.historyPlcId,
+                        ];
+                        final List<String> visiblePlcLabels = <String>[
+                          if (_unitVisibilitySettings.showMunters1)
+                            _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].columnLabel
+                                : 'M1',
+                          if (_unitVisibilitySettings.showMunters2)
+                            _plcConfigs.length > 1
+                                ? _plcConfigs[1].columnLabel
+                                : 'M2',
+                        ];
+                        return EnvironmentOverviewPage(
+                          units: visibleUnits,
+                          labels: visiblePlcLabels,
+                          plcIds: visiblePlcIds,
+                          tenantId: _historyTenantId,
+                          siteId: _historySiteId,
+                          rangeSettings: _rangeSettings,
+                          showSnapshotPulse: _showSnapshotPulse,
+                          snapshotStale: _snapshotStale,
+                          onTapBack: _goHomeDashboard,
+                        );
+                      }
+
+                      if (_selectedTab == 'comparativo') {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          child: ComparisonPage(
+                            munters1: munters1,
+                            munters2: munters2,
+                            doorEvents: _snapshot.doorEvents,
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
-                            rangeSettings: _rangeSettings,
-                            showSnapshotPulse: _showSnapshotPulse,
+                            backendSnapshotEndpoint: _activeBackendEndpoint,
+                            showMunters1: _unitVisibilitySettings.showMunters1,
+                            showMunters2: _unitVisibilitySettings.showMunters2,
                             snapshotStale: _snapshotStale,
-                            onTapBack: _goHomeDashboard,
-                          );
-                        }
-
-                        if (_selectedTab == 'comparativo') {
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                            child: ComparisonPage(
-                              munters1: munters1,
-                              munters2: munters2,
-                              doorEvents: _snapshot.doorEvents,
-                              tenantId: _historyTenantId,
-                              siteId: _historySiteId,
-                              backendSnapshotEndpoint: _activeBackendEndpoint,
-                              showMunters1:
-                                  _unitVisibilitySettings.showMunters1,
-                              showMunters2:
-                                  _unitVisibilitySettings.showMunters2,
-                              snapshotStale: _snapshotStale,
-                              showSnapshotPulse: _showSnapshotPulse,
-                              rangeSettings: _rangeSettings,
-                              magnifierSettings: _magnifierSettings,
-                              moduleOrder: _comparisonModuleOrder,
-                              onModuleOrderChanged:
-                                  _updateComparisonModuleOrder,
-                              homeGeneration: _dashboardHomeGeneration,
-                              currentUser: widget.user,
-                              plc1ColumnLabel: _plcConfigs.isNotEmpty
-                                  ? _plcConfigs[0].columnLabel
-                                  : null,
-                              plc2ColumnLabel: _plcConfigs.length > 1
-                                  ? _plcConfigs[1].columnLabel
-                                  : null,
-                              plc1MaintenanceMode: _maintenanceSettings.modeFor(
-                                _plcConfigs.isNotEmpty
-                                    ? _plcConfigs[0].plcId
-                                    : 'munters1',
-                              ),
-                              plc2MaintenanceMode: _maintenanceSettings.modeFor(
-                                _plcConfigs.length > 1
-                                    ? _plcConfigs[1].plcId
-                                    : 'munters2',
-                              ),
-                              onOpenEnvironmentOverview: _goEnvironmentOverview,
+                            showSnapshotPulse: _showSnapshotPulse,
+                            rangeSettings: _rangeSettings,
+                            magnifierSettings: _magnifierSettings,
+                            moduleOrder: _comparisonModuleOrder,
+                            onModuleOrderChanged: _updateComparisonModuleOrder,
+                            homeGeneration: _dashboardHomeGeneration,
+                            currentUser: widget.user,
+                            plc1ColumnLabel: _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].columnLabel
+                                : null,
+                            plc2ColumnLabel: _plcConfigs.length > 1
+                                ? _plcConfigs[1].columnLabel
+                                : null,
+                            plc1MaintenanceMode: _maintenanceSettings.modeFor(
+                              _plcConfigs.isNotEmpty
+                                  ? _plcConfigs[0].plcId
+                                  : 'munters1',
                             ),
-                          );
-                        }
+                            plc2MaintenanceMode: _maintenanceSettings.modeFor(
+                              _plcConfigs.length > 1
+                                  ? _plcConfigs[1].plcId
+                                  : 'munters2',
+                            ),
+                            onOpenEnvironmentOverview: _goEnvironmentOverview,
+                          ),
+                        );
+                      }
 
-                        if (_selectedTab == 'munters1' ||
-                            _selectedTab == 'munters2') {
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                            child: MuntersPage(
+                      if (_selectedTab == 'munters1' ||
+                          _selectedTab == 'munters2') {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          child: MuntersPage(
+                            data: selectedUnit,
+                            rangeSettings: _rangeSettings,
+                            snapshotStale: _snapshotStale,
+                            showSnapshotPulse: _showSnapshotPulse,
+                            waterShortageSummary:
+                                visibleWaterShortageSummaries[selectedUnit
+                                    .historyPlcId],
+                          ),
+                        );
+                      }
+
+                      final bool desktop = constraints.maxWidth >= 1200;
+
+                      if (desktop) {
+                        return Padding(
+                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Expanded(
+                                flex: 5,
+                                child: DashboardPage(
+                                  units: units,
+                                  selectedUnitName: selectedUnit.name,
+                                  rangeSettings: _rangeSettings,
+                                  waterShortageSummaries:
+                                      visibleWaterShortageSummaries,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                flex: 4,
+                                child: MuntersPage(
+                                  data: selectedUnit,
+                                  rangeSettings: _rangeSettings,
+                                  snapshotStale: _snapshotStale,
+                                  showSnapshotPulse: _showSnapshotPulse,
+                                  waterShortageSummary:
+                                      visibleWaterShortageSummaries[selectedUnit
+                                          .historyPlcId],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }
+
+                      return SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            DashboardPage(
+                              units: units,
+                              selectedUnitName: selectedUnit.name,
+                              rangeSettings: _rangeSettings,
+                              waterShortageSummaries:
+                                  visibleWaterShortageSummaries,
+                            ),
+                            const SizedBox(height: 12),
+                            MuntersPage(
                               data: selectedUnit,
                               rangeSettings: _rangeSettings,
                               snapshotStale: _snapshotStale,
@@ -2686,76 +2632,14 @@ class _AgroDataShellState extends State<AgroDataShell>
                                   visibleWaterShortageSummaries[selectedUnit
                                       .historyPlcId],
                             ),
-                          );
-                        }
-
-                        final bool desktop = constraints.maxWidth >= 1200;
-
-                        if (desktop) {
-                          return Padding(
-                            padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                            child: Row(
-                              crossAxisAlignment: CrossAxisAlignment.stretch,
-                              children: [
-                                Expanded(
-                                  flex: 5,
-                                  child: DashboardPage(
-                                    units: units,
-                                    selectedUnitName: selectedUnit.name,
-                                    rangeSettings: _rangeSettings,
-                                    waterShortageSummaries:
-                                        visibleWaterShortageSummaries,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  flex: 4,
-                                  child: MuntersPage(
-                                    data: selectedUnit,
-                                    rangeSettings: _rangeSettings,
-                                    snapshotStale: _snapshotStale,
-                                    showSnapshotPulse: _showSnapshotPulse,
-                                    waterShortageSummary:
-                                        visibleWaterShortageSummaries[selectedUnit
-                                            .historyPlcId],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
-                        }
-
-                        return SingleChildScrollView(
-                          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              DashboardPage(
-                                units: units,
-                                selectedUnitName: selectedUnit.name,
-                                rangeSettings: _rangeSettings,
-                                waterShortageSummaries:
-                                    visibleWaterShortageSummaries,
-                              ),
-                              const SizedBox(height: 12),
-                              MuntersPage(
-                                data: selectedUnit,
-                                rangeSettings: _rangeSettings,
-                                snapshotStale: _snapshotStale,
-                                showSnapshotPulse: _showSnapshotPulse,
-                                waterShortageSummary:
-                                    visibleWaterShortageSummaries[selectedUnit
-                                        .historyPlcId],
-                              ),
-                            ],
-                          ),
-                        );
-                      },
-                    ),
+                          ],
+                        ),
+                      );
+                    },
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

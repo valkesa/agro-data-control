@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:agro_data_control_backend/src/firebase_request_auth.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
+import 'package:agro_data_control_backend/src/presence_registry.dart';
 import 'package:agro_data_control_backend/src/snapshot_runtime.dart';
 import 'package:agro_data_control_backend/src/whatsapp_alert_recipients.dart';
 import 'package:agro_data_control_backend/src/whatsapp_service.dart';
@@ -32,6 +33,9 @@ Future<void> main(List<String> args) async {
   const WhatsAppAlertRecipientsConfig alertRecipientsConfig =
       WhatsAppAlertRecipientsConfig();
   final _OperationalEventHub operationalEventHub = _OperationalEventHub();
+  final PresenceRegistry presenceRegistry = PresenceRegistry(
+    backendVersion: config.backendName,
+  );
   runtime.start();
 
   final HttpServer server = await HttpServer.bind(
@@ -60,6 +64,7 @@ Future<void> main(List<String> args) async {
       whatsAppService,
       alertRecipientsConfig,
       operationalEventHub,
+      presenceRegistry,
     );
   }
 
@@ -85,6 +90,7 @@ Future<void> _handleRequest(
   WhatsAppService whatsAppService,
   WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
+  PresenceRegistry presenceRegistry,
 ) async {
   final Stopwatch stopwatch = Stopwatch()..start();
   final String path = request.uri.path;
@@ -100,6 +106,7 @@ Future<void> _handleRequest(
       whatsAppService,
       alertRecipientsConfig,
       operationalEventHub,
+      presenceRegistry,
     ).timeout(_httpHandlerTimeout);
   } on TimeoutException catch (error, stackTrace) {
     _logHttp('timeout path=$path operation=request_handler error=$error');
@@ -134,6 +141,7 @@ Future<void> _handleRequestInternal(
   WhatsAppService whatsAppService,
   WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
+  PresenceRegistry presenceRegistry,
 ) async {
   _writeCorsHeaders(request.response);
 
@@ -151,6 +159,32 @@ Future<void> _handleRequestInternal(
     );
     final String tenantId = request.uri.queryParameters['tenantId'] ?? '';
     final String siteId = request.uri.queryParameters['siteId'] ?? '';
+    final DateTime now = DateTime.now().toUtc();
+    final AuthenticatedBackendUser? authenticatedUser = await authService
+        .tryAuthenticate(request);
+    if (authenticatedUser != null) {
+      presenceRegistry.recordSnapshotHeartbeat(
+        uid: authenticatedUser.uid,
+        email: authenticatedUser.email,
+        displayName: authenticatedUser.displayName,
+        tenantId: tenantId,
+        siteId: siteId,
+        sessionId: _headerValue(request, 'X-AgroData-Session-Id'),
+        seenAt: now,
+        userAgent: request.headers.value(HttpHeaders.userAgentHeader),
+        ip: _clientIp(request),
+        appVersion: _headerValue(request, 'X-AgroData-App-Version'),
+        deviceType: _headerValue(request, 'X-AgroData-Device-Type'),
+      );
+    }
+    if (tenantId.trim().isNotEmpty && siteId.trim().isNotEmpty) {
+      payload['presence'] = presenceRegistry.snapshotJson(
+        tenantId: tenantId.trim(),
+        siteId: siteId.trim(),
+        includeDetails: _truthy(request.uri.queryParameters['presenceDetails']),
+        now: now,
+      );
+    }
     final List<Map<String, Object?>> events = operationalEventHub.eventsFor(
       tenantId: tenantId,
       siteId: siteId,
@@ -216,6 +250,24 @@ bool _isWhatsAppAlertRecipientsPath(String path) {
 bool _isOperationalEventPath(String path) {
   return path == '/api/operational-events/room-wash' ||
       path == '/operational-events/room-wash';
+}
+
+String _headerValue(HttpRequest request, String name) {
+  return request.headers.value(name)?.trim() ?? '';
+}
+
+String _clientIp(HttpRequest request) {
+  final String forwardedFor =
+      request.headers.value('X-Forwarded-For')?.trim() ?? '';
+  if (forwardedFor.isNotEmpty) {
+    return forwardedFor.split(',').first.trim();
+  }
+  return request.connectionInfo?.remoteAddress.address ?? '';
+}
+
+bool _truthy(String? value) {
+  final String normalized = value?.trim().toLowerCase() ?? '';
+  return normalized == '1' || normalized == 'true' || normalized == 'yes';
 }
 
 Future<void> _handleWhatsAppAlertRecipientsRequest(
@@ -505,7 +557,7 @@ void _writeCorsHeaders(HttpResponse response) {
     ..set(HttpHeaders.accessControlAllowMethodsHeader, 'GET, POST, OPTIONS')
     ..set(
       HttpHeaders.accessControlAllowHeadersHeader,
-      'Authorization, Content-Type',
+      'Authorization, Content-Type, X-AgroData-Session-Id, X-AgroData-App-Version, X-AgroData-Device-Type',
     )
     ..contentType = ContentType.json;
 }
