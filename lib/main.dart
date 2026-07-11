@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 
 import 'firebase_options.dart';
 import 'firebase/firestore_paths.dart';
+import 'models/alert_settings.dart';
 import 'models/dashboard_range_settings.dart';
 import 'models/electric_consumption_settings.dart';
 import 'models/dashboard_snapshot.dart';
@@ -42,6 +43,7 @@ import 'services/tenant_membership_service.dart';
 import 'services/user_context_service.dart';
 import 'services/user_management_service.dart';
 import 'services/water_shortage_repository.dart';
+import 'services/whatsapp_alert_recipients_service.dart';
 import 'widgets/active_users_eye.dart';
 import 'widgets/dashboard_header.dart';
 import 'widgets/press_magnifier_region.dart';
@@ -220,6 +222,7 @@ class _AgroDataShellState extends State<AgroDataShell>
   Timer? _maintenanceExpiryTimer;
   DashboardRangeSettings _rangeSettings =
       const DashboardRangeSettings.defaults();
+  AlertSettings _alertSettings = const AlertSettings.defaults();
   MagnifierSettings _magnifierSettings = const MagnifierSettings.defaults();
   UnitVisibilitySettings _unitVisibilitySettings =
       const UnitVisibilitySettings.defaults();
@@ -296,6 +299,7 @@ class _AgroDataShellState extends State<AgroDataShell>
           }
           final ControlDashboardThresholds t = config.thresholds;
           setState(() {
+            _alertSettings = config.alertSettings;
             _maintenanceSettings = config.maintenanceSettings.withoutExpired();
           });
           _scheduleMaintenanceExpiryTimer();
@@ -642,6 +646,8 @@ class _AgroDataShellState extends State<AgroDataShell>
       setState(() {
         _unitVisibilitySettings = result.unitVisibilitySettings;
         _manualFanStatusSettings = result.manualFanStatusSettings;
+        _alertSettings =
+            result.config?.alertSettings ?? const AlertSettings.defaults();
         _maintenanceSettings = result.maintenanceSettings.withoutExpired();
       });
       _scheduleMaintenanceExpiryTimer();
@@ -879,6 +885,9 @@ class _AgroDataShellState extends State<AgroDataShell>
           }
           await _openChangePassword();
           continue;
+        case _SettingsMenuAction.alertSettings:
+          await _openAlertSettings();
+          continue;
         case _SettingsMenuAction.rangeSettings:
           await _openRangeSettings();
           continue;
@@ -989,6 +998,32 @@ class _AgroDataShellState extends State<AgroDataShell>
     }
 
     await _saveRangeSettings(bootstrap: bootstrap, updated: updated);
+  }
+
+  Future<void> _openAlertSettings() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) {
+      return;
+    }
+    final String siteId = bootstrap.siteId;
+    final _AlertSettingsDialogResult? updated =
+        await showDialog<_AlertSettingsDialogResult>(
+          context: context,
+          builder: (context) => _AlertSettingsDialog(
+            initialRangeSettings: _rangeSettings,
+            initialAlertSettings: _alertSettings,
+            recipientsService: WhatsAppAlertRecipientsService(
+              backendSnapshotEndpoint: _activeBackendEndpoint,
+            ),
+            siteId: siteId,
+          ),
+        );
+
+    if (updated == null || !mounted) {
+      return;
+    }
+
+    await _saveAlertSettings(bootstrap: bootstrap, updated: updated);
   }
 
   Future<void> _openFilterSettings() async {
@@ -1126,6 +1161,96 @@ class _AgroDataShellState extends State<AgroDataShell>
 
     setState(() {
       _rangeSettings = effectiveSettings;
+      _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
+        _DashboardBootstrapResult(
+          userContext: bootstrap.userContext,
+          membership: bootstrap.membership,
+          config: refreshedConfig,
+          siteId: bootstrap.siteId,
+          resolvedTenantId: bootstrap.resolvedTenantId,
+          tenantDocument: bootstrap.tenantDocument,
+          siteDocument: bootstrap.siteDocument,
+          availableTenants: bootstrap.availableTenants,
+          availableSites: bootstrap.availableSites,
+          plcConfigs: bootstrap.plcConfigs,
+        ),
+      );
+    });
+  }
+
+  Future<void> _saveAlertSettings({
+    required _DashboardBootstrapResult bootstrap,
+    required _AlertSettingsDialogResult updated,
+  }) async {
+    final String? tenantId = bootstrap.userContext.activeTenantId;
+    if (tenantId == null || !bootstrap.canEditConfig) {
+      setState(() {
+        _rangeSettings = updated.rangeSettings;
+        _alertSettings = updated.alertSettings;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo guardar en Firebase.')),
+      );
+      return;
+    }
+
+    final DashboardRangeSettings ranges = updated.rangeSettings;
+    final ControlDashboardThresholds thresholds = ControlDashboardThresholds(
+      tempInteriorMin: ranges.temperatureMin,
+      tempInteriorOpt: (ranges.temperatureMin + ranges.temperatureMax) / 2,
+      tempInteriorMax: ranges.temperatureMax,
+      humidityInteriorMin: ranges.humidityMin,
+      humidityInteriorOpt: (ranges.humidityMin + ranges.humidityMax) / 2,
+      humidityInteriorMax: ranges.humidityMax,
+      filterPressureMax: ranges.filterPressureMax,
+      thermalFlowThresholdC: ranges.thermalFlowThresholdC,
+      thermalFlowMarkedDeltaC: ranges.thermalFlowMarkedDeltaC,
+      humidityAlarmYellowMinInclusive: ranges.humidityAlarmYellowMin,
+      humidityAlarmRedMinExclusive: ranges.humidityAlarmRedMinExclusive,
+      dewPointMarginAlarmRedMaxInclusive: ranges.dewPointMarginAlarmRedMax,
+      dewPointMarginAlarmYellowMaxExclusive:
+          ranges.dewPointMarginAlarmYellowMaxExclusive,
+    );
+
+    final ControlDashboardSaveResult saveResult = await _dashboardConfigService
+        .saveAlertSettings(
+          tenantId: tenantId,
+          siteId: bootstrap.siteId,
+          userUid: widget.user.uid,
+          thresholds: thresholds,
+          alertSettings: updated.alertSettings,
+        );
+
+    if (!mounted) {
+      return;
+    }
+
+    if (!saveResult.isSuccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'No se pudo guardar en Firebase: ${saveResult.errorMessage}',
+          ),
+        ),
+      );
+      return;
+    }
+
+    final ControlDashboardConfigResult refreshedConfig =
+        await _dashboardConfigService.readConfig(
+          tenantId: tenantId,
+          siteId: bootstrap.siteId,
+        );
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _rangeSettings = updated.rangeSettings;
+      _alertSettings = refreshedConfig.exists
+          ? refreshedConfig.alertSettings
+          : updated.alertSettings;
       _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
         _DashboardBootstrapResult(
           userContext: bootstrap.userContext,
@@ -3468,6 +3593,7 @@ class _StaleSnapshotBanner extends StatelessWidget {
 
 enum _SettingsMenuAction {
   changePassword,
+  alertSettings,
   rangeSettings,
   filterSettings,
   debugFilterIcons,
@@ -3584,26 +3710,20 @@ class _SettingsMenuDialog extends StatelessWidget {
                     FilledButton.tonal(
                       onPressed: () => Navigator.of(
                         context,
-                      ).pop(_SettingsMenuAction.rangeSettings),
+                      ).pop(_SettingsMenuAction.alertSettings),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 42),
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                       ),
-                      child: const Text('Rangos y Flujo Térmico'),
-                    ),
-                    if (canShowAdvancedSeteos) ...[
-                      const SizedBox(height: 8),
-                      FilledButton.tonal(
-                        onPressed: () => Navigator.of(
-                          context,
-                        ).pop(_SettingsMenuAction.filterSettings),
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 42),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                        ),
-                        child: const Text('Límite Presión Diferencial'),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.notifications_active_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Alertas'),
+                        ],
                       ),
-                    ],
+                    ),
                     const SizedBox(height: 8),
                     FilledButton.tonal(
                       onPressed: () => Navigator.of(
@@ -4922,6 +5042,610 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
         ),
         FilledButton(onPressed: _submit, child: const Text('Guardar')),
       ],
+    );
+  }
+}
+
+class _AlertSettingsDialogResult {
+  const _AlertSettingsDialogResult({
+    required this.rangeSettings,
+    required this.alertSettings,
+  });
+
+  final DashboardRangeSettings rangeSettings;
+  final AlertSettings alertSettings;
+}
+
+class _AlertSettingsDialog extends StatefulWidget {
+  const _AlertSettingsDialog({
+    required this.initialRangeSettings,
+    required this.initialAlertSettings,
+    required this.recipientsService,
+    required this.siteId,
+  });
+
+  final DashboardRangeSettings initialRangeSettings;
+  final AlertSettings initialAlertSettings;
+  final WhatsAppAlertRecipientsService recipientsService;
+  final String siteId;
+
+  @override
+  State<_AlertSettingsDialog> createState() => _AlertSettingsDialogState();
+}
+
+class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
+  late final TextEditingController _temperatureMinController;
+  late final TextEditingController _temperatureMaxController;
+  late final TextEditingController _humidityAlarmYellowMinController;
+  late final TextEditingController _humidityAlarmRedMinController;
+  late final TextEditingController _dewPointMarginAlarmRedMaxController;
+  late final TextEditingController _dewPointMarginAlarmYellowMaxController;
+  late final TextEditingController _filterPressureMaxController;
+  late final TextEditingController _thermalFlowThresholdController;
+  late final TextEditingController _thermalFlowMarkedDeltaController;
+  late AlertSettings _alerts;
+  WhatsAppAlertRecipientsResult? _recipientsResult;
+  bool _loadingRecipients = true;
+  String? _errorText;
+
+  @override
+  void initState() {
+    super.initState();
+    final DashboardRangeSettings ranges = widget.initialRangeSettings;
+    _alerts = widget.initialAlertSettings;
+    _temperatureMinController = TextEditingController(
+      text: ranges.temperatureMin.toString(),
+    );
+    _temperatureMaxController = TextEditingController(
+      text: ranges.temperatureMax.toString(),
+    );
+    _humidityAlarmYellowMinController = TextEditingController(
+      text: ranges.humidityAlarmYellowMin.toString(),
+    );
+    _humidityAlarmRedMinController = TextEditingController(
+      text: ranges.humidityAlarmRedMinExclusive.toString(),
+    );
+    _dewPointMarginAlarmRedMaxController = TextEditingController(
+      text: ranges.dewPointMarginAlarmRedMax.toString(),
+    );
+    _dewPointMarginAlarmYellowMaxController = TextEditingController(
+      text: ranges.dewPointMarginAlarmYellowMaxExclusive.toString(),
+    );
+    _filterPressureMaxController = TextEditingController(
+      text: ranges.filterPressureMax.toString(),
+    );
+    _thermalFlowThresholdController = TextEditingController(
+      text: ranges.thermalFlowThresholdC.toString(),
+    );
+    _thermalFlowMarkedDeltaController = TextEditingController(
+      text: ranges.thermalFlowMarkedDeltaC.toString(),
+    );
+    unawaited(_loadRecipients());
+  }
+
+  @override
+  void dispose() {
+    _temperatureMinController.dispose();
+    _temperatureMaxController.dispose();
+    _humidityAlarmYellowMinController.dispose();
+    _humidityAlarmRedMinController.dispose();
+    _dewPointMarginAlarmRedMaxController.dispose();
+    _dewPointMarginAlarmYellowMaxController.dispose();
+    _filterPressureMaxController.dispose();
+    _thermalFlowThresholdController.dispose();
+    _thermalFlowMarkedDeltaController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadRecipients() async {
+    final WhatsAppAlertRecipientsResult result = await widget.recipientsService
+        .fetchRecipients(siteId: widget.siteId);
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _recipientsResult = result;
+      _loadingRecipients = false;
+    });
+  }
+
+  double? _parseInput(TextEditingController controller) {
+    return double.tryParse(controller.text.trim().replaceAll(',', '.'));
+  }
+
+  void _submit() {
+    final double? temperatureMin = _parseInput(_temperatureMinController);
+    final double? temperatureMax = _parseInput(_temperatureMaxController);
+    final double? humidityYellow = _parseInput(
+      _humidityAlarmYellowMinController,
+    );
+    final double? humidityRed = _parseInput(_humidityAlarmRedMinController);
+    final double? dewPointRed = _parseInput(
+      _dewPointMarginAlarmRedMaxController,
+    );
+    final double? dewPointYellow = _parseInput(
+      _dewPointMarginAlarmYellowMaxController,
+    );
+    final double? filterPressureMax = _parseInput(_filterPressureMaxController);
+    final double? thermalFlowThreshold = _parseInput(
+      _thermalFlowThresholdController,
+    );
+    final double? thermalFlowMarkedDelta = _parseInput(
+      _thermalFlowMarkedDeltaController,
+    );
+
+    if (temperatureMin == null ||
+        temperatureMax == null ||
+        humidityYellow == null ||
+        humidityRed == null ||
+        dewPointRed == null ||
+        dewPointYellow == null ||
+        filterPressureMax == null ||
+        thermalFlowThreshold == null ||
+        thermalFlowMarkedDelta == null) {
+      setState(() {
+        _errorText = 'Completa todos los valores con numeros validos.';
+      });
+      return;
+    }
+    if (temperatureMin >= temperatureMax) {
+      setState(() {
+        _errorText = 'La temperatura minima debe ser menor que la maxima.';
+      });
+      return;
+    }
+    if (humidityYellow < 0 ||
+        humidityYellow > 100 ||
+        humidityRed < 0 ||
+        humidityRed > 100 ||
+        humidityYellow >= humidityRed) {
+      setState(() {
+        _errorText =
+            'La humedad debe estar entre 0 y 100, y amarillo debe ser menor que rojo.';
+      });
+      return;
+    }
+    if (dewPointRed > dewPointYellow) {
+      setState(() {
+        _errorText =
+            'En punto de rocio, el margen rojo debe ser menor o igual que el amarillo.';
+      });
+      return;
+    }
+    if (filterPressureMax <= 0) {
+      setState(() {
+        _errorText = 'La presion diferencial maxima debe ser mayor a 0.';
+      });
+      return;
+    }
+    if (thermalFlowThreshold < 0 || thermalFlowMarkedDelta <= 0) {
+      setState(() {
+        _errorText = 'Los valores de flujo termico deben ser positivos.';
+      });
+      return;
+    }
+    if (thermalFlowThreshold >= thermalFlowMarkedDelta) {
+      setState(() {
+        _errorText =
+            'El umbral de flujo debe ser menor que la pendiente marcada.';
+      });
+      return;
+    }
+
+    final DashboardRangeSettings current = widget.initialRangeSettings;
+    Navigator.of(context).pop(
+      _AlertSettingsDialogResult(
+        alertSettings: _alerts,
+        rangeSettings: current.copyWith(
+          temperatureMin: temperatureMin,
+          temperatureMax: temperatureMax,
+          filterPressureMax: filterPressureMax,
+          thermalFlowThresholdC: thermalFlowThreshold,
+          thermalFlowMarkedDeltaC: thermalFlowMarkedDelta,
+          humidityAlarmYellowMin: humidityYellow,
+          humidityAlarmRedMinExclusive: humidityRed,
+          dewPointMarginAlarmRedMax: dewPointRed,
+          dewPointMarginAlarmYellowMaxExclusive: dewPointYellow,
+        ),
+      ),
+    );
+  }
+
+  void _updateAlert(
+    AlertToggleSettings Function(AlertSettings value) select,
+    AlertSettings Function(AlertSettings value, AlertToggleSettings updated)
+    replace,
+    AlertToggleSettings updated,
+  ) {
+    setState(() {
+      _alerts = replace(_alerts, updated);
+      _errorText = null;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final Size screenSize = MediaQuery.sizeOf(context);
+    final double maxContentHeight = (screenSize.height - 160)
+        .clamp(420.0, 760.0)
+        .toDouble();
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Configuración de alertas',
+        style: TextStyle(color: Color(0xFFE5E7EB)),
+      ),
+      content: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 720, maxHeight: maxContentHeight),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildAlertCard(
+                title: 'Puerta Munters abierta',
+                settings: _alerts.muntersDoorOpen,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.muntersDoorOpen,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(muntersDoorOpen: v),
+                  value,
+                ),
+              ),
+              _buildAlertCard(
+                title: 'Puerta de sala abierta',
+                settings: _alerts.roomDoorOpen,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.roomDoorOpen,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(roomDoorOpen: v),
+                  value,
+                ),
+              ),
+              _buildAlertCard(
+                title: 'Temperatura baja con calefacción activa',
+                settings: _alerts.lowTemperatureHeatingActive,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.lowTemperatureHeatingActive,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(lowTemperatureHeatingActive: v),
+                  value,
+                ),
+                fields: [
+                  _RangeField(
+                    controller: _temperatureMinController,
+                    label: 'Temperatura mínima',
+                    suffix: '°C',
+                    enabled: _alerts.lowTemperatureHeatingActive.enabled,
+                  ),
+                ],
+              ),
+              _buildAlertCard(
+                title: 'Temperatura alta con bomba humidificadora activa',
+                settings: _alerts.highTemperatureHumidifierActive,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.highTemperatureHumidifierActive,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(highTemperatureHumidifierActive: v),
+                  value,
+                ),
+                fields: [
+                  _RangeField(
+                    controller: _temperatureMaxController,
+                    label: 'Temperatura máxima',
+                    suffix: '°C',
+                    enabled: _alerts.highTemperatureHumidifierActive.enabled,
+                  ),
+                ],
+              ),
+              _buildAlertCard(
+                title: 'Humedad interior alta',
+                settings: _alerts.highHumidity,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.highHumidity,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(highHumidity: v),
+                  value,
+                ),
+                fields: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _RangeField(
+                          controller: _humidityAlarmYellowMinController,
+                          label: 'Amarillo desde',
+                          suffix: '%',
+                          enabled: _alerts.highHumidity.enabled,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _RangeField(
+                          controller: _humidityAlarmRedMinController,
+                          label: 'Rojo desde',
+                          suffix: '%',
+                          enabled: _alerts.highHumidity.enabled,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              _buildAlertCard(
+                title: 'Riesgo por punto de rocío',
+                settings: _alerts.dewPointRisk,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.dewPointRisk,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(dewPointRisk: v),
+                  value,
+                ),
+                fields: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _RangeField(
+                          controller: _dewPointMarginAlarmRedMaxController,
+                          label: 'Rojo si margen ≤',
+                          suffix: '°C',
+                          enabled: _alerts.dewPointRisk.enabled,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _RangeField(
+                          controller: _dewPointMarginAlarmYellowMaxController,
+                          label: 'Amarillo si margen ≤',
+                          suffix: '°C',
+                          enabled: _alerts.dewPointRisk.enabled,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              _buildAlertCard(
+                title: 'Presión diferencial alta',
+                settings: _alerts.highDifferentialPressure,
+                onChanged: (AlertToggleSettings value) => _updateAlert(
+                  (AlertSettings s) => s.highDifferentialPressure,
+                  (AlertSettings s, AlertToggleSettings v) =>
+                      s.copyWith(highDifferentialPressure: v),
+                  value,
+                ),
+                fields: [
+                  _RangeField(
+                    controller: _filterPressureMaxController,
+                    label: 'Presión diferencial máxima',
+                    suffix: 'Pa',
+                    enabled: _alerts.highDifferentialPressure.enabled,
+                  ),
+                ],
+              ),
+              _buildVisualIndicatorsSection(),
+              _buildRecipientsSection(),
+              if (_errorText != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFCA5A5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+
+  Widget _buildAlertCard({
+    required String title,
+    required AlertToggleSettings settings,
+    required ValueChanged<AlertToggleSettings> onChanged,
+    List<Widget> fields = const <Widget>[],
+  }) {
+    return _AlertConfigCard(
+      title: title,
+      settings: settings,
+      onChanged: onChanged,
+      fields: fields,
+    );
+  }
+
+  Widget _buildVisualIndicatorsSection() {
+    return _AlertSectionCard(
+      title: 'Indicadores visuales',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Estos valores modifican la visualización y no generan alertas de WhatsApp.',
+            style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          _RangeField(
+            controller: _thermalFlowThresholdController,
+            label: 'Umbral de flecha de flujo térmico',
+            suffix: '°C',
+          ),
+          const SizedBox(height: 10),
+          _RangeField(
+            controller: _thermalFlowMarkedDeltaController,
+            label: 'Pendiente marcada desde',
+            suffix: '°C',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecipientsSection() {
+    Widget body;
+    if (_loadingRecipients) {
+      body = const Row(
+        children: [
+          SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+          SizedBox(width: 10),
+          Text('Cargando...', style: TextStyle(color: Color(0xFF94A3B8))),
+        ],
+      );
+    } else if (_recipientsResult?.ok != true) {
+      body = Text(
+        [
+          _recipientsResult?.message ?? 'No se pudieron cargar destinatarios.',
+          if (_recipientsResult?.details?.isNotEmpty == true)
+            _recipientsResult!.details!,
+        ].join(' '),
+        style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 12),
+      );
+    } else if (_recipientsResult!.recipients.isEmpty) {
+      body = const Text(
+        'Sin destinatarios configurados.',
+        style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+      );
+    } else {
+      body = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final WhatsAppAlertRecipient recipient
+              in _recipientsResult!.recipients) ...[
+            Text(
+              recipient.clientName,
+              style: const TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              recipient.siteName,
+              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              '${recipient.contactName} · ${recipient.phoneMasked}',
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+          ],
+        ],
+      );
+    }
+
+    return _AlertSectionCard(
+      title: 'Destinatarios de WhatsApp',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          body,
+          const SizedBox(height: 10),
+          const Text(
+            'Los destinatarios se administran desde la configuración del backend.',
+            style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertConfigCard extends StatelessWidget {
+  const _AlertConfigCard({
+    required this.title,
+    required this.settings,
+    required this.onChanged,
+    required this.fields,
+  });
+
+  final String title;
+  final AlertToggleSettings settings;
+  final ValueChanged<AlertToggleSettings> onChanged;
+  final List<Widget> fields;
+
+  @override
+  Widget build(BuildContext context) {
+    return _AlertSectionCard(
+      title: title,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Alerta activa',
+              style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
+            ),
+            value: settings.enabled,
+            onChanged: (bool value) =>
+                onChanged(settings.copyWith(enabled: value)),
+          ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text(
+              'Enviar WhatsApp',
+              style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
+            ),
+            value: settings.enabled && settings.sendWhatsapp,
+            onChanged: settings.enabled
+                ? (bool value) =>
+                      onChanged(settings.copyWith(sendWhatsapp: value))
+                : null,
+          ),
+          if (fields.isNotEmpty) ...[const SizedBox(height: 8), ...fields],
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertSectionCard extends StatelessWidget {
+  const _AlertSectionCard({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 14,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 10),
+          child,
+        ],
+      ),
     );
   }
 }
@@ -7256,18 +7980,23 @@ class _RangeField extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.suffix,
+    this.enabled = true,
   });
 
   final TextEditingController controller;
   final String label;
   final String suffix;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      enabled: enabled,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      style: const TextStyle(color: Color(0xFFE5E7EB)),
+      style: TextStyle(
+        color: enabled ? const Color(0xFFE5E7EB) : const Color(0xFF64748B),
+      ),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: const TextStyle(color: Color(0xFF94A3B8)),

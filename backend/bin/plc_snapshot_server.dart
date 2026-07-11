@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:agro_data_control_backend/src/firebase_request_auth.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
 import 'package:agro_data_control_backend/src/snapshot_runtime.dart';
+import 'package:agro_data_control_backend/src/whatsapp_alert_recipients.dart';
 import 'package:agro_data_control_backend/src/whatsapp_service.dart';
 
 const Duration _httpHandlerTimeout = Duration(seconds: 20);
@@ -28,6 +29,8 @@ Future<void> main(List<String> args) async {
     serviceAccountJsonPath: config.runtimeEvents.firestoreServiceAccountPath,
   );
   final WhatsAppService whatsAppService = WhatsAppService();
+  const WhatsAppAlertRecipientsConfig alertRecipientsConfig =
+      WhatsAppAlertRecipientsConfig();
   final _OperationalEventHub operationalEventHub = _OperationalEventHub();
   runtime.start();
 
@@ -55,6 +58,7 @@ Future<void> main(List<String> args) async {
       runtime,
       authService,
       whatsAppService,
+      alertRecipientsConfig,
       operationalEventHub,
     );
   }
@@ -79,6 +83,7 @@ Future<void> _handleRequest(
   SnapshotRuntime runtime,
   FirebaseRequestAuthService authService,
   WhatsAppService whatsAppService,
+  WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
 ) async {
   final Stopwatch stopwatch = Stopwatch()..start();
@@ -93,6 +98,7 @@ Future<void> _handleRequest(
       runtime,
       authService,
       whatsAppService,
+      alertRecipientsConfig,
       operationalEventHub,
     ).timeout(_httpHandlerTimeout);
   } on TimeoutException catch (error, stackTrace) {
@@ -126,6 +132,7 @@ Future<void> _handleRequestInternal(
   SnapshotRuntime runtime,
   FirebaseRequestAuthService authService,
   WhatsAppService whatsAppService,
+  WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
 ) async {
   _writeCorsHeaders(request.response);
@@ -172,6 +179,15 @@ Future<void> _handleRequestInternal(
     return;
   }
 
+  if (request.method == 'GET' && _isWhatsAppAlertRecipientsPath(path)) {
+    await _handleWhatsAppAlertRecipientsRequest(
+      request,
+      authService,
+      alertRecipientsConfig,
+    );
+    return;
+  }
+
   if (request.method == 'POST' && _isOperationalEventPath(path)) {
     await _handleOperationalEventRequest(
       request,
@@ -192,9 +208,71 @@ bool _isWhatsAppTestPath(String path) {
       path == '/notifications/whatsapp/test';
 }
 
+bool _isWhatsAppAlertRecipientsPath(String path) {
+  return path == '/api/whatsapp/alert-recipients' ||
+      path == '/whatsapp/alert-recipients';
+}
+
 bool _isOperationalEventPath(String path) {
   return path == '/api/operational-events/room-wash' ||
       path == '/operational-events/room-wash';
+}
+
+Future<void> _handleWhatsAppAlertRecipientsRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  WhatsAppAlertRecipientsConfig alertRecipientsConfig,
+) async {
+  AuthenticatedBackendUser user;
+  try {
+    user = await authService.requireOwnerOrAdmin(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+
+  final String tenantId = user.tenantId?.trim() ?? '';
+  if (user.role != 'owner') {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Forbidden: owner role required',
+    }, statusCode: HttpStatus.forbidden);
+    return;
+  }
+  final String siteId = request.uri.queryParameters['siteId']?.trim() ?? '';
+  if (tenantId.isEmpty || siteId.isEmpty) {
+    await _writeValidationError(
+      request.response,
+      '"siteId" is required and authenticated user must have tenant context',
+    );
+    return;
+  }
+
+  final List<AlertRecipient> recipients = alertRecipientsConfig.recipientsFor(
+    tenantId: tenantId,
+    siteId: siteId,
+  );
+  _logHttp(
+    'whatsapp alert recipients requested uid=${user.uid} tenant=$tenantId site=$siteId count=${recipients.length}',
+  );
+  await _writeJson(request.response, <String, Object?>{
+    'ok': true,
+    'enabled': recipients.isNotEmpty,
+    'recipients': recipients
+        .map(
+          (AlertRecipient recipient) => <String, Object?>{
+            'clientName': recipient.clientName,
+            'siteName': recipient.siteName,
+            'contactName': recipient.contactName,
+            'phoneMasked': maskWhatsAppPhone(recipient.phone),
+          },
+        )
+        .toList(growable: false),
+  });
 }
 
 Future<void> _handleOperationalEventRequest(

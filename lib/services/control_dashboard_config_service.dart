@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
+import '../models/alert_settings.dart';
 import '../models/manual_fan_status_settings.dart';
 import '../models/plc_maintenance_settings.dart';
 
@@ -38,6 +39,7 @@ class ControlDashboardConfigService {
         updatedAt: _parseDateTime(data['updatedAt']),
         updatedByUid: data['updatedByUid']?.toString(),
         thresholds: ControlDashboardThresholds.fromRaw(data),
+        alertSettings: AlertSettings.fromRaw(data),
         rawData: data,
       );
     } catch (error, stackTrace) {
@@ -74,6 +76,7 @@ class ControlDashboardConfigService {
         updatedAt: _parseDateTime(data['updatedAt']),
         updatedByUid: data['updatedByUid']?.toString(),
         thresholds: ControlDashboardThresholds.fromRaw(data),
+        alertSettings: AlertSettings.fromRaw(data),
         rawData: data,
       );
     });
@@ -140,6 +143,73 @@ class ControlDashboardConfigService {
         '[Firestore] dashboard config save error path=$path error=$error',
       );
       debugPrint('[Firestore] dashboard config save error stack=$stackTrace');
+      return ControlDashboardSaveResult.error(error.toString());
+    }
+  }
+
+  Future<ControlDashboardSaveResult> saveAlertSettings({
+    required String tenantId,
+    required String siteId,
+    required String userUid,
+    required ControlDashboardThresholds thresholds,
+    required AlertSettings alertSettings,
+  }) async {
+    final String path = FirestorePaths.controlDashboardSettings(
+      tenantId,
+      siteId,
+    );
+    debugPrint('[Firestore] dashboard alerts save started path=$path');
+
+    try {
+      await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
+        'alerts': alertSettings.toFirestore(),
+        'munters': <String, Object?>{
+          'munters1': <String, Object?>{
+            'tempInterior': <String, Object?>{
+              'min': thresholds.tempInteriorMin,
+              'opt': thresholds.tempInteriorOpt,
+              'max': thresholds.tempInteriorMax,
+            },
+            'humidityInterior': <String, Object?>{
+              'min': thresholds.humidityInteriorMin,
+              'opt': thresholds.humidityInteriorOpt,
+              'max': thresholds.humidityInteriorMax,
+              'alarm': <String, Object?>{
+                'yellowMinInclusive':
+                    thresholds.humidityAlarmYellowMinInclusive,
+                'redMinExclusive': thresholds.humidityAlarmRedMinExclusive,
+              },
+            },
+            'dewPointMargin': <String, Object?>{
+              'alarm': <String, Object?>{
+                'redMaxInclusive':
+                    thresholds.dewPointMarginAlarmRedMaxInclusive,
+                'yellowMaxExclusive':
+                    thresholds.dewPointMarginAlarmYellowMaxExclusive,
+              },
+            },
+            'presionDiferencial': <String, Object?>{
+              'max': thresholds.filterPressureMax,
+            },
+          },
+        },
+        'ui': <String, Object?>{
+          'thermalFlow': <String, Object?>{
+            'thresholdC': thresholds.thermalFlowThresholdC,
+            'markedDeltaC': thresholds.thermalFlowMarkedDeltaC,
+          },
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedByUid': userUid,
+      }, SetOptions(merge: true));
+
+      debugPrint('[Firestore] dashboard alerts save success path=$path');
+      return const ControlDashboardSaveResult.success();
+    } catch (error, stackTrace) {
+      debugPrint(
+        '[Firestore] dashboard alerts save error path=$path error=$error',
+      );
+      debugPrint('[Firestore] dashboard alerts save error stack=$stackTrace');
       return ControlDashboardSaveResult.error(error.toString());
     }
   }
@@ -348,6 +418,7 @@ class ControlDashboardConfigResult {
     required this.updatedAt,
     required this.updatedByUid,
     required this.thresholds,
+    required this.alertSettings,
     required this.rawData,
     required this.errorMessage,
   });
@@ -360,6 +431,7 @@ class ControlDashboardConfigResult {
       updatedAt: null,
       updatedByUid: null,
       thresholds: const ControlDashboardThresholds.empty(),
+      alertSettings: const AlertSettings.defaults(),
       rawData: const <String, dynamic>{},
       errorMessage: null,
     );
@@ -376,6 +448,7 @@ class ControlDashboardConfigResult {
       updatedAt: null,
       updatedByUid: null,
       thresholds: const ControlDashboardThresholds.empty(),
+      alertSettings: const AlertSettings.defaults(),
       rawData: const <String, dynamic>{},
       errorMessage: errorMessage,
     );
@@ -387,6 +460,7 @@ class ControlDashboardConfigResult {
     required DateTime? updatedAt,
     required String? updatedByUid,
     required ControlDashboardThresholds thresholds,
+    required AlertSettings alertSettings,
     required Map<String, dynamic> rawData,
   }) {
     return ControlDashboardConfigResult(
@@ -396,6 +470,7 @@ class ControlDashboardConfigResult {
       updatedAt: updatedAt,
       updatedByUid: updatedByUid,
       thresholds: thresholds,
+      alertSettings: alertSettings,
       rawData: rawData,
       errorMessage: null,
     );
@@ -407,6 +482,7 @@ class ControlDashboardConfigResult {
   final DateTime? updatedAt;
   final String? updatedByUid;
   final ControlDashboardThresholds thresholds;
+  final AlertSettings alertSettings;
   final Map<String, dynamic> rawData;
   final String? errorMessage;
 
