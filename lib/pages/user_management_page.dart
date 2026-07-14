@@ -28,15 +28,18 @@ class _UserManagementPageState extends State<UserManagementPage> {
 
   Future<void> _editUser(UserProfile user) async {
     if (user.role == UserAppRole.owner) return;
-    final bool? saved = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => _UserAccessDialog(
-        user: user,
-        service: _service,
-      ),
-    );
-    if (saved == true) {
+    final UserAccessUpdateResult? result =
+        await showDialog<UserAccessUpdateResult>(
+          context: context,
+          builder: (BuildContext context) =>
+              _UserAccessDialog(user: user, service: _service),
+        );
+    if (result != null) {
       _reload();
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(result.userMessage())));
     }
   }
 
@@ -64,59 +67,60 @@ class _UserManagementPageState extends State<UserManagementPage> {
         width: 620,
         child: FutureBuilder<List<UserProfile>>(
           future: _usersFuture,
-          builder: (
-            BuildContext context,
-            AsyncSnapshot<List<UserProfile>> snapshot,
-          ) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const SizedBox(
-                height: 120,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            if (snapshot.hasError) {
-              return SizedBox(
-                height: 120,
-                child: Center(
-                  child: Text(
-                    'Error al cargar usuarios:\n${snapshot.error}',
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(color: Color(0xFFFCA5A5)),
-                  ),
-                ),
-              );
-            }
+          builder:
+              (
+                BuildContext context,
+                AsyncSnapshot<List<UserProfile>> snapshot,
+              ) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return const SizedBox(
+                    height: 120,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError) {
+                  return SizedBox(
+                    height: 120,
+                    child: Center(
+                      child: Text(
+                        'Error al cargar usuarios:\n${snapshot.error}',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFFFCA5A5)),
+                      ),
+                    ),
+                  );
+                }
 
-            final List<UserProfile> users =
-                snapshot.data ?? <UserProfile>[];
-            if (users.isEmpty) {
-              return const SizedBox(
-                height: 80,
-                child: Center(
-                  child: Text(
-                    'No hay usuarios.',
-                    style: TextStyle(color: Color(0xFF94A3B8)),
-                  ),
-                ),
-              );
-            }
+                final List<UserProfile> users =
+                    snapshot.data ?? <UserProfile>[];
+                if (users.isEmpty) {
+                  return const SizedBox(
+                    height: 80,
+                    child: Center(
+                      child: Text(
+                        'No hay usuarios.',
+                        style: TextStyle(color: Color(0xFF94A3B8)),
+                      ),
+                    ),
+                  );
+                }
 
-            return ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 520),
-              child: SingleChildScrollView(
-                child: Column(
-                  children: users
-                      .map(
-                        (UserProfile user) => _UserCard(
-                          user: user,
-                          onEdit: () => _editUser(user),
-                        ),
-                      )
-                      .toList(),
-                ),
-              ),
-            );
-          },
+                return ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 520),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      children: users
+                          .map(
+                            (UserProfile user) => _UserCard(
+                              user: user,
+                              onEdit: () => _editUser(user),
+                            ),
+                          )
+                          .toList(),
+                    ),
+                  ),
+                );
+              },
         ),
       ),
       actions: <Widget>[
@@ -310,20 +314,21 @@ class _UserAccessDialogState extends State<_UserAccessDialog> {
   Future<void> _save() async {
     setState(() => _isSaving = true);
     try {
-      await widget.service.updateUserAccess(
-        uid: widget.user.uid,
-        role: _selectedRole,
-        tenantId: _selectedTenantId,
-        allowedSiteIds: _selectedSiteIds.toList(),
-        previousTenantId: widget.user.activeTenantId,
-      );
+      final UserAccessUpdateResult result = await widget.service
+          .updateUserAccess(
+            uid: widget.user.uid,
+            role: _selectedRole,
+            tenantId: _selectedTenantId,
+            allowedSiteIds: _selectedSiteIds.toList(),
+            previousTenantId: widget.user.activeTenantId,
+          );
       if (!mounted) return;
-      Navigator.of(context).pop(true);
+      Navigator.of(context).pop(result);
     } catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error al guardar: $error')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al guardar: $error')));
     } finally {
       if (mounted) setState(() => _isSaving = false);
     }
@@ -370,25 +375,26 @@ class _UserAccessDialogState extends State<_UserAccessDialog> {
             const SizedBox(height: 6),
             FutureBuilder<List<TenantInfo>>(
               future: _tenantsFuture,
-              builder: (
-                BuildContext context,
-                AsyncSnapshot<List<TenantInfo>> snapshot,
-              ) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const _LoadingRow();
-                }
-                if (snapshot.hasError) {
-                  return _ErrorLabel('Error cargando tenants');
-                }
-                final List<TenantInfo> tenants =
-                    snapshot.data ?? <TenantInfo>[];
-                return _TenantDropdown(
-                  tenants: tenants,
-                  value: _selectedTenantId,
-                  enabled: !_isSaving,
-                  onChanged: _onTenantChanged,
-                );
-              },
+              builder:
+                  (
+                    BuildContext context,
+                    AsyncSnapshot<List<TenantInfo>> snapshot,
+                  ) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const _LoadingRow();
+                    }
+                    if (snapshot.hasError) {
+                      return _ErrorLabel('Error cargando tenants');
+                    }
+                    final List<TenantInfo> tenants =
+                        snapshot.data ?? <TenantInfo>[];
+                    return _TenantDropdown(
+                      tenants: tenants,
+                      value: _selectedTenantId,
+                      enabled: !_isSaving,
+                      onChanged: _onTenantChanged,
+                    );
+                  },
             ),
             const SizedBox(height: 18),
             // ── Sites ────────────────────────────────────────────────
@@ -404,40 +410,43 @@ class _UserAccessDialogState extends State<_UserAccessDialog> {
             else
               FutureBuilder<List<SiteInfo>>(
                 future: _sitesFuture,
-                builder: (
-                  BuildContext context,
-                  AsyncSnapshot<List<SiteInfo>> snapshot,
-                ) {
-                  if (snapshot.connectionState == ConnectionState.waiting) {
-                    return const _LoadingRow();
-                  }
-                  if (snapshot.hasError) {
-                    return _ErrorLabel('Error cargando sites');
-                  }
-                  final List<SiteInfo> sites =
-                      snapshot.data ?? <SiteInfo>[];
-                  if (sites.isEmpty) {
-                    return const Text(
-                      'Este tenant no tiene sites configurados.',
-                      style:
-                          TextStyle(color: Color(0xFF64748B), fontSize: 12),
-                    );
-                  }
-                  return _SiteCheckboxList(
-                    sites: sites,
-                    selectedIds: _selectedSiteIds,
-                    enabled: !_isSaving,
-                    onChanged: (String siteId, bool checked) {
-                      setState(() {
-                        if (checked) {
-                          _selectedSiteIds.add(siteId);
-                        } else {
-                          _selectedSiteIds.remove(siteId);
-                        }
-                      });
+                builder:
+                    (
+                      BuildContext context,
+                      AsyncSnapshot<List<SiteInfo>> snapshot,
+                    ) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return const _LoadingRow();
+                      }
+                      if (snapshot.hasError) {
+                        return _ErrorLabel('Error cargando sites');
+                      }
+                      final List<SiteInfo> sites =
+                          snapshot.data ?? <SiteInfo>[];
+                      if (sites.isEmpty) {
+                        return const Text(
+                          'Este tenant no tiene sites configurados.',
+                          style: TextStyle(
+                            color: Color(0xFF64748B),
+                            fontSize: 12,
+                          ),
+                        );
+                      }
+                      return _SiteCheckboxList(
+                        sites: sites,
+                        selectedIds: _selectedSiteIds,
+                        enabled: !_isSaving,
+                        onChanged: (String siteId, bool checked) {
+                          setState(() {
+                            if (checked) {
+                              _selectedSiteIds.add(siteId);
+                            } else {
+                              _selectedSiteIds.remove(siteId);
+                            }
+                          });
+                        },
+                      );
                     },
-                  );
-                },
               ),
           ],
         ),
@@ -449,9 +458,7 @@ class _UserAccessDialogState extends State<_UserAccessDialog> {
         ),
         FilledButton(
           onPressed: _isSaving ? null : _save,
-          style: FilledButton.styleFrom(
-            minimumSize: const Size(80, 36),
-          ),
+          style: FilledButton.styleFrom(minimumSize: const Size(80, 36)),
           child: _isSaving
               ? const SizedBox(
                   width: 16,
@@ -540,14 +547,14 @@ class _RoleDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     final List<DropdownMenuEntry<String?>> entries =
         <DropdownMenuEntry<String?>>[
-      const DropdownMenuEntry<String?>(value: null, label: 'Sin rol'),
-      ...UserAppRole.all.map(
-        (String role) => DropdownMenuEntry<String?>(
-          value: role,
-          label: UserAppRole.label(role),
-        ),
-      ),
-    ];
+          const DropdownMenuEntry<String?>(value: null, label: 'Sin rol'),
+          ...UserAppRole.all.map(
+            (String role) => DropdownMenuEntry<String?>(
+              value: role,
+              label: UserAppRole.label(role),
+            ),
+          ),
+        ];
 
     return DropdownMenu<String?>(
       initialSelection: value,
@@ -596,12 +603,12 @@ class _TenantDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     final List<DropdownMenuEntry<String?>> entries =
         <DropdownMenuEntry<String?>>[
-      const DropdownMenuEntry<String?>(value: null, label: 'Sin tenant'),
-      ...tenants.map(
-        (TenantInfo t) =>
-            DropdownMenuEntry<String?>(value: t.tenantId, label: t.name),
-      ),
-    ];
+          const DropdownMenuEntry<String?>(value: null, label: 'Sin tenant'),
+          ...tenants.map(
+            (TenantInfo t) =>
+                DropdownMenuEntry<String?>(value: t.tenantId, label: t.name),
+          ),
+        ];
 
     return DropdownMenu<String?>(
       initialSelection: value,
@@ -662,8 +669,7 @@ class _SiteCheckboxList extends StatelessWidget {
             borderRadius: BorderRadius.circular(8),
             onTap: enabled ? () => onChanged(site.siteId, !isChecked) : null,
             child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: Row(
                 children: <Widget>[
                   SizedBox(

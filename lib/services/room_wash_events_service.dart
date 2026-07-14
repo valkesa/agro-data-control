@@ -87,6 +87,53 @@ class RoomWashEventsService {
     }
   }
 
+  Future<bool> syncBackendCache({
+    required String siteId,
+    required RoomWashEvent event,
+    String? backendSnapshotEndpoint,
+  }) async {
+    final User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      debugPrint('[room-wash] cache sync skipped: no Firebase user');
+      return false;
+    }
+
+    final String? token = await user.getIdToken();
+    if (token == null || token.isEmpty) {
+      debugPrint('[room-wash] cache sync skipped: empty token');
+      return false;
+    }
+
+    try {
+      final http.Response response = await http
+          .post(
+            _roomWashCacheUri(backendSnapshotEndpoint),
+            headers: <String, String>{
+              'Authorization': 'Bearer $token',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(<String, Object?>{
+              'siteId': siteId,
+              'roomId': event.roomId,
+              'roomNumber': event.roomNumber,
+              'washedAt': event.washedAt.toUtc().toIso8601String(),
+            }),
+          )
+          .timeout(const Duration(seconds: 6));
+      final bool ok = response.statusCode >= 200 && response.statusCode < 300;
+      debugPrint(
+        '[room-wash] cache sync status=${response.statusCode} ok=$ok site=$siteId room=${event.roomNumber}',
+      );
+      return ok;
+    } on TimeoutException catch (error) {
+      debugPrint('[room-wash] cache sync timeout: $error');
+      return false;
+    } catch (error) {
+      debugPrint('[room-wash] cache sync failed: $error');
+      return false;
+    }
+  }
+
   Uri _operationalEventUri(String? backendSnapshotEndpoint) {
     final String endpoint = backendSnapshotEndpoint?.trim().isNotEmpty == true
         ? backendSnapshotEndpoint!.trim()
@@ -96,6 +143,14 @@ class RoomWashEventsService {
       path: '/api/operational-events/room-wash',
       query: '',
     );
+  }
+
+  Uri _roomWashCacheUri(String? backendSnapshotEndpoint) {
+    final String endpoint = backendSnapshotEndpoint?.trim().isNotEmpty == true
+        ? backendSnapshotEndpoint!.trim()
+        : AppConfig.currentBackendSnapshotUrl;
+    final Uri snapshotUri = Uri.parse(endpoint);
+    return snapshotUri.replace(path: '/api/room-wash/cache', query: '');
   }
 
   Future<List<RoomWashEvent>> fetchByRange({

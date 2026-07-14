@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
+import 'custom_claims_sync_service.dart';
 
 class UserAppRole {
   const UserAppRole._();
@@ -75,7 +77,12 @@ class UserProfile {
 }
 
 class UserManagementService {
-  const UserManagementService();
+  const UserManagementService({
+    CustomClaimsSyncService customClaimsSyncService =
+        const CustomClaimsSyncService(),
+  }) : _customClaimsSyncService = customClaimsSyncService;
+
+  final CustomClaimsSyncService _customClaimsSyncService;
 
   Future<List<UserProfile>> listAllUsers() async {
     debugPrint('[UserManagement] listing all users');
@@ -159,7 +166,7 @@ class UserManagementService {
   ///
   /// Updates role, tenant assignment and allowed sites in both users/{uid} and
   /// tenants/{tenantId}/members/{uid} atomically.
-  Future<void> updateUserAccess({
+  Future<UserAccessUpdateResult> updateUserAccess({
     required String uid,
     required String? role,
     required String? tenantId,
@@ -233,6 +240,28 @@ class UserManagementService {
 
     await batch.commit();
     debugPrint('[UserManagement] updateUserAccess committed uid=$uid');
+
+    final CustomClaimsSyncResponse sync = await _customClaimsSyncService
+        .syncUser(uid);
+    final bool isCurrentUser = FirebaseAuth.instance.currentUser?.uid == uid;
+    bool tokenRefreshed = false;
+    String? tokenRefreshError;
+    if (sync.success && isCurrentUser) {
+      try {
+        await FirebaseAuth.instance.currentUser?.getIdToken(true);
+        tokenRefreshed = true;
+      } catch (error) {
+        tokenRefreshError = error.toString();
+      }
+    }
+    return UserAccessUpdateResult(
+      firestoreSaved: true,
+      claimsSynced: sync.success,
+      selfUpdated: isCurrentUser,
+      tokenRefreshed: tokenRefreshed,
+      claimsMessage: sync.message,
+      tokenRefreshError: tokenRefreshError,
+    );
   }
 
   /// Assigns a user as tenant_operator within a tenant.
@@ -376,5 +405,36 @@ class UserManagementService {
           .toList(growable: false);
     }
     return const <String>[];
+  }
+}
+
+class UserAccessUpdateResult {
+  const UserAccessUpdateResult({
+    required this.firestoreSaved,
+    required this.claimsSynced,
+    required this.selfUpdated,
+    required this.tokenRefreshed,
+    required this.claimsMessage,
+    this.tokenRefreshError,
+  });
+
+  final bool firestoreSaved;
+  final bool claimsSynced;
+  final bool selfUpdated;
+  final bool tokenRefreshed;
+  final String claimsMessage;
+  final String? tokenRefreshError;
+
+  String userMessage() {
+    if (!claimsSynced) {
+      return 'Los datos del usuario fueron guardados, pero sus permisos de acceso no pudieron actualizarse inmediatamente.';
+    }
+    if (selfUpdated && !tokenRefreshed) {
+      return 'Los permisos fueron actualizados. Cerrá sesión y volvé a ingresar para aplicarlos.';
+    }
+    if (selfUpdated) {
+      return 'Los permisos fueron actualizados.';
+    }
+    return 'Los permisos fueron actualizados. El usuario deberá renovar su sesión para aplicarlos.';
   }
 }

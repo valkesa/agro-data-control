@@ -3,12 +3,19 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:agro_data_control_backend/src/alert_runtime.dart';
+import 'package:agro_data_control_backend/src/alert_settings_cache.dart';
+import 'package:agro_data_control_backend/src/alert_notifications.dart';
+import 'package:agro_data_control_backend/src/firebase_custom_claims_service.dart';
 import 'package:agro_data_control_backend/src/firebase_request_auth.dart';
+import 'package:agro_data_control_backend/src/firestore_alert_settings_loader.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
 import 'package:agro_data_control_backend/src/presence_registry.dart';
+import 'package:agro_data_control_backend/src/room_wash_authorization.dart';
 import 'package:agro_data_control_backend/src/snapshot_runtime.dart';
 import 'package:agro_data_control_backend/src/whatsapp_alert_recipients.dart';
 import 'package:agro_data_control_backend/src/whatsapp_service.dart';
+import 'package:agro_data_control_backend/src/alert_processing_coordinator.dart';
 
 const Duration _httpHandlerTimeout = Duration(seconds: 20);
 const Duration _httpWriteTimeout = Duration(seconds: 5);
@@ -20,7 +27,44 @@ Future<void> main(List<String> args) async {
     jsonDecode(await File(configPath).readAsString()) as Map<String, dynamic>,
   );
 
-  final SnapshotRuntime runtime = SnapshotRuntime(config);
+  final AlertRuntime alertRuntime = AlertRuntime(
+    settingsCache: AlertSettingsCache(
+      loader: FirestoreAlertSettingsLoader(
+        projectId:
+            config.runtimeEvents.firestoreProjectId ??
+            Platform.environment['FIRESTORE_PROJECT_ID'] ??
+            '',
+        databaseId: config.runtimeEvents.firestoreDatabaseId,
+        serviceAccountJsonPath:
+            config.runtimeEvents.firestoreServiceAccountPath,
+      ),
+    ),
+  );
+  final WhatsAppService whatsAppService = WhatsAppService();
+  const WhatsAppAlertRecipientsConfig alertRecipientsConfig =
+      WhatsAppAlertRecipientsConfig();
+  final NotificationBatchManager notificationBatchManager =
+      NotificationBatchManager(
+        processor: AlertNotificationProcessor(
+          recipientsConfig: alertRecipientsConfig,
+          sender: AlertNotificationSender(whatsAppService: whatsAppService),
+        ),
+      );
+  final AlertProcessingCoordinator alertProcessingCoordinator =
+      AlertProcessingCoordinator(
+        tenantId: config.runtimeEvents.tenantId,
+        siteId: config.runtimeEvents.siteId,
+        runtime: alertRuntime,
+        plcLabelsByMuntersId: {
+          for (final MapEntry<String, UnitConfig> entry in config.units.entries)
+            entry.key: entry.value.name,
+        },
+        notificationBatchManager: notificationBatchManager,
+      );
+  final SnapshotRuntime runtime = SnapshotRuntime(
+    config,
+    onSnapshotUpdated: alertProcessingCoordinator.processSnapshot,
+  );
   final FirebaseRequestAuthService authService = FirebaseRequestAuthService(
     projectId:
         config.runtimeEvents.firestoreProjectId ??
@@ -29,12 +73,22 @@ Future<void> main(List<String> args) async {
     databaseId: config.runtimeEvents.firestoreDatabaseId,
     serviceAccountJsonPath: config.runtimeEvents.firestoreServiceAccountPath,
   );
-  final WhatsAppService whatsAppService = WhatsAppService();
-  const WhatsAppAlertRecipientsConfig alertRecipientsConfig =
-      WhatsAppAlertRecipientsConfig();
+  final FirebaseCustomClaimsService customClaimsService =
+      FirebaseCustomClaimsService(
+        projectId:
+            config.runtimeEvents.firestoreProjectId ??
+            Platform.environment['FIRESTORE_PROJECT_ID'] ??
+            '',
+        databaseId: config.runtimeEvents.firestoreDatabaseId,
+        serviceAccountJsonPath:
+            config.runtimeEvents.firestoreServiceAccountPath,
+      );
   final _OperationalEventHub operationalEventHub = _OperationalEventHub();
   final PresenceRegistry presenceRegistry = PresenceRegistry(
     backendVersion: config.backendName,
+  );
+  _logHttp(
+    'alert runtime initialized settings=${alertRuntime.settingsCache.size} washes=${alertRuntime.roomWashRegistry.size} activeAlerts=${alertRuntime.activeAlertsRegistry.size}',
   );
   runtime.start();
 
@@ -65,6 +119,8 @@ Future<void> main(List<String> args) async {
       alertRecipientsConfig,
       operationalEventHub,
       presenceRegistry,
+      alertRuntime,
+      customClaimsService,
     );
   }
 
@@ -91,6 +147,8 @@ Future<void> _handleRequest(
   WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
   PresenceRegistry presenceRegistry,
+  AlertRuntime alertRuntime,
+  FirebaseCustomClaimsService customClaimsService,
 ) async {
   final Stopwatch stopwatch = Stopwatch()..start();
   final String path = request.uri.path;
@@ -107,6 +165,8 @@ Future<void> _handleRequest(
       alertRecipientsConfig,
       operationalEventHub,
       presenceRegistry,
+      alertRuntime,
+      customClaimsService,
     ).timeout(_httpHandlerTimeout);
   } on TimeoutException catch (error, stackTrace) {
     _logHttp('timeout path=$path operation=request_handler error=$error');
@@ -142,6 +202,8 @@ Future<void> _handleRequestInternal(
   WhatsAppAlertRecipientsConfig alertRecipientsConfig,
   _OperationalEventHub operationalEventHub,
   PresenceRegistry presenceRegistry,
+  AlertRuntime alertRuntime,
+  FirebaseCustomClaimsService customClaimsService,
 ) async {
   _writeCorsHeaders(request.response);
 
@@ -218,6 +280,7 @@ Future<void> _handleRequestInternal(
       request,
       authService,
       alertRecipientsConfig,
+      alertRuntime,
     );
     return;
   }
@@ -228,6 +291,25 @@ Future<void> _handleRequestInternal(
       authService,
       operationalEventHub,
     );
+    return;
+  }
+
+  if (request.method == 'POST' && _isCustomClaimsSyncPath(path)) {
+    await _handleCustomClaimsSyncRequest(
+      request,
+      authService,
+      customClaimsService,
+    );
+    return;
+  }
+
+  if (request.method == 'PUT' && _isAlertSettingsCachePath(path)) {
+    await _handleAlertSettingsCacheRequest(request, authService, alertRuntime);
+    return;
+  }
+
+  if (request.method == 'POST' && _isRoomWashCachePath(path)) {
+    await _handleRoomWashCacheRequest(request, authService, alertRuntime);
     return;
   }
 
@@ -252,6 +334,20 @@ bool _isOperationalEventPath(String path) {
       path == '/operational-events/room-wash';
 }
 
+bool _isAlertSettingsCachePath(String path) {
+  return path == '/api/alerts/settings-cache' ||
+      path == '/alerts/settings-cache';
+}
+
+bool _isRoomWashCachePath(String path) {
+  return path == '/api/room-wash/cache' || path == '/room-wash/cache';
+}
+
+bool _isCustomClaimsSyncPath(String path) {
+  return path == '/api/auth/custom-claims/sync' ||
+      path == '/auth/custom-claims/sync';
+}
+
 String _headerValue(HttpRequest request, String name) {
   return request.headers.value(name)?.trim() ?? '';
 }
@@ -270,10 +366,280 @@ bool _truthy(String? value) {
   return normalized == '1' || normalized == 'true' || normalized == 'yes';
 }
 
+Future<void> _handleAlertSettingsCacheRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  AlertRuntime alertRuntime,
+) async {
+  AuthenticatedBackendUser user;
+  try {
+    user = await authService.requireOwnerOrAdmin(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+  if (user.role != 'owner') {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Forbidden: owner role required',
+    }, statusCode: HttpStatus.forbidden);
+    return;
+  }
+
+  final Map<String, Object?> body;
+  try {
+    body = await _readJsonBody(request);
+  } on FormatException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Invalid request body',
+      'details': error.message,
+    }, statusCode: HttpStatus.badRequest);
+    return;
+  }
+
+  final String tenantId = user.tenantId?.trim() ?? '';
+  final String siteId = body['siteId']?.toString().trim() ?? '';
+  final Object? settingsRaw = body['settings'];
+  if (tenantId.isEmpty || siteId.isEmpty || settingsRaw is! Map) {
+    _logHttp(
+      'alert settings cache validation failed uid=${user.uid} tenant=$tenantId site=$siteId',
+    );
+    await _writeValidationError(
+      request.response,
+      '"siteId" and "settings" are required',
+    );
+    return;
+  }
+
+  final cached;
+  try {
+    cached = alertRuntime.settingsCache.updateFromPayload(
+      tenantId: tenantId,
+      siteId: siteId,
+      payload: Map<String, Object?>.from(settingsRaw as Map<Object?, Object?>),
+    );
+  } on FormatException catch (error) {
+    _logHttp(
+      'alert settings cache validation failed uid=${user.uid} tenant=$tenantId site=$siteId details=${error.message}',
+    );
+    await _writeValidationError(request.response, error.message);
+    return;
+  }
+  _logHttp(
+    'alert settings cache updated uid=${user.uid} tenant=$tenantId site=$siteId source=${cached.source}',
+  );
+  await _writeJson(request.response, <String, Object?>{
+    'ok': true,
+    'success': true,
+    'tenantId': tenantId,
+    'siteId': siteId,
+    'source': cached.source,
+    'loadedAt': cached.loadedAt.toIso8601String(),
+  });
+}
+
+Future<void> _handleCustomClaimsSyncRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  FirebaseCustomClaimsService customClaimsService,
+) async {
+  AuthenticatedBackendUser requester;
+  try {
+    requester = await authService.requireOwnerOrAdmin(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+  if (requester.role != 'owner') {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Forbidden: owner role required',
+    }, statusCode: HttpStatus.forbidden);
+    return;
+  }
+
+  final Map<String, Object?> body;
+  try {
+    body = await _readJsonBody(request);
+  } on FormatException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Invalid request body',
+      'details': error.message,
+    }, statusCode: HttpStatus.badRequest);
+    return;
+  }
+
+  final Set<String> forbiddenPayloadKeys = <String>{
+    'role',
+    'tenantRole',
+    'activeTenantId',
+    'tenantId',
+    'allowedSiteIds',
+  };
+  final List<String> providedForbiddenKeys = body.keys
+      .where(forbiddenPayloadKeys.contains)
+      .toList(growable: false);
+  if (providedForbiddenKeys.isNotEmpty) {
+    await _writeValidationError(
+      request.response,
+      'Only "uid" is accepted. Claims are rebuilt from Firestore.',
+    );
+    return;
+  }
+
+  final String targetUid = body['uid']?.toString().trim() ?? '';
+  final String requesterTenantId = requester.tenantId?.trim() ?? '';
+  if (targetUid.isEmpty) {
+    await _writeValidationError(request.response, '"uid" is required');
+    return;
+  }
+
+  try {
+    final CustomClaimsSyncResult result = await customClaimsService
+        .syncUserClaims(
+          targetUid: targetUid,
+          requesterUid: requester.uid,
+          requesterRole: requester.role ?? '',
+          requesterTenantId: requesterTenantId,
+        );
+    _logHttp(
+      'custom claims synced requesterUid=${requester.uid} targetUid=$targetUid tenant=${result.activeTenantId ?? ''} role=${result.role} sites=${result.allowedSiteCount} changed=${result.changed}',
+    );
+    await _writeJson(request.response, <String, Object?>{
+      'ok': true,
+      'success': true,
+      'message': 'Custom claims synchronized',
+      'result': result.toSafeJson(),
+    });
+  } on CustomClaimsException catch (error) {
+    _logHttp(
+      'custom claims sync failed requesterUid=${requester.uid} targetUid=$targetUid status=${error.statusCode} error=${error.message} details=${error.details ?? ''}',
+    );
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'success': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'custom_claims_failed',
+    }, statusCode: error.statusCode);
+  } catch (error) {
+    _logHttp(
+      'custom claims sync failed requesterUid=${requester.uid} targetUid=$targetUid error=$error',
+    );
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'success': false,
+      'error': 'Unexpected custom claims error',
+      'details': error.toString(),
+    }, statusCode: HttpStatus.badGateway);
+  }
+}
+
+Future<void> _handleRoomWashCacheRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  AlertRuntime alertRuntime,
+) async {
+  AuthenticatedBackendUser user;
+  try {
+    user = await authService.requireRoomWashWriter(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+
+  final Map<String, Object?> body;
+  try {
+    body = await _readJsonBody(request);
+  } on FormatException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Invalid request body',
+      'details': error.message,
+    }, statusCode: HttpStatus.badRequest);
+    return;
+  }
+
+  final String tenantId = user.tenantId?.trim() ?? '';
+  final String siteId = body['siteId']?.toString().trim() ?? '';
+  final String roomId = body['roomId']?.toString().trim() ?? '';
+  final int? roomNumber = int.tryParse(body['roomNumber']?.toString() ?? '');
+  final DateTime? washedAt = DateTime.tryParse(
+    body['washedAt']?.toString().trim() ?? '',
+  );
+  final RoomWashAuthorizationResult authorization = canRegisterRoomWash(
+    user: user,
+    siteId: siteId,
+  );
+  if (!authorization.allowed) {
+    _logHttp(
+      'room wash cache forbidden uid=${user.uid} tenant=$tenantId site=$siteId role=${authorization.role} reason=${authorization.reason}',
+    );
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Forbidden: room wash writer role required',
+      'reason': authorization.reason,
+    }, statusCode: HttpStatus.forbidden);
+    return;
+  }
+  if (tenantId.isEmpty ||
+      siteId.isEmpty ||
+      roomId.isEmpty ||
+      (roomNumber != null && roomNumber <= 0) ||
+      washedAt == null ||
+      washedAt.isAfter(
+        DateTime.now().toUtc().add(const Duration(minutes: 1)),
+      )) {
+    _logHttp(
+      'room wash cache validation failed uid=${user.uid} tenant=$tenantId site=$siteId room=$roomId',
+    );
+    await _writeValidationError(
+      request.response,
+      '"siteId", "roomId", valid "roomNumber" and valid "washedAt" are required',
+    );
+    return;
+  }
+
+  final state = alertRuntime.roomWashRegistry.registerWash(
+    tenantId: tenantId,
+    siteId: siteId,
+    roomId: roomId,
+    roomNumber: roomNumber,
+    washedAt: washedAt.toUtc(),
+    createdAt: DateTime.now().toUtc(),
+    createdByUid: user.uid,
+  );
+  _logHttp(
+    'room wash cache updated uid=${user.uid} tenant=$tenantId site=$siteId room=$roomId role=${authorization.role} siteValidation=${authorization.siteValidation?.name} washedAt=${state.washedAt.toIso8601String()}',
+  );
+  await _writeJson(request.response, <String, Object?>{
+    'ok': true,
+    'success': true,
+    'tenantId': tenantId,
+    'siteId': siteId,
+    'roomId': roomId,
+    'washedAt': state.washedAt.toIso8601String(),
+  });
+}
+
 Future<void> _handleWhatsAppAlertRecipientsRequest(
   HttpRequest request,
   FirebaseRequestAuthService authService,
   WhatsAppAlertRecipientsConfig alertRecipientsConfig,
+  AlertRuntime alertRuntime,
 ) async {
   AuthenticatedBackendUser user;
   try {
@@ -287,44 +653,21 @@ Future<void> _handleWhatsAppAlertRecipientsRequest(
     return;
   }
 
-  final String tenantId = user.tenantId?.trim() ?? '';
-  if (user.role != 'owner') {
-    await _writeJson(request.response, <String, Object?>{
-      'ok': false,
-      'error': 'Forbidden: owner role required',
-    }, statusCode: HttpStatus.forbidden);
-    return;
-  }
+  final String queryTenantId =
+      request.uri.queryParameters['tenantId']?.trim() ?? '';
   final String siteId = request.uri.queryParameters['siteId']?.trim() ?? '';
-  if (tenantId.isEmpty || siteId.isEmpty) {
-    await _writeValidationError(
-      request.response,
-      '"siteId" is required and authenticated user must have tenant context',
-    );
-    return;
-  }
-
-  final List<AlertRecipient> recipients = alertRecipientsConfig.recipientsFor(
-    tenantId: tenantId,
-    siteId: siteId,
+  final Map<String, Object?> payload = buildWhatsAppAlertRecipientsResponse(
+    recipientsConfig: alertRecipientsConfig,
+    runtimeControl: alertRuntime.config.toJson(),
+    role: user.role,
+    userTenantId: user.tenantId,
+    queryTenantId: queryTenantId,
+    querySiteId: siteId,
   );
   _logHttp(
-    'whatsapp alert recipients requested uid=${user.uid} tenant=$tenantId site=$siteId count=${recipients.length}',
+    'whatsapp alert recipients requested uid=${user.uid} role=${user.role ?? ''} userTenant=${user.tenantId ?? ''} queryTenant=$queryTenantId site=$siteId count=${payload['recipientCount']} globalCount=${(payload['globalRecipients'] as List).length} siteCount=${(payload['siteRecipients'] as List).length}',
   );
-  await _writeJson(request.response, <String, Object?>{
-    'ok': true,
-    'enabled': recipients.isNotEmpty,
-    'recipients': recipients
-        .map(
-          (AlertRecipient recipient) => <String, Object?>{
-            'clientName': recipient.clientName,
-            'siteName': recipient.siteName,
-            'contactName': recipient.contactName,
-            'phoneMasked': maskWhatsAppPhone(recipient.phone),
-          },
-        )
-        .toList(growable: false),
-  });
+  await _writeJson(request.response, payload);
 }
 
 Future<void> _handleOperationalEventRequest(
@@ -554,7 +897,10 @@ Future<void> _writeErrorResponse(
 void _writeCorsHeaders(HttpResponse response) {
   response.headers
     ..set(HttpHeaders.accessControlAllowOriginHeader, '*')
-    ..set(HttpHeaders.accessControlAllowMethodsHeader, 'GET, POST, OPTIONS')
+    ..set(
+      HttpHeaders.accessControlAllowMethodsHeader,
+      'GET, POST, PUT, OPTIONS',
+    )
     ..set(
       HttpHeaders.accessControlAllowHeadersHeader,
       'Authorization, Content-Type, X-AgroData-Session-Id, X-AgroData-App-Version, X-AgroData-Device-Type',

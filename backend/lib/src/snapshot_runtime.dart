@@ -20,13 +20,16 @@ const List<List<String>> _diagnosticKeySignalGroups = <List<String>>[
 ];
 
 class SnapshotRuntime {
-  SnapshotRuntime(this.config)
-    : _startedAt = DateTime.now().toUtc(),
-      _state = SnapshotRuntimeState.initial(
-        config: config,
-        startedAt: DateTime.now().toUtc(),
-        doorEventsJson: const <String, Object?>{},
-      ) {
+  SnapshotRuntime(
+    this.config, {
+    Future<void> Function(Map<String, Object?>)? onSnapshotUpdated,
+  }) : _startedAt = DateTime.now().toUtc(),
+       _onSnapshotUpdated = onSnapshotUpdated,
+       _state = SnapshotRuntimeState.initial(
+         config: config,
+         startedAt: DateTime.now().toUtc(),
+         doorEventsJson: const <String, Object?>{},
+       ) {
     _temperatureHistoryServices = config.temperatureHistories
         .map(
           (TemperatureHistoryConfig historyConfig) => TemperatureHistoryService(
@@ -67,6 +70,7 @@ class SnapshotRuntime {
 
   final PlcInstallationConfig config;
   final DateTime _startedAt;
+  final Future<void> Function(Map<String, Object?>)? _onSnapshotUpdated;
 
   SnapshotRuntimeState _state;
   final Map<String, DateTime> _unitLastSuccessfulReadAt = <String, DateTime>{};
@@ -212,6 +216,7 @@ class SnapshotRuntime {
         unitsJson: unitsJson,
         doorEventsJson: _doorOpeningsTracker.snapshotSummaryJson(),
       );
+      await _notifySnapshotUpdated();
       _logSnapshotPayload(_state.snapshotJson);
       _logSnapshot('backendOnline=true');
       _logPlc('poll success elapsedMs=${stopwatch.elapsedMilliseconds}');
@@ -241,6 +246,7 @@ class SnapshotRuntime {
         pollDurationMs: stopwatch.elapsedMilliseconds,
         doorEventsJson: _extractDoorEvents(_state.snapshotJson),
       );
+      await _notifySnapshotUpdated();
       _logSnapshotPayload(_state.snapshotJson);
     } catch (error, stackTrace) {
       stopwatch.stop();
@@ -254,7 +260,22 @@ class SnapshotRuntime {
         pollDurationMs: stopwatch.elapsedMilliseconds,
         doorEventsJson: _extractDoorEvents(_state.snapshotJson),
       );
+      await _notifySnapshotUpdated();
       _logSnapshotPayload(_state.snapshotJson);
+    }
+  }
+
+  Future<void> _notifySnapshotUpdated() async {
+    final Future<void> Function(Map<String, Object?>)? callback =
+        _onSnapshotUpdated;
+    if (callback == null) {
+      return;
+    }
+    try {
+      await callback(_state.snapshotJson);
+    } catch (error, stackTrace) {
+      _logSnapshot('alert processing failed error=$error');
+      _logSnapshot('alert processing stack=$stackTrace');
     }
   }
 

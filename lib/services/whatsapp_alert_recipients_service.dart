@@ -24,7 +24,7 @@ class WhatsAppAlertRecipientsService {
       );
     }
 
-    final String idToken = await user.getIdToken() ?? '';
+    final String idToken = await user.getIdToken(true) ?? '';
     if (idToken.isEmpty) {
       return const WhatsAppAlertRecipientsResult.error(
         'No se pudo obtener el token de autenticacion.',
@@ -42,9 +42,15 @@ class WhatsAppAlertRecipientsService {
 
       final Object? decoded = _tryDecodeJson(response.body);
       if (response.statusCode < 200 || response.statusCode >= 300) {
+        final String? backendError = _readString(decoded, 'error');
+        if (_isTenantContextError(backendError) ||
+            _isTenantContextError(_readString(decoded, 'details'))) {
+          return const WhatsAppAlertRecipientsResult.error(
+            'No se pudo cargar la configuración de destinatarios. Cerrá sesión y volvé a ingresar para actualizar tus permisos.',
+          );
+        }
         return WhatsAppAlertRecipientsResult.error(
-          _readString(decoded, 'error') ??
-              'El backend respondio HTTP ${response.statusCode}.',
+          backendError ?? 'El backend respondio HTTP ${response.statusCode}.',
         );
       }
       if (decoded is! Map) {
@@ -64,7 +70,14 @@ class WhatsAppAlertRecipientsService {
               .toList(growable: false);
       return WhatsAppAlertRecipientsResult.success(
         enabled: decoded['enabled'] == true,
+        recipientCount:
+            _readInt(decoded, 'recipientCount') ?? recipients.length,
         recipients: recipients,
+        runtimeControl: decoded['runtimeControl'] is Map
+            ? AlertRuntimeControl.fromJson(
+                Map<String, Object?>.from(decoded['runtimeControl'] as Map),
+              )
+            : null,
       );
     } on TimeoutException {
       return const WhatsAppAlertRecipientsResult.error(
@@ -95,28 +108,75 @@ class WhatsAppAlertRecipientsService {
   }
 }
 
+bool _isTenantContextError(String? value) {
+  final String normalized = value?.toLowerCase() ?? '';
+  return normalized.contains('tenant context') ||
+      normalized.contains('tenantid') ||
+      normalized.contains('siteid') ||
+      normalized.contains('claims');
+}
+
 class WhatsAppAlertRecipientsResult {
   const WhatsAppAlertRecipientsResult._({
     required this.ok,
     this.enabled = false,
+    this.recipientCount = 0,
     this.recipients = const <WhatsAppAlertRecipient>[],
+    this.runtimeControl,
     this.message,
     this.details,
   });
 
   const WhatsAppAlertRecipientsResult.success({
     required bool enabled,
+    required int recipientCount,
     required List<WhatsAppAlertRecipient> recipients,
-  }) : this._(ok: true, enabled: enabled, recipients: recipients);
+    AlertRuntimeControl? runtimeControl,
+  }) : this._(
+         ok: true,
+         enabled: enabled,
+         recipientCount: recipientCount,
+         recipients: recipients,
+         runtimeControl: runtimeControl,
+       );
 
   const WhatsAppAlertRecipientsResult.error(String message, {String? details})
     : this._(ok: false, message: message, details: details);
 
   final bool ok;
   final bool enabled;
+  final int recipientCount;
   final List<WhatsAppAlertRecipient> recipients;
+  final AlertRuntimeControl? runtimeControl;
   final String? message;
   final String? details;
+}
+
+class AlertRuntimeControl {
+  const AlertRuntimeControl({
+    required this.cooldownMinutes,
+    required this.dewPointRiskC,
+    required this.temperatureC,
+    required this.humidityPercent,
+  });
+
+  factory AlertRuntimeControl.fromJson(Map<String, Object?> json) {
+    final Object? hysteresisRaw = json['hysteresis'];
+    final Map<String, Object?> hysteresis = hysteresisRaw is Map
+        ? Map<String, Object?>.from(hysteresisRaw)
+        : const <String, Object?>{};
+    return AlertRuntimeControl(
+      cooldownMinutes: _readInt(json, 'cooldownMinutes') ?? 0,
+      dewPointRiskC: _readDouble(hysteresis, 'dewPointRiskC') ?? 0,
+      temperatureC: _readDouble(hysteresis, 'temperatureC') ?? 0,
+      humidityPercent: _readDouble(hysteresis, 'humidityPercent') ?? 0,
+    );
+  }
+
+  final int cooldownMinutes;
+  final double dewPointRiskC;
+  final double temperatureC;
+  final double humidityPercent;
 }
 
 class WhatsAppAlertRecipient {
@@ -158,6 +218,35 @@ String? _readString(Object? decoded, String key) {
     final Object? value = decoded[key];
     if (value != null) {
       return value.toString();
+    }
+  }
+  return null;
+}
+
+int? _readInt(Object? decoded, String key) {
+  if (decoded is Map) {
+    final Object? value = decoded[key];
+    if (value is int) {
+      return value;
+    }
+    if (value is num) {
+      return value.toInt();
+    }
+    if (value != null) {
+      return int.tryParse(value.toString());
+    }
+  }
+  return null;
+}
+
+double? _readDouble(Object? decoded, String key) {
+  if (decoded is Map) {
+    final Object? value = decoded[key];
+    if (value is num) {
+      return value.toDouble();
+    }
+    if (value != null) {
+      return double.tryParse(value.toString());
     }
   }
   return null;

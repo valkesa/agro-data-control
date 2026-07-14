@@ -32,6 +32,7 @@ import 'pages/runtime_events_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
 import 'services/control_dashboard_config_service.dart';
+import 'services/alert_settings_cache_sync_service.dart';
 import 'services/door_openings_repository.dart';
 import 'services/electric_consumption_settings_service.dart';
 import 'services/electrical_cost_service.dart';
@@ -1119,36 +1120,30 @@ class _AgroDataShellState extends State<AgroDataShell> {
       return;
     }
 
-    final ControlDashboardConfigResult refreshedConfig =
-        await _dashboardConfigService.readConfig(
-          tenantId: tenantId,
+    final bool cacheSynced =
+        await AlertSettingsCacheSyncService(
+          backendSnapshotEndpoint: _activeBackendEndpoint,
+        ).sync(
           siteId: bootstrap.siteId,
+          ranges: updated.rangeSettings,
+          alerts: updated.alertSettings,
         );
 
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
 
     setState(() {
       _rangeSettings = updated.rangeSettings;
-      _alertSettings = refreshedConfig.exists
-          ? refreshedConfig.alertSettings
-          : updated.alertSettings;
-      _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
-        _DashboardBootstrapResult(
-          userContext: bootstrap.userContext,
-          membership: bootstrap.membership,
-          config: refreshedConfig,
-          siteId: bootstrap.siteId,
-          resolvedTenantId: bootstrap.resolvedTenantId,
-          tenantDocument: bootstrap.tenantDocument,
-          siteDocument: bootstrap.siteDocument,
-          availableTenants: bootstrap.availableTenants,
-          availableSites: bootstrap.availableSites,
-          plcConfigs: bootstrap.plcConfigs,
+      _alertSettings = updated.alertSettings;
+    });
+    if (!cacheSynced) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La configuración fue guardada, pero el backend no pudo actualizarse inmediatamente.',
+          ),
         ),
       );
-    });
+    }
   }
 
   Future<void> _openMagnifierSettings() async {
@@ -5135,18 +5130,6 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     );
   }
 
-  void _updateAlert(
-    AlertToggleSettings Function(AlertSettings value) select,
-    AlertSettings Function(AlertSettings value, AlertToggleSettings updated)
-    replace,
-    AlertToggleSettings updated,
-  ) {
-    setState(() {
-      _alerts = replace(_alerts, updated);
-      _errorText = null;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final Size screenSize = MediaQuery.sizeOf(context);
@@ -5168,146 +5151,8 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              _buildAlertCard(
-                title: 'Puerta Munters abierta',
-                settings: _alerts.muntersDoorOpen,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.muntersDoorOpen,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(muntersDoorOpen: v),
-                  value,
-                ),
-              ),
-              _buildAlertCard(
-                title: 'Puerta de sala abierta',
-                settings: _alerts.roomDoorOpen,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.roomDoorOpen,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(roomDoorOpen: v),
-                  value,
-                ),
-              ),
-              _buildAlertCard(
-                title: 'Temperatura baja con calefacción activa',
-                settings: _alerts.lowTemperatureHeatingActive,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.lowTemperatureHeatingActive,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(lowTemperatureHeatingActive: v),
-                  value,
-                ),
-                fields: [
-                  _RangeField(
-                    controller: _temperatureMinController,
-                    label: 'Temperatura mínima',
-                    suffix: '°C',
-                    enabled: _alerts.lowTemperatureHeatingActive.enabled,
-                  ),
-                ],
-              ),
-              _buildAlertCard(
-                title: 'Temperatura alta con bomba humidificadora activa',
-                settings: _alerts.highTemperatureHumidifierActive,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.highTemperatureHumidifierActive,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(highTemperatureHumidifierActive: v),
-                  value,
-                ),
-                fields: [
-                  _RangeField(
-                    controller: _temperatureMaxController,
-                    label: 'Temperatura máxima',
-                    suffix: '°C',
-                    enabled: _alerts.highTemperatureHumidifierActive.enabled,
-                  ),
-                ],
-              ),
-              _buildAlertCard(
-                title: 'Humedad interior alta',
-                settings: _alerts.highHumidity,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.highHumidity,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(highHumidity: v),
-                  value,
-                ),
-                fields: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _RangeField(
-                          controller: _humidityAlarmYellowMinController,
-                          label: 'Amarillo desde',
-                          suffix: '%',
-                          enabled: _alerts.highHumidity.enabled,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _RangeField(
-                          controller: _humidityAlarmRedMinController,
-                          label: 'Rojo desde',
-                          suffix: '%',
-                          enabled: _alerts.highHumidity.enabled,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              _buildAlertCard(
-                title: 'Riesgo por punto de rocío',
-                settings: _alerts.dewPointRisk,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.dewPointRisk,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(dewPointRisk: v),
-                  value,
-                ),
-                fields: [
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _RangeField(
-                          controller: _dewPointMarginAlarmRedMaxController,
-                          label: 'Rojo si margen ≤',
-                          suffix: '°C',
-                          enabled: _alerts.dewPointRisk.enabled,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _RangeField(
-                          controller: _dewPointMarginAlarmYellowMaxController,
-                          label: 'Amarillo si margen ≤',
-                          suffix: '°C',
-                          enabled: _alerts.dewPointRisk.enabled,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-              _buildAlertCard(
-                title: 'Presión diferencial alta',
-                settings: _alerts.highDifferentialPressure,
-                onChanged: (AlertToggleSettings value) => _updateAlert(
-                  (AlertSettings s) => s.highDifferentialPressure,
-                  (AlertSettings s, AlertToggleSettings v) =>
-                      s.copyWith(highDifferentialPressure: v),
-                  value,
-                ),
-                fields: [
-                  _RangeField(
-                    controller: _filterPressureMaxController,
-                    label: 'Presión diferencial máxima',
-                    suffix: 'Pa',
-                    enabled: _alerts.highDifferentialPressure.enabled,
-                  ),
-                ],
-              ),
+              _buildAlertsTable(),
+              _buildRuntimeControlSection(),
               _buildVisualIndicatorsSection(),
               _buildRecipientsSection(),
               if (_errorText != null) ...[
@@ -5335,18 +5180,110 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     );
   }
 
-  Widget _buildAlertCard({
-    required String title,
-    required AlertToggleSettings settings,
-    required ValueChanged<AlertToggleSettings> onChanged,
-    List<Widget> fields = const <Widget>[],
-  }) {
-    return _AlertConfigCard(
-      title: title,
-      settings: settings,
-      onChanged: onChanged,
-      fields: fields,
+  Widget _buildAlertsTable() {
+    return _AlertSettingsTable(
+      rows: _alerts.orderedKeys.map(_buildAlertTableRow).toList(),
+      onMove: (AlertSettingKey key, int delta) {
+        setState(() {
+          _alerts = _alerts.move(key, delta);
+          _errorText = null;
+        });
+      },
+      onChanged: (AlertSettingKey key, AlertToggleSettings value) {
+        setState(() {
+          _alerts = _alerts.withToggle(key, value);
+          _errorText = null;
+        });
+      },
     );
+  }
+
+  _AlertSettingsTableRow _buildAlertTableRow(AlertSettingKey key) {
+    final AlertToggleSettings settings = _alerts.toggleFor(key);
+    return switch (key) {
+      AlertSettingKey.muntersDoorOpen => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Puerta Munters abierta',
+        settings: settings,
+      ),
+      AlertSettingKey.roomDoorOpen => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Puerta de sala abierta',
+        settings: settings,
+      ),
+      AlertSettingKey.highTemperatureHeatingActive => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Temp. alta con calefacción activa',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Máxima',
+            controller: _temperatureMaxController,
+            suffix: '°C',
+          ),
+        ],
+      ),
+      AlertSettingKey.lowTemperatureHumidifierActive => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Temp. baja con bomba humidificadora activa',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Mínima',
+            controller: _temperatureMinController,
+            suffix: '°C',
+          ),
+        ],
+      ),
+      AlertSettingKey.highDifferentialPressure => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Presión diferencial alta',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Máxima',
+            controller: _filterPressureMaxController,
+            suffix: 'Pa',
+          ),
+        ],
+      ),
+      AlertSettingKey.highHumidity => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Humedad interior alta',
+        whatsappLabel: 'WhatsApp en rojo',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Amarillo',
+            controller: _humidityAlarmYellowMinController,
+            suffix: '%',
+          ),
+          _AlertTableValueSpec(
+            label: 'Rojo',
+            controller: _humidityAlarmRedMinController,
+            suffix: '%',
+          ),
+        ],
+      ),
+      AlertSettingKey.dewPointRisk => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Riesgo por punto de rocío',
+        whatsappLabel: 'WhatsApp en rojo',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Rojo ≤',
+            controller: _dewPointMarginAlarmRedMaxController,
+            suffix: '°C',
+          ),
+          _AlertTableValueSpec(
+            label: 'Amarillo ≤',
+            controller: _dewPointMarginAlarmYellowMaxController,
+            suffix: '°C',
+          ),
+        ],
+      ),
+    };
   }
 
   Widget _buildVisualIndicatorsSection() {
@@ -5370,6 +5307,63 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
             controller: _thermalFlowMarkedDeltaController,
             label: 'Pendiente marcada desde',
             suffix: '°C',
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRuntimeControlSection() {
+    final AlertRuntimeControl? runtimeControl =
+        _recipientsResult?.runtimeControl;
+    return _AlertSectionCard(
+      title: 'Control de reenvíos',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Estos parámetros son técnicos del motor de alertas. Se configuran desde el backend y evitan envíos repetidos cuando una medición oscila cerca del límite.',
+            style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+          ),
+          const SizedBox(height: 12),
+          if (runtimeControl == null)
+            const Text(
+              'No disponible hasta recibir la configuración del backend.',
+              style: TextStyle(color: Color(0xFFFCA5A5), fontSize: 12),
+            )
+          else ...[
+            _RuntimeControlRow(
+              label: 'Cooldown general',
+              value: '${runtimeControl.cooldownMinutes} minutos',
+            ),
+            const SizedBox(height: 10),
+            const Text(
+              'Histéresis',
+              style: TextStyle(
+                color: Color(0xFFE5E7EB),
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 8),
+            _RuntimeControlRow(
+              label: 'Punto de rocío',
+              value: '${_formatRuntimeNumber(runtimeControl.dewPointRiskC)} °C',
+            ),
+            _RuntimeControlRow(
+              label: 'Temperatura interior',
+              value: '${_formatRuntimeNumber(runtimeControl.temperatureC)} °C',
+            ),
+            _RuntimeControlRow(
+              label: 'Humedad interior',
+              value:
+                  '${_formatRuntimeNumber(runtimeControl.humidityPercent)} %',
+            ),
+            const SizedBox(height: 8),
+          ],
+          const Text(
+            'El cooldown se aplica por cliente, sitio, sala y tipo de alerta.',
+            style: TextStyle(color: Color(0xFF64748B), fontSize: 11),
           ),
         ],
       ),
@@ -5405,9 +5399,21 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
         style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
       );
     } else {
+      final int recipientCount = _recipientsResult!.recipientCount;
       body = Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          Text(
+            recipientCount == 1
+                ? '1 destinatario configurado'
+                : '$recipientCount destinatarios configurados',
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 12),
           for (final WhatsAppAlertRecipient recipient
               in _recipientsResult!.recipients) ...[
             Text(
@@ -5450,50 +5456,381 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   }
 }
 
-class _AlertConfigCard extends StatelessWidget {
-  const _AlertConfigCard({
+class _AlertSettingsTableRow {
+  const _AlertSettingsTableRow({
+    required this.keyType,
     required this.title,
     required this.settings,
-    required this.onChanged,
-    required this.fields,
+    this.values = const <_AlertTableValueSpec>[],
+    this.whatsappLabel = 'WhatsApp',
   });
 
+  final AlertSettingKey keyType;
   final String title;
   final AlertToggleSettings settings;
-  final ValueChanged<AlertToggleSettings> onChanged;
-  final List<Widget> fields;
+  final List<_AlertTableValueSpec> values;
+  final String whatsappLabel;
+}
+
+class _AlertTableValueSpec {
+  const _AlertTableValueSpec({
+    required this.label,
+    required this.controller,
+    required this.suffix,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String suffix;
+}
+
+class _AlertSettingsTable extends StatelessWidget {
+  const _AlertSettingsTable({
+    required this.rows,
+    required this.onChanged,
+    required this.onMove,
+  });
+
+  final List<_AlertSettingsTableRow> rows;
+  final void Function(AlertSettingKey key, AlertToggleSettings value) onChanged;
+  final void Function(AlertSettingKey key, int delta) onMove;
+
+  static const Color _borderColor = Color(0xFF334155);
+  static const Color _headerColor = Color(0xFF1E293B);
+  static const Color _cellColor = Color(0xFF0F172A);
 
   @override
   Widget build(BuildContext context) {
-    return _AlertSectionCard(
-      title: title,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: _cellColor,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _borderColor),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: SizedBox(
+          width: 696,
+          child: Table(
+            columnWidths: const <int, TableColumnWidth>{
+              0: FixedColumnWidth(86),
+              1: FixedColumnWidth(235),
+              2: FixedColumnWidth(210),
+              3: FixedColumnWidth(75),
+              4: FixedColumnWidth(90),
+            },
+            border: TableBorder.symmetric(
+              inside: const BorderSide(color: _borderColor),
+            ),
+            defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+            children: <TableRow>[
+              const TableRow(
+                decoration: BoxDecoration(color: _headerColor),
+                children: <Widget>[
+                  _AlertTableHeaderCell('#'),
+                  _AlertTableHeaderCell('Alerta'),
+                  _AlertTableHeaderCell('Valor'),
+                  _AlertTableHeaderCell('Activa'),
+                  _AlertTableHeaderCell('WhatsApp'),
+                ],
+              ),
+              for (int index = 0; index < rows.length; index += 1)
+                TableRow(
+                  children: <Widget>[
+                    _AlertOrderCell(
+                      order: rows[index].settings.order,
+                      canMoveUp: index > 0,
+                      canMoveDown: index < rows.length - 1,
+                      onMoveUp: () => onMove(rows[index].keyType, -1),
+                      onMoveDown: () => onMove(rows[index].keyType, 1),
+                    ),
+                    _AlertNameCell(
+                      rows[index].title,
+                      enabled: rows[index].settings.enabled,
+                    ),
+                    _AlertValueCell(row: rows[index]),
+                    _AlertSwitchCell(
+                      value: rows[index].settings.enabled,
+                      onChanged: (bool value) => onChanged(
+                        rows[index].keyType,
+                        rows[index].settings.copyWith(enabled: value),
+                      ),
+                    ),
+                    _AlertSwitchCell(
+                      value:
+                          rows[index].settings.enabled &&
+                          rows[index].settings.sendWhatsapp,
+                      onChanged: rows[index].settings.enabled
+                          ? (bool value) => onChanged(
+                              rows[index].keyType,
+                              rows[index].settings.copyWith(
+                                sendWhatsapp: value,
+                              ),
+                            )
+                          : null,
+                      tooltip: rows[index].whatsappLabel,
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertOrderCell extends StatelessWidget {
+  const _AlertOrderCell({
+    required this.order,
+    required this.canMoveUp,
+    required this.canMoveDown,
+    required this.onMoveUp,
+    required this.onMoveDown,
+  });
+
+  final int order;
+  final bool canMoveUp;
+  final bool canMoveDown;
+  final VoidCallback onMoveUp;
+  final VoidCallback onMoveDown;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 54,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Alerta activa',
-              style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
+          Text(
+            order.toString(),
+            style: const TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
             ),
-            value: settings.enabled,
-            onChanged: (bool value) =>
-                onChanged(settings.copyWith(enabled: value)),
           ),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text(
-              'Enviar WhatsApp',
-              style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
-            ),
-            value: settings.enabled && settings.sendWhatsapp,
-            onChanged: settings.enabled
-                ? (bool value) =>
-                      onChanged(settings.copyWith(sendWhatsapp: value))
-                : null,
+          const SizedBox(width: 4),
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _AlertOrderButton(
+                tooltip: 'Subir alerta',
+                icon: Icons.keyboard_arrow_up,
+                onPressed: canMoveUp ? onMoveUp : null,
+              ),
+              _AlertOrderButton(
+                tooltip: 'Bajar alerta',
+                icon: Icons.keyboard_arrow_down,
+                onPressed: canMoveDown ? onMoveDown : null,
+              ),
+            ],
           ),
-          if (fields.isNotEmpty) ...[const SizedBox(height: 8), ...fields],
         ],
+      ),
+    );
+  }
+}
+
+class _AlertOrderButton extends StatelessWidget {
+  const _AlertOrderButton({
+    required this.tooltip,
+    required this.icon,
+    required this.onPressed,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback? onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: tooltip,
+      iconSize: 16,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 24, height: 22),
+      visualDensity: VisualDensity.compact,
+      onPressed: onPressed,
+      icon: Icon(icon),
+    );
+  }
+}
+
+class _AlertTableHeaderCell extends StatelessWidget {
+  const _AlertTableHeaderCell(this.text);
+
+  final String text;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFFE5E7EB),
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertNameCell extends StatelessWidget {
+  const _AlertNameCell(this.text, {required this.enabled});
+
+  final String text;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Text(
+        text,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: enabled ? const Color(0xFFE5E7EB) : const Color(0xFF64748B),
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertValueCell extends StatelessWidget {
+  const _AlertValueCell({required this.row});
+
+  final _AlertSettingsTableRow row;
+
+  @override
+  Widget build(BuildContext context) {
+    if (row.values.isEmpty) {
+      return const SizedBox(
+        height: 54,
+        child: Center(
+          child: Text(
+            '-',
+            style: TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: 14,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      );
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Wrap(
+        spacing: 6,
+        runSpacing: 4,
+        children: [
+          for (final _AlertTableValueSpec value in row.values)
+            _AlertTableValueField(
+              label: value.label,
+              controller: value.controller,
+              suffix: value.suffix,
+              enabled: row.settings.enabled,
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AlertTableValueField extends StatelessWidget {
+  const _AlertTableValueField({
+    required this.label,
+    required this.controller,
+    required this.suffix,
+    required this.enabled,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final String suffix;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 94,
+      height: 42,
+      child: TextField(
+        controller: controller,
+        enabled: enabled,
+        textAlign: TextAlign.center,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: TextStyle(
+          color: enabled ? const Color(0xFFE5E7EB) : const Color(0xFF64748B),
+          fontSize: 13,
+          fontWeight: FontWeight.w800,
+        ),
+        decoration: InputDecoration(
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(
+            horizontal: 7,
+            vertical: 6,
+          ),
+          labelText: label,
+          labelStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10),
+          suffixText: suffix,
+          suffixStyle: const TextStyle(
+            color: Color(0xFF94A3B8),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+          filled: true,
+          fillColor: const Color(0xFF111827),
+          disabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFF334155)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFF475569)),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: Color(0xFF38BDF8)),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AlertSwitchCell extends StatelessWidget {
+  const _AlertSwitchCell({
+    required this.value,
+    required this.onChanged,
+    this.tooltip,
+  });
+
+  final bool value;
+  final ValueChanged<bool>? onChanged;
+  final String? tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    final Widget switchControl = Transform.scale(
+      scale: 0.72,
+      child: Switch(value: value, onChanged: onChanged),
+    );
+    return SizedBox(
+      height: 54,
+      child: Center(
+        child: tooltip == null
+            ? switchControl
+            : Tooltip(message: tooltip!, child: switchControl),
       ),
     );
   }
@@ -5532,6 +5869,45 @@ class _AlertSectionCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _RuntimeControlRow extends StatelessWidget {
+  const _RuntimeControlRow({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(color: Color(0xFFCBD5E1), fontSize: 12),
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(
+              color: Color(0xFFE5E7EB),
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatRuntimeNumber(double value) {
+  if (value == value.truncateToDouble()) {
+    return value.toInt().toString();
+  }
+  return value.toStringAsFixed(1);
 }
 
 class _ElectricConsumptionSettingsDialog extends StatefulWidget {
@@ -7864,23 +8240,18 @@ class _RangeField extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.suffix,
-    this.enabled = true,
   });
 
   final TextEditingController controller;
   final String label;
   final String suffix;
-  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
-      enabled: enabled,
       keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      style: TextStyle(
-        color: enabled ? const Color(0xFFE5E7EB) : const Color(0xFF64748B),
-      ),
+      style: const TextStyle(color: Color(0xFFE5E7EB)),
       decoration: InputDecoration(
         labelText: label,
         labelStyle: const TextStyle(color: Color(0xFF94A3B8)),

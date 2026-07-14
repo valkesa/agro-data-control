@@ -113,12 +113,69 @@ class FirebaseRequestAuthService {
 
     return AuthenticatedBackendUser(
       uid: uid,
-      role: null,
-      tenantId: null,
+      role:
+          tokenPayload['role']?.toString() ??
+          tokenPayload['tenantRole']?.toString(),
+      tenantId:
+          tokenPayload['activeTenantId']?.toString() ??
+          tokenPayload['tenantId']?.toString(),
       email: tokenPayload['email']?.toString(),
       displayName:
           tokenPayload['name']?.toString() ??
           tokenPayload['displayName']?.toString(),
+      allowedSiteIds: _stringListClaim(tokenPayload['allowedSiteIds']),
+    );
+  }
+
+  Future<AuthenticatedBackendUser> requireRoomWashWriter(
+    HttpRequest request,
+  ) async {
+    if (!isConfigured) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.serviceUnavailable,
+        message: 'Backend auth is not configured',
+      );
+    }
+
+    final String idToken = _readBearerToken(request);
+    final JWT jwt = await _verifyFirebaseIdToken(idToken);
+    final Map<String, Object?> tokenPayload = _jwtPayload(jwt);
+    final String uid = jwt.subject ?? '';
+    if (uid.isEmpty) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.unauthorized,
+        message: 'Invalid Firebase token subject',
+      );
+    }
+    // Canonical AgroData claims are role, activeTenantId and allowedSiteIds.
+    // tenantRole and tenantId are accepted only as transitional aliases.
+    final String? role =
+        tokenPayload['role']?.toString() ??
+        tokenPayload['tenantRole']?.toString();
+    final String? tenantId =
+        tokenPayload['activeTenantId']?.toString() ??
+        tokenPayload['tenantId']?.toString();
+    if (role == null || role.isEmpty || tenantId == null || tenantId.isEmpty) {
+      throw BackendAuthException(
+        statusCode: HttpStatus.forbidden,
+        message:
+            'Forbidden: room wash writer claims are missing role or tenantId',
+        details: <String, Object?>{
+          'uid': uid,
+          'hasRole': role != null && role.isNotEmpty,
+          'hasTenantId': tenantId != null && tenantId.isNotEmpty,
+        },
+      );
+    }
+    return AuthenticatedBackendUser(
+      uid: uid,
+      role: role,
+      tenantId: tenantId,
+      email: tokenPayload['email']?.toString(),
+      displayName:
+          tokenPayload['name']?.toString() ??
+          tokenPayload['displayName']?.toString(),
+      allowedSiteIds: _stringListClaim(tokenPayload['allowedSiteIds']),
     );
   }
 
@@ -317,6 +374,7 @@ class AuthenticatedBackendUser {
     required this.tenantId,
     this.email,
     this.displayName,
+    this.allowedSiteIds = const <String>[],
   });
 
   final String uid;
@@ -324,6 +382,7 @@ class AuthenticatedBackendUser {
   final String? tenantId;
   final String? email;
   final String? displayName;
+  final List<String> allowedSiteIds;
 }
 
 class FirestoreUserProfile {
@@ -426,4 +485,21 @@ Map<String, Object?> _jwtPayload(JWT jwt) {
     );
   }
   return const <String, Object?>{};
+}
+
+List<String> _stringListClaim(Object? raw) {
+  if (raw is List) {
+    return raw
+        .map((Object? value) => value?.toString().trim() ?? '')
+        .where((String value) => value.isNotEmpty)
+        .toList(growable: false);
+  }
+  if (raw is String && raw.trim().isNotEmpty) {
+    return raw
+        .split(',')
+        .map((String value) => value.trim())
+        .where((String value) => value.isNotEmpty)
+        .toList(growable: false);
+  }
+  return const <String>[];
 }

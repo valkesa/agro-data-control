@@ -177,47 +177,92 @@ class _EnvironmentOverviewPageState extends State<EnvironmentOverviewPage> {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: widget.onTapBack,
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'AgroData Monitor | Valke S.A.',
-                    textAlign: TextAlign.left,
-                    style: TextStyle(
-                      color: Color(0xFFCBD5E1),
-                      fontSize: 11,
-                      fontWeight: FontWeight.w400,
-                      height: 1,
-                    ),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Expanded(
+                child: Text(
+                  'AgroData Monitor | Valke S.A.',
+                  textAlign: TextAlign.left,
+                  style: TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w400,
+                    height: 1,
                   ),
                 ),
-                _EnvironmentOverviewSizeSelector(
-                  preset: _sizePreset,
-                  onChanged: _setSizePreset,
+              ),
+              Wrap(
+                spacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  _EnvironmentOverviewHomeButton(onTap: widget.onTapBack),
+                  _EnvironmentOverviewSizeSelector(
+                    preset: _sizePreset,
+                    onChanged: _setSizePreset,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          _EnvironmentOverviewPresetLayout(
+            preset: _sizePreset,
+            units: widget.units,
+            labels: widget.labels,
+            plcIds: widget.plcIds,
+            tenantId: widget.tenantId,
+            siteId: widget.siteId,
+            rangeSettings: widget.rangeSettings,
+            showSnapshotPulse: widget.showSnapshotPulse,
+            snapshotStale: widget.snapshotStale,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EnvironmentOverviewHomeButton extends StatelessWidget {
+  const _EnvironmentOverviewHomeButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Home',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 9),
+          decoration: BoxDecoration(
+            color: const Color(0xFF162133),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: const Color(0xFF223046)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.home_rounded, size: 15, color: Color(0xFFCBD5E1)),
+              SizedBox(width: 4),
+              Text(
+                'Home',
+                style: TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
                 ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            _EnvironmentOverviewPresetLayout(
-              preset: _sizePreset,
-              units: widget.units,
-              labels: widget.labels,
-              plcIds: widget.plcIds,
-              tenantId: widget.tenantId,
-              siteId: widget.siteId,
-              rangeSettings: widget.rangeSettings,
-              showSnapshotPulse: widget.showSnapshotPulse,
-              snapshotStale: widget.snapshotStale,
-            ),
-          ],
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -762,6 +807,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
         siteId: siteId,
         event: event,
       );
+      final bool cacheSynced = await _roomWashEventsService.syncBackendCache(
+        siteId: siteId,
+        event: event,
+        backendSnapshotEndpoint: widget.backendSnapshotEndpoint,
+      );
       unawaited(
         _roomWashEventsService.publishOperationalEvent(
           tenantId: tenantId,
@@ -773,7 +823,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
       if (!mounted) {
         return;
       }
-      _showRoomWashMessage('Lavado registrado para ${draft.target.label}.');
+      _showRoomWashMessage(
+        cacheSynced
+            ? 'Lavado registrado para ${draft.target.label}.'
+            : 'El lavado quedó guardado, pero el backend no pudo sincronizarse.',
+      );
     } catch (error) {
       if (!mounted) {
         return;

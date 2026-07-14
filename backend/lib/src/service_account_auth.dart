@@ -11,10 +11,15 @@ class ServiceAccountAuth {
 
   final String _serviceAccountJsonPath;
 
+  String get serviceAccountJsonPath => _serviceAccountJsonPath;
+
   String? _cachedToken;
   DateTime? _tokenExpiresAt;
 
-  static const String _scope = 'https://www.googleapis.com/auth/datastore';
+  static const String _scope =
+      'https://www.googleapis.com/auth/datastore '
+      'https://www.googleapis.com/auth/identitytoolkit '
+      'https://www.googleapis.com/auth/cloud-platform';
   static const String _tokenEndpoint = 'https://oauth2.googleapis.com/token';
 
   /// Retorna un access token válido. Lo renueva automáticamente si está
@@ -49,7 +54,9 @@ class ServiceAccountAuth {
     _cachedToken = token;
     _tokenExpiresAt = DateTime.now().toUtc().add(const Duration(minutes: 55));
 
-    stdout.writeln('[service-account-auth] token refreshed expires=${_tokenExpiresAt!.toIso8601String()}');
+    stdout.writeln(
+      '[service-account-auth] token refreshed expires=${_tokenExpiresAt!.toIso8601String()}',
+    );
     return token;
   }
 
@@ -68,16 +75,17 @@ class ServiceAccountAuth {
     required String privateKeyPem,
   }) {
     final int now = DateTime.now().toUtc().millisecondsSinceEpoch ~/ 1000;
-    final JWT jwt = JWT(
-      <String, Object?>{
-        'iss': clientEmail,
-        'scope': _scope,
-        'aud': _tokenEndpoint,
-        'iat': now,
-        'exp': now + 3600,
-      },
+    final JWT jwt = JWT(<String, Object?>{
+      'iss': clientEmail,
+      'scope': _scope,
+      'aud': _tokenEndpoint,
+      'iat': now,
+      'exp': now + 3600,
+    });
+    return jwt.sign(
+      RSAPrivateKey(privateKeyPem),
+      algorithm: JWTAlgorithm.RS256,
     );
-    return jwt.sign(RSAPrivateKey(privateKeyPem), algorithm: JWTAlgorithm.RS256);
   }
 
   Future<String> _exchangeJwtForToken(String assertion) async {
@@ -96,8 +104,7 @@ class ServiceAccountAuth {
       request.write(body);
 
       final HttpClientResponse response = await request.close();
-      final String responseBody =
-          await response.transform(utf8.decoder).join();
+      final String responseBody = await response.transform(utf8.decoder).join();
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         throw ServiceAccountAuthException(
