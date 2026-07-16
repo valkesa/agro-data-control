@@ -266,6 +266,10 @@ class AlertNotificationFormatter {
     return switch (alert.type) {
       AlertType.muntersDoorOpen => 'Puerta Munters abierta',
       AlertType.roomDoorOpen => 'Puerta de sala abierta',
+      AlertType.temperatureInterior =>
+        alert.thresholdKind == AlertThresholdKind.minimum
+            ? 'Temperatura interior: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)'
+            : 'Temperatura interior: ${_value(alert.measuredValue)} C (max: ${_value(alert.thresholdValue)} C)',
       AlertType.highTemperatureHeatingActive =>
         'Temperatura interior: ${_value(alert.measuredValue)} C (max: ${_value(alert.thresholdValue)} C)',
       AlertType.lowTemperatureHumidifierActive =>
@@ -366,8 +370,8 @@ class NotificationBatchBuilder {
 
 class WhatsAppTemplateBuilder {
   const WhatsAppTemplateBuilder({
-    this.singleTemplateName = 'agrodata_alerts_single_b',
-    this.multipleTemplateName = 'agrodata_alerts_multiple',
+    this.singleTemplateName = 'alerts_single_c',
+    this.multipleTemplateName = 'alerts_multiple_c',
     this.singleLanguageCode = WhatsAppService.defaultTemplateLanguageCode,
     this.multipleLanguageCode = WhatsAppService.defaultTemplateLanguageCode,
     this.parameterMaxLength = 1024,
@@ -381,14 +385,47 @@ class WhatsAppTemplateBuilder {
   final int parameterMaxLength;
   final AlertNotificationFormatter formatter;
 
+  factory WhatsAppTemplateBuilder.fromEnvironment({
+    Map<String, String>? environment,
+    AlertNotificationFormatter formatter = const AlertNotificationFormatter(),
+  }) {
+    final Map<String, String> env = environment ?? Platform.environment;
+    return WhatsAppTemplateBuilder(
+      singleTemplateName: _envValue(
+        env,
+        'WHATSAPP_ALERT_SINGLE_TEMPLATE_NAME',
+        'alerts_single_c',
+      ),
+      multipleTemplateName: _envValue(
+        env,
+        'WHATSAPP_ALERT_MULTIPLE_TEMPLATE_NAME',
+        'alerts_multiple_c',
+      ),
+      singleLanguageCode: _envValue(
+        env,
+        'WHATSAPP_ALERT_SINGLE_TEMPLATE_LANGUAGE',
+        WhatsAppService.defaultTemplateLanguageCode,
+      ),
+      multipleLanguageCode: _envValue(
+        env,
+        'WHATSAPP_ALERT_MULTIPLE_TEMPLATE_LANGUAGE',
+        WhatsAppService.defaultTemplateLanguageCode,
+      ),
+      parameterMaxLength: _envInt(
+        env,
+        'WHATSAPP_ALERT_TEMPLATE_PARAMETER_MAX_LENGTH',
+        1024,
+      ),
+      formatter: formatter,
+    );
+  }
+
   List<WhatsAppTemplateMessage> build({
     required PendingNotificationBatch batch,
     required String clientName,
     required String siteName,
   }) {
-    final String clientSite = '$clientName - $siteName';
     final String clientSitePlc = '$clientName | $siteName | ${batch.plcLabel}';
-    final String roomLabel = batch.roomNumber?.toString() ?? batch.roomId;
     final List<String> alertTexts = batch.alerts
         .map(formatter.format)
         .toList(growable: false);
@@ -396,17 +433,13 @@ class WhatsAppTemplateBuilder {
       return const <WhatsAppTemplateMessage>[];
     }
     final List<List<String>> chunks = _chunkAlerts(
-      clientSite: clientSite,
       clientSitePlc: clientSitePlc,
-      roomLabel: roomLabel,
       alertTexts: alertTexts,
     );
     return <WhatsAppTemplateMessage>[
       for (int i = 0; i < chunks.length; i += 1)
         _buildPart(
-          clientSite: clientSite,
           clientSitePlc: clientSitePlc,
-          roomLabel: roomLabel,
           alertTexts: chunks[i],
           partIndex: i + 1,
           partCount: chunks.length,
@@ -415,15 +448,13 @@ class WhatsAppTemplateBuilder {
   }
 
   WhatsAppTemplateMessage _buildPart({
-    required String clientSite,
     required String clientSitePlc,
-    required String roomLabel,
     required List<String> alertTexts,
     required int partIndex,
     required int partCount,
   }) {
     if (alertTexts.length == 1) {
-      final List<String> params = <String>[alertTexts[0], clientSitePlc];
+      final List<String> params = <String>[clientSitePlc, alertTexts[0]];
       _validateParameters(params);
       return WhatsAppTemplateMessage(
         templateName: singleTemplateName,
@@ -434,7 +465,7 @@ class WhatsAppTemplateBuilder {
       );
     }
     final List<String> lines = distributeAlertLines(alertTexts);
-    final List<String> params = <String>[clientSite, roomLabel, ...lines];
+    final List<String> params = <String>[clientSitePlc, ...lines];
     _validateParameters(params);
     return WhatsAppTemplateMessage(
       templateName: multipleTemplateName,
@@ -446,9 +477,7 @@ class WhatsAppTemplateBuilder {
   }
 
   List<List<String>> _chunkAlerts({
-    required String clientSite,
     required String clientSitePlc,
-    required String roomLabel,
     required List<String> alertTexts,
   }) {
     final List<List<String>> chunks = <List<String>>[];
@@ -456,9 +485,7 @@ class WhatsAppTemplateBuilder {
     for (final String alertText in alertTexts) {
       final List<String> candidate = <String>[...current, alertText];
       final List<String> candidateParameters = _parametersFor(
-        clientSite: clientSite,
         clientSitePlc: clientSitePlc,
-        roomLabel: roomLabel,
         alertTexts: candidate,
       );
       if (current.isNotEmpty &&
@@ -478,15 +505,13 @@ class WhatsAppTemplateBuilder {
   }
 
   List<String> _parametersFor({
-    required String clientSite,
     required String clientSitePlc,
-    required String roomLabel,
     required List<String> alertTexts,
   }) {
     if (alertTexts.length == 1) {
-      return <String>[alertTexts[0], clientSitePlc];
+      return <String>[clientSitePlc, alertTexts[0]];
     }
-    return <String>[clientSite, roomLabel, ...distributeAlertLines(alertTexts)];
+    return <String>[clientSitePlc, ...distributeAlertLines(alertTexts)];
   }
 
   void _validateParameters(List<String> parameters) {
@@ -498,15 +523,33 @@ class WhatsAppTemplateBuilder {
   }
 }
 
+String _envValue(
+  Map<String, String> environment,
+  String name,
+  String defaultValue,
+) {
+  final String value = environment[name]?.trim() ?? '';
+  return value.isEmpty ? defaultValue : value;
+}
+
+int _envInt(Map<String, String> environment, String name, int defaultValue) {
+  final String value = environment[name]?.trim() ?? '';
+  if (value.isEmpty) {
+    return defaultValue;
+  }
+  return int.tryParse(value) ?? defaultValue;
+}
+
 List<String> distributeAlertLines(List<String> alerts) {
   if (alerts.length < 2) {
     throw ArgumentError.value(alerts.length, 'alerts.length', 'Must be >= 2');
   }
-  final int base = alerts.length ~/ 3;
-  int remainder = alerts.length % 3;
+  final int lineCount = 2;
+  final int base = alerts.length ~/ lineCount;
+  int remainder = alerts.length % lineCount;
   int index = 0;
   final List<String> lines = <String>[];
-  for (int line = 0; line < 3; line += 1) {
+  for (int line = 0; line < lineCount; line += 1) {
     final int take = base + (remainder > 0 ? 1 : 0);
     if (remainder > 0) {
       remainder -= 1;
@@ -643,11 +686,15 @@ class AlertNotificationProcessor {
   AlertNotificationProcessor({
     required this.recipientsConfig,
     required this.sender,
+    required this.clientName,
+    required this.siteName,
     this.builder = const NotificationBatchBuilder(),
   });
 
   final WhatsAppAlertRecipientsConfig recipientsConfig;
   final AlertNotificationSender sender;
+  final String clientName;
+  final String siteName;
   final NotificationBatchBuilder builder;
 
   Future<NotificationBatchSendResult> process(
@@ -675,31 +722,11 @@ class AlertNotificationProcessor {
     }
     final BuiltNotificationBatch builtBatch = builder.build(
       batch: batch,
-      clientName: _notificationClientName(recipients),
-      siteName: _notificationSiteName(recipients),
+      clientName: clientName,
+      siteName: siteName,
     );
     return sender.send(builtBatch: builtBatch, recipients: recipients);
   }
-}
-
-String _notificationClientName(List<AlertRecipient> recipients) {
-  for (final AlertRecipient recipient in recipients) {
-    if (recipient.scope == AlertRecipientScope.tenantSite &&
-        recipient.displayClientName.isNotEmpty) {
-      return recipient.displayClientName;
-    }
-  }
-  return recipients.first.displayClientName;
-}
-
-String _notificationSiteName(List<AlertRecipient> recipients) {
-  for (final AlertRecipient recipient in recipients) {
-    if (recipient.scope == AlertRecipientScope.tenantSite &&
-        recipient.displaySiteName.isNotEmpty) {
-      return recipient.displaySiteName;
-    }
-  }
-  return recipients.first.displaySiteName;
 }
 
 class NotificationBatchSendResult {

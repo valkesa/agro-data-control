@@ -17,8 +17,193 @@ Future<void> main() async {
   await _testOrderChangeDoesNotCreateTransition();
   await _testHysteresisPreventsThresholdFlapping();
   await _testCooldownSuppressesFastResend();
+  await _testThresholdChangeCreatesActivation();
+  await _testActiveAlertConfigChangeRespectsCooldown();
+  await _testSendWhatsappEnableReevaluatesActiveAlert();
+  _testMuntersSpecificThresholds();
   await _testStopDoesNotRecover();
   await _testOneHundredSnapshotsConsumption();
+}
+
+Future<void> _testThresholdChangeCreatesActivation() async {
+  final AlertSettingsCache cache = AlertSettingsCache();
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(tempMin: 19),
+  );
+  final AlertRuntime runtime = AlertRuntime(settingsCache: cache);
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 19.5)),
+    evaluatedAt: t0,
+  );
+  _expect(result.whatsAppCandidates.isEmpty, 'initial threshold is normal');
+
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(tempMin: 20),
+    now: t0.add(const Duration(seconds: 10)),
+  );
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 19.5)),
+    evaluatedAt: t0.add(const Duration(seconds: 10)),
+  );
+  _expect(
+    result.whatsAppCandidates.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.temperatureInterior,
+    ),
+    'threshold change creates new active alert',
+  );
+}
+
+Future<void> _testActiveAlertConfigChangeRespectsCooldown() async {
+  final AlertSettingsCache cache = AlertSettingsCache();
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(tempMin: 19),
+  );
+  final AlertRuntime runtime = AlertRuntime(settingsCache: cache);
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 18.5)),
+    evaluatedAt: t0,
+  );
+  _expect(result.whatsAppCandidates.length == 1, 'initial active alert sends');
+
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(tempMin: 20),
+    now: t0.add(const Duration(minutes: 3)),
+  );
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 18.5)),
+    evaluatedAt: t0.add(const Duration(minutes: 3)),
+  );
+  _expect(
+    result.rooms.first.transitionBatch!.configChangedActivated.length == 1,
+    'active alert is reevaluated by config change',
+  );
+  _expect(
+    result.whatsAppCandidates.isEmpty,
+    'cooldown suppresses config-change resend',
+  );
+
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 18.5)),
+    evaluatedAt: t0.add(const Duration(minutes: 4)),
+  );
+  _expect(
+    result.rooms.first.transitionBatch!.configChangedActivated.isEmpty,
+    'config version is marked evaluated after cooldown suppression',
+  );
+  _expect(result.whatsAppCandidates.isEmpty, 'does not retry every snapshot');
+}
+
+Future<void> _testSendWhatsappEnableReevaluatesActiveAlert() async {
+  final AlertSettingsCache cache = AlertSettingsCache();
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(
+      tempMin: 19,
+      toggleOverrides: <String, Object?>{
+        'temperatureInterior': <String, Object?>{
+          'enabled': true,
+          'sendWhatsapp': false,
+        },
+      },
+    ),
+  );
+  final AlertRuntime runtime = AlertRuntime(settingsCache: cache);
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 18.5)),
+    evaluatedAt: t0,
+  );
+  _expect(
+    result.whatsAppCandidates.isEmpty,
+    'sendWhatsapp false does not send',
+  );
+
+  cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(tempMin: 19),
+    now: t0.add(const Duration(minutes: 1)),
+  );
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 18.5)),
+    evaluatedAt: t0.add(const Duration(minutes: 1)),
+  );
+  _expect(
+    result.whatsAppCandidates.length == 1,
+    'sendWhatsapp false to true creates notification candidate',
+  );
+}
+
+void _testMuntersSpecificThresholds() {
+  final CachedAlertSettings settings = _settings(
+    tempMin: 15,
+    munters2TempMin: 20,
+  );
+  final AlertEvaluationEngine engine = AlertEvaluationEngine();
+  final List<EvaluatedAlert> munters1Alerts = engine.evaluate(
+    AlertEvaluationContext(
+      identity: const AlertIdentity(
+        tenantId: 'tenant-a',
+        siteId: 'site-a',
+        roomId: 'room_1',
+        roomNumber: 1,
+        muntersId: 'munters1',
+      ),
+      snapshot: SnapshotRoomData(values: _unit(tempInterior: 19)),
+      settings: settings,
+      evaluatedAt: DateTime.utc(2026),
+      roomWashStatus: const RoomWashStatus(withinWashWindow: false),
+    ),
+  );
+  final List<EvaluatedAlert> munters2Alerts = engine.evaluate(
+    AlertEvaluationContext(
+      identity: const AlertIdentity(
+        tenantId: 'tenant-a',
+        siteId: 'site-a',
+        roomId: 'room_2',
+        roomNumber: 2,
+        muntersId: 'munters2',
+      ),
+      snapshot: SnapshotRoomData(values: _unit(tempInterior: 19)),
+      settings: settings,
+      evaluatedAt: DateTime.utc(2026),
+      roomWashStatus: const RoomWashStatus(withinWashWindow: false),
+    ),
+  );
+  _expect(
+    !_hasAlert(AlertType.temperatureInterior, munters1Alerts),
+    'munters1 uses munters1 threshold',
+  );
+  _expect(
+    _hasAlert(AlertType.temperatureInterior, munters2Alerts),
+    'munters2 uses munters2 threshold',
+  );
 }
 
 Future<void> _testHysteresisPreventsThresholdFlapping() async {
@@ -41,7 +226,7 @@ Future<void> _testHysteresisPreventsThresholdFlapping() async {
     'temperature alert does not recover inside hysteresis band',
   );
   _expect(
-    runtime.activeAlertsRegistry.size == 1,
+    runtime.activeAlertsRegistry.size == 2,
     'alert remains active inside hysteresis band',
   );
   nearNormal = await coordinator.processSnapshot(
@@ -49,7 +234,7 @@ Future<void> _testHysteresisPreventsThresholdFlapping() async {
     evaluatedAt: DateTime.utc(2026, 1, 1, 10, 0, 10),
   );
   _expect(
-    nearNormal.rooms.first.transitionBatch!.recovered.length == 1,
+    nearNormal.rooms.first.transitionBatch!.recovered.length == 2,
     'temperature alert recovers after hysteresis clears',
   );
 }
@@ -66,7 +251,7 @@ Future<void> _testCooldownSuppressesFastResend() async {
     _snapshot(_unit(tempInterior: 31, resistencia1: true)),
     evaluatedAt: t0,
   );
-  _expect(result.whatsAppCandidates.length == 1, 'first activation sends');
+  _expect(result.whatsAppCandidates.length == 2, 'first activation sends');
   await coordinator.processSnapshot(
     _snapshot(_unit(tempInterior: 29, resistencia1: false)),
     evaluatedAt: t0.add(const Duration(seconds: 20)),
@@ -76,7 +261,7 @@ Future<void> _testCooldownSuppressesFastResend() async {
     evaluatedAt: t0.add(const Duration(minutes: 1)),
   );
   _expect(
-    result.rooms.first.transitionBatch!.activated.length == 1,
+    result.rooms.first.transitionBatch!.activated.length == 2,
     'reactivation before cooldown is detected',
   );
   _expect(
@@ -92,7 +277,7 @@ Future<void> _testCooldownSuppressesFastResend() async {
     evaluatedAt: t0.add(const Duration(minutes: 11)),
   );
   _expect(
-    result.whatsAppCandidates.length == 1,
+    result.whatsAppCandidates.length == 2,
     'reactivation after cooldown sends again',
   );
 }
@@ -148,6 +333,7 @@ Future<void> _testWhatsAppCandidatesUseConfiguredOrder() async {
             .join(',') ==
         <AlertType>[
           AlertType.highHumidity,
+          AlertType.temperatureInterior,
           AlertType.highTemperatureHeatingActive,
           AlertType.muntersDoorOpen,
         ].join(','),
@@ -204,7 +390,7 @@ Future<void> _testOrderChangeDoesNotCreateTransition() async {
   final AlertTransitionBatch batch = result.rooms.first.transitionBatch!;
   _expect(batch.activated.isEmpty, 'order change does not reactivate');
   _expect(batch.recovered.isEmpty, 'order change does not recover');
-  _expect(batch.stillActive.length == 1, 'order change remains stillActive');
+  _expect(batch.stillActive.length == 2, 'order change remains stillActive');
 }
 
 void _testDoorEvaluators() {
@@ -246,6 +432,43 @@ void _testDoorEvaluators() {
 }
 
 void _testTemperatureEvaluators() {
+  final EvaluatedAlert lowInterior =
+      _engineAlerts(
+        settings: _settings(tempMin: 18.5),
+        unitJson: _unit(tempInterior: 18, bombaHumidificador: false),
+      ).firstWhere(
+        (EvaluatedAlert alert) => alert.type == AlertType.temperatureInterior,
+      );
+  _expect(
+    lowInterior.thresholdKind == AlertThresholdKind.minimum &&
+        lowInterior.measuredValue == 18 &&
+        lowInterior.thresholdValue == 18.5 &&
+        lowInterior.sendWhatsapp,
+    'interior temperature below minimum activates with whatsapp',
+  );
+  final EvaluatedAlert highInterior =
+      _engineAlerts(
+        settings: _settings(tempMax: 30),
+        unitJson: _unit(tempInterior: 31, resistencia1: false),
+      ).firstWhere(
+        (EvaluatedAlert alert) => alert.type == AlertType.temperatureInterior,
+      );
+  _expect(
+    highInterior.thresholdKind == AlertThresholdKind.maximum &&
+        highInterior.measuredValue == 31 &&
+        highInterior.thresholdValue == 30,
+    'interior temperature above maximum activates without heating',
+  );
+  _expect(
+    !_hasAlert(
+      AlertType.temperatureInterior,
+      _engineAlerts(
+        settings: _settings(tempMin: 18.5),
+        unitJson: _unit(tempInterior: 18.5),
+      ),
+    ),
+    'interior temperature equal threshold does not activate',
+  );
   _expect(
     _hasAlert(
       AlertType.highTemperatureHeatingActive,
@@ -476,13 +699,13 @@ Future<void> _testCoordinatorTransitionsAndCache() async {
     evaluatedAt: DateTime.utc(2026, 1, 1, 10),
   );
   final AlertTransitionBatch firstBatch = first.rooms.first.transitionBatch!;
-  _expect(firstBatch.activated.length == 1, 'first snapshot activates once');
+  _expect(firstBatch.activated.length == 2, 'first snapshot activates once');
   _expect(
-    first.whatsAppCandidates.length == 1,
+    first.whatsAppCandidates.length == 2,
     'whatsapp candidate on activation',
   );
   _expect(
-    runtime.activeAlertsRegistry.size == 1,
+    runtime.activeAlertsRegistry.size == 2,
     'active alert size increases',
   );
   _expect(loader.calls == 1, 'cache miss reads once');
@@ -494,10 +717,10 @@ Future<void> _testCoordinatorTransitionsAndCache() async {
       );
   final AlertTransitionBatch secondBatch = second.rooms.first.transitionBatch!;
   _expect(secondBatch.activated.isEmpty, 'still active does not reactivate');
-  _expect(secondBatch.stillActive.length == 1, 'stillActive reported');
+  _expect(secondBatch.stillActive.length == 2, 'stillActive reported');
   _expect(second.whatsAppCandidates.isEmpty, 'no candidate for stillActive');
   _expect(
-    runtime.activeAlertsRegistry.size == 1,
+    runtime.activeAlertsRegistry.size == 2,
     'stillActive does not grow size',
   );
   _expect(loader.calls == 1, 'cache hit does not read');
@@ -507,7 +730,7 @@ Future<void> _testCoordinatorTransitionsAndCache() async {
     evaluatedAt: DateTime.utc(2026, 1, 1, 10, 0, 10),
   );
   final AlertTransitionBatch thirdBatch = third.rooms.first.transitionBatch!;
-  _expect(thirdBatch.recovered.length == 1, 'normal snapshot recovers');
+  _expect(thirdBatch.recovered.length == 2, 'normal snapshot recovers');
   _expect(runtime.activeAlertsRegistry.size == 0, 'recovery decreases size');
 }
 
@@ -536,7 +759,7 @@ Future<void> _testStopDoesNotRecover() async {
     'STOP snapshot has no transitions',
   );
   _expect(
-    runtime.activeAlertsRegistry.size == 1,
+    runtime.activeAlertsRegistry.size == 2,
     'STOP does not recover active alert',
   );
 }
@@ -566,14 +789,14 @@ Future<void> _testOneHundredSnapshotsConsumption() async {
     candidates += result.whatsAppCandidates.length;
   }
   _expect(loader.calls == 1, '100 snapshots cause one settings read');
-  _expect(activated == 1, '100 active snapshots activate once');
-  _expect(stillActive == 99, '100 active snapshots produce 99 stillActive');
+  _expect(activated == 2, '100 active snapshots activate once');
+  _expect(stillActive == 198, '100 active snapshots produce 99 stillActive');
   _expect(
-    candidates == 1,
+    candidates == 2,
     '100 active snapshots produce one whatsapp candidate',
   );
   _expect(
-    runtime.activeAlertsRegistry.size == 1,
+    runtime.activeAlertsRegistry.size == 2,
     'active alert size remains one',
   );
 }
@@ -626,6 +849,7 @@ AlertRuntime _runtimeWithSettings(CachedAlertSettings settings) {
 
 CachedAlertSettings _settings({
   double tempMin = 15,
+  double? munters2TempMin,
   double tempMax = 30,
   double humidityRed = 95,
   double dewPointRed = 1,
@@ -637,6 +861,7 @@ CachedAlertSettings _settings({
     siteId: 'site-a',
     raw: _settingsRaw(
       tempMin: tempMin,
+      munters2TempMin: munters2TempMin,
       tempMax: tempMax,
       humidityRed: humidityRed,
       dewPointRed: dewPointRed,
@@ -650,6 +875,7 @@ CachedAlertSettings _settings({
 
 Map<String, Object?> _settingsRaw({
   double tempMin = 15,
+  double? munters2TempMin,
   double tempMax = 30,
   double humidityRed = 95,
   double dewPointRed = 1,
@@ -677,6 +903,20 @@ Map<String, Object?> _settingsRaw({
         },
         'presionDiferencial': <String, Object?>{'max': pressureMax},
       },
+      if (munters2TempMin != null)
+        'munters2': <String, Object?>{
+          'tempInterior': <String, Object?>{
+            'min': munters2TempMin,
+            'max': tempMax,
+          },
+          'humidityInterior': <String, Object?>{
+            'alarm': <String, Object?>{'redMinExclusive': humidityRed},
+          },
+          'dewPointMargin': <String, Object?>{
+            'alarm': <String, Object?>{'redMaxInclusive': dewPointRed},
+          },
+          'presionDiferencial': <String, Object?>{'max': pressureMax},
+        },
     },
   };
 }
@@ -685,6 +925,7 @@ String _settingsKey(AlertType type) {
   return switch (type) {
     AlertType.muntersDoorOpen => 'muntersDoorOpen',
     AlertType.roomDoorOpen => 'roomDoorOpen',
+    AlertType.temperatureInterior => 'temperatureInterior',
     AlertType.highTemperatureHeatingActive => 'highTemperatureHeatingActive',
     AlertType.lowTemperatureHumidifierActive =>
       'lowTemperatureHumidifierActive',

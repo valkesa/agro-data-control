@@ -1,0 +1,310 @@
+Informe tecnico: reevaluacion de alertas WhatsApp al cambiar umbrales
+=====================================================================
+
+Fecha: 2026-07-15
+
+Alcance
+-------
+Se implemento una correccion local en el repo para que el motor de alertas
+pueda tratar cambios relevantes de configuracion como una reevaluacion
+controlada de alertas activas.
+
+No se hizo deploy al VPS.
+No se hizo commit.
+
+
+Causa raiz confirmada
+---------------------
+El backend mantiene en memoria un registro de alertas activas y envia WhatsApp
+principalmente cuando detecta una transicion:
+
+  normal -> alerta
+
+Cuando una condicion permanece activa:
+
+  alerta -> alerta
+
+no se vuelve a enviar, para evitar spam.
+
+El problema aparecia al cambiar un umbral sin que cambiara la medicion. Si una
+alerta ya estaba activa y seguia activa con el nuevo umbral, el motor la seguia
+tratando como "still active" y no generaba una nueva activacion notificable.
+
+
+Decision de diseno
+------------------
+Se eligio una version global de configuracion por tenant/site, no versiones por
+tipo de alerta.
+
+Motivo:
+
+- Encaja con la estructura actual de AlertSettingsCache.
+- Evita refactors amplios.
+- No borra estados activos.
+- Cada alerta activa registra la version ya evaluada, por lo que no se reintenta
+  en cada snapshot.
+- El cooldown sigue protegiendo contra spam.
+
+La version global solo cambia cuando cambia configuracion relevante para
+activacion o notificacion:
+
+- umbrales en munters;
+- enabled;
+- sendWhatsapp.
+
+No cambia por modificaciones de orden visual de alertas.
+
+
+Estructura de versionado
+------------------------
+Se agrego versionado en memoria en AlertSettingsCache:
+
+- version por AlertSettingsCacheKey tenant/site;
+- firma canonica de configuracion relevante;
+- incremento solo si la firma cambia;
+- sin lecturas ni escrituras adicionales de Firestore.
+
+Cada CachedAlertSettings queda con:
+
+  configVersion
+
+Cada EvaluatedAlert queda con:
+
+  configVersion
+
+Cada ActiveAlertState queda con:
+
+  configVersionEvaluated
+
+
+Cambios en estado activo
+------------------------
+ActiveAlertsRegistry ahora distingue:
+
+1. Alerta nueva:
+
+   previous == null
+   -> activated
+
+2. Alerta activa con misma version:
+
+   previous.configVersionEvaluated == alert.configVersion
+   -> stillActive
+
+3. Alerta activa con version nueva:
+
+   previous.configVersionEvaluated != alert.configVersion
+   -> activated
+   -> configChangedActivated
+
+El estado se actualiza a la nueva version aunque el envio quede bloqueado por
+cooldown. Esto evita intentar reenviar en cada snapshot.
+
+
+Comportamiento ante cambio de umbral
+------------------------------------
+Caso normal -> alerta:
+
+- Se mantiene el comportamiento existente.
+- Se genera activacion.
+- Se evalua envio WhatsApp con cooldown.
+
+Caso alerta -> alerta con cambio de configuracion:
+
+- Se marca como activacion por configuracion.
+- Se evalua envio WhatsApp con cooldown.
+- Si cooldown permite, entra como candidato de WhatsApp.
+- Si cooldown bloquea, no se envia y se marca la version como evaluada.
+
+Caso alerta -> normal:
+
+- Se conserva la logica de recuperacion existente con histeresis.
+- No se agrega envio de recuperacion.
+
+
+Cooldown
+--------
+El cooldown se aplica siempre mediante el registry existente de cooldown.
+
+Se ajusto el default de AlertRuntimeConfig a 10 minutos para alinear el codigo
+con el requisito operativo indicado.
+
+No se creo cooldown separado para cambios de configuracion.
+No se reinicia lastSentAt por cambios de configuracion.
+
+
+sendWhatsapp false -> true
+--------------------------
+Si una alerta ya estaba activa con sendWhatsapp=false y luego la configuracion
+cambia a sendWhatsapp=true:
+
+- cambia la version;
+- la alerta activa se reevalua;
+- se genera activacion por configuracion;
+- se envia solo si cooldown lo permite.
+
+Si sendWhatsapp cambia a false:
+
+- la alerta puede seguir activa funcionalmente;
+- no se envia WhatsApp;
+- se marca la version evaluada para no reintentar en cada snapshot.
+
+
+Munters1 / Munters2
+-------------------
+Se preparo el backend para resolver umbrales por muntersId real:
+
+  settings.thresholdsFor('munters1')
+  settings.thresholdsFor('munters2')
+
+El fallback esta centralizado:
+
+  si no existe configuracion especifica para munters2, usa munters1.
+
+La UI sigue mostrando un unico conjunto compartido de umbrales, pero al guardar
+se persiste el mismo set bajo:
+
+  munters.munters1
+  munters.munters2
+
+Esto deja el documento preparado para futura configuracion independiente por
+PLC, sin cambiar todavia la experiencia visual.
+
+
+Impacto en Firestore
+--------------------
+No se agregaron lecturas periodicas nuevas.
+No se agregaron escrituras de estado dinamico de alertas.
+No se persiste configVersion en Firestore.
+
+La version vive solo en memoria.
+
+El guardado de configuracion compartida ahora escribe munters1 y munters2 en una
+misma operacion logica.
+
+
+Logs agregados/ajustados
+------------------------
+AlertSettingsCache registra cambios de version:
+
+  event=alert_config_version_changed
+  tenant=...
+  site=...
+  previousVersion=...
+  currentVersion=...
+
+AlertProcessingCoordinator registra activaciones con reason:
+
+  reason=measurement
+  reason=config_changed
+
+Tambien incluye configVersion en el log de activacion.
+
+Los logs de cooldown existentes se mantienen.
+
+
+Archivos modificados para esta implementacion
+---------------------------------------------
+Backend:
+
+- backend/lib/src/alert_settings_cache.dart
+- backend/lib/src/alert_models.dart
+- backend/lib/src/active_alerts_registry.dart
+- backend/lib/src/alert_evaluation_engine.dart
+- backend/lib/src/alert_processing_coordinator.dart
+- backend/lib/src/alert_runtime_config.dart
+- backend/test/alert_evaluation_engine_test.dart
+- backend/test/alert_metadata_and_cache_backoff_test.dart
+
+Frontend / servicios de guardado:
+
+- lib/services/alert_settings_cache_sync_service.dart
+- lib/services/control_dashboard_config_service.dart
+
+Nota:
+El repo ya tenia otros archivos modificados por trabajos previos. Este informe
+lista los archivos relevantes para la reevaluacion de alertas por cambio de
+umbrales.
+
+
+Pruebas agregadas o actualizadas
+--------------------------------
+Se agrego cobertura para:
+
+- cambio de umbral que genera nueva condicion;
+- alerta ya activa que cambia de umbral;
+- cooldown vigente durante reevaluacion por configuracion;
+- no reintentar en cada snapshot si el cooldown bloqueo;
+- sendWhatsapp false -> true;
+- configuracion especifica por Munters1 / Munters2;
+- configuracion identica no incrementa version;
+- cambio de orden visual no incrementa version;
+- cambio real de umbral incrementa version.
+
+
+Validaciones ejecutadas
+-----------------------
+Comandos ejecutados con resultado OK:
+
+  dart analyze backend
+  flutter analyze
+  dart run backend/test/alert_evaluation_engine_test.dart
+  dart run backend/test/alert_metadata_and_cache_backoff_test.dart
+  dart run backend/test/alert_infrastructure_test.dart
+  dart run backend/test/alert_notifications_test.dart
+  dart run backend/test/whatsapp_alert_recipients_test.dart
+  flutter test test/alert_settings_test.dart
+
+
+Comportamiento tras reinicio
+----------------------------
+No se persiste configVersion.
+
+Tras reiniciar, el backend comienza con versiones en memoria desde cero y usa el
+flujo existente para reconstruir estado a partir de snapshots.
+
+No se agrego ningun mecanismo nuevo que envie mensajes por el solo hecho de
+reiniciar. La politica de arranque queda alineada con el comportamiento actual
+del motor.
+
+
+Funcion de diagnostico futura
+-----------------------------
+No se implemento un endpoint ni boton de diagnostico.
+
+El punto natural para conectarlo mas adelante seria:
+
+- ActiveAlertsRegistry para estado activo;
+- AlertNotificationCooldownRegistry para cooldown y lastSentAt;
+- AlertSettingsCache para configVersion actual;
+- AlertEvaluationEngine para recalcular activa/normal por snapshot.
+
+Un endpoint futuro podria devolver por alerta:
+
+- activa / normal;
+- WhatsApp habilitado / deshabilitado;
+- envio permitido / bloqueado;
+- motivo del bloqueo;
+- cooldown restante;
+- configVersionEvaluated;
+- current configVersion.
+
+
+Riesgos y pendientes
+--------------------
+1. La version implementada es global por tenant/site. Si cambia presion
+   diferencial, una alerta activa de temperatura puede reevaluarse, pero no se
+   reenvia indebidamente si cooldown o version evaluada lo bloquea. Una version
+   selectiva por AlertType seria mas precisa pero mas compleja.
+
+2. El cooldown default quedo en 10 minutos. Si produccion tenia una expectativa
+   operativa distinta, revisar antes de deploy.
+
+3. No se hizo deploy al VPS. Para desplegar, copiar o desplegar los archivos del
+   repo y reiniciar:
+
+     sudo systemctl restart agrodata-backend.service
+
+4. Antes de deploy conviene revisar el estado git y separar commits si hay
+   cambios no relacionados.
+

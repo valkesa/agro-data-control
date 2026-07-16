@@ -1,6 +1,6 @@
 class AlertRuntimeConfig {
   const AlertRuntimeConfig({
-    this.cooldown = const Duration(minutes: 30),
+    this.cooldown = const Duration(minutes: 10),
     this.hysteresis = const AlertHysteresisConfig(),
   });
 

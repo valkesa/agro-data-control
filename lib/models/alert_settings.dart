@@ -1,6 +1,7 @@
 enum AlertSettingKey {
   muntersDoorOpen,
   roomDoorOpen,
+  temperatureInterior,
   highTemperatureHeatingActive,
   lowTemperatureHumidifierActive,
   highDifferentialPressure,
@@ -13,6 +14,7 @@ extension AlertSettingKeyDefaults on AlertSettingKey {
     return switch (this) {
       AlertSettingKey.muntersDoorOpen => 'muntersDoorOpen',
       AlertSettingKey.roomDoorOpen => 'roomDoorOpen',
+      AlertSettingKey.temperatureInterior => 'temperatureInterior',
       AlertSettingKey.highTemperatureHeatingActive =>
         'highTemperatureHeatingActive',
       AlertSettingKey.lowTemperatureHumidifierActive =>
@@ -30,6 +32,7 @@ class AlertSettings {
   const AlertSettings({
     required this.muntersDoorOpen,
     required this.roomDoorOpen,
+    required this.temperatureInterior,
     required this.highTemperatureHeatingActive,
     required this.lowTemperatureHumidifierActive,
     required this.highHumidity,
@@ -52,6 +55,11 @@ class AlertSettings {
         source['roomDoorOpen'],
         defaultEnabled: true,
         defaultOrder: AlertSettingKey.roomDoorOpen.fallbackOrder,
+      ),
+      temperatureInterior: AlertToggleSettings.fromRaw(
+        source['temperatureInterior'],
+        defaultEnabled: true,
+        defaultOrder: AlertSettingKey.temperatureInterior.fallbackOrder,
       ),
       highTemperatureHeatingActive: AlertToggleSettings.fromRaw(
         source['highTemperatureHeatingActive'] ??
@@ -88,19 +96,21 @@ class AlertSettings {
   const AlertSettings.defaults()
     : muntersDoorOpen = const AlertToggleSettings.defaults(order: 1),
       roomDoorOpen = const AlertToggleSettings.defaults(order: 2),
+      temperatureInterior = const AlertToggleSettings.defaults(order: 3),
       highTemperatureHeatingActive = const AlertToggleSettings.defaults(
-        order: 3,
-      ),
-      lowTemperatureHumidifierActive = const AlertToggleSettings.defaults(
         order: 4,
       ),
-      highDifferentialPressure = const AlertToggleSettings.defaults(order: 5),
-      highHumidity = const AlertToggleSettings.defaults(order: 6),
-      dewPointRisk = const AlertToggleSettings.defaults(order: 7);
+      lowTemperatureHumidifierActive = const AlertToggleSettings.defaults(
+        order: 5,
+      ),
+      highDifferentialPressure = const AlertToggleSettings.defaults(order: 6),
+      highHumidity = const AlertToggleSettings.defaults(order: 7),
+      dewPointRisk = const AlertToggleSettings.defaults(order: 8);
 
   factory AlertSettings._normalized({
     required AlertToggleSettings muntersDoorOpen,
     required AlertToggleSettings roomDoorOpen,
+    required AlertToggleSettings temperatureInterior,
     required AlertToggleSettings highTemperatureHeatingActive,
     required AlertToggleSettings lowTemperatureHumidifierActive,
     required AlertToggleSettings highHumidity,
@@ -111,6 +121,7 @@ class AlertSettings {
         _normalizeOrders(<AlertSettingKey, AlertToggleSettings>{
           AlertSettingKey.muntersDoorOpen: muntersDoorOpen,
           AlertSettingKey.roomDoorOpen: roomDoorOpen,
+          AlertSettingKey.temperatureInterior: temperatureInterior,
           AlertSettingKey.highTemperatureHeatingActive:
               highTemperatureHeatingActive,
           AlertSettingKey.lowTemperatureHumidifierActive:
@@ -122,6 +133,7 @@ class AlertSettings {
     return AlertSettings(
       muntersDoorOpen: normalized[AlertSettingKey.muntersDoorOpen]!,
       roomDoorOpen: normalized[AlertSettingKey.roomDoorOpen]!,
+      temperatureInterior: normalized[AlertSettingKey.temperatureInterior]!,
       highTemperatureHeatingActive:
           normalized[AlertSettingKey.highTemperatureHeatingActive]!,
       lowTemperatureHumidifierActive:
@@ -135,6 +147,7 @@ class AlertSettings {
 
   final AlertToggleSettings muntersDoorOpen;
   final AlertToggleSettings roomDoorOpen;
+  final AlertToggleSettings temperatureInterior;
   final AlertToggleSettings highTemperatureHeatingActive;
   final AlertToggleSettings lowTemperatureHumidifierActive;
   final AlertToggleSettings highHumidity;
@@ -144,6 +157,7 @@ class AlertSettings {
   AlertSettings copyWith({
     AlertToggleSettings? muntersDoorOpen,
     AlertToggleSettings? roomDoorOpen,
+    AlertToggleSettings? temperatureInterior,
     AlertToggleSettings? highTemperatureHeatingActive,
     AlertToggleSettings? lowTemperatureHumidifierActive,
     AlertToggleSettings? highHumidity,
@@ -153,6 +167,7 @@ class AlertSettings {
     return AlertSettings._normalized(
       muntersDoorOpen: muntersDoorOpen ?? this.muntersDoorOpen,
       roomDoorOpen: roomDoorOpen ?? this.roomDoorOpen,
+      temperatureInterior: temperatureInterior ?? this.temperatureInterior,
       highTemperatureHeatingActive:
           highTemperatureHeatingActive ?? this.highTemperatureHeatingActive,
       lowTemperatureHumidifierActive:
@@ -168,6 +183,7 @@ class AlertSettings {
     return switch (key) {
       AlertSettingKey.muntersDoorOpen => muntersDoorOpen,
       AlertSettingKey.roomDoorOpen => roomDoorOpen,
+      AlertSettingKey.temperatureInterior => temperatureInterior,
       AlertSettingKey.highTemperatureHeatingActive =>
         highTemperatureHeatingActive,
       AlertSettingKey.lowTemperatureHumidifierActive =>
@@ -182,6 +198,9 @@ class AlertSettings {
     return copyWith(
       muntersDoorOpen: key == AlertSettingKey.muntersDoorOpen ? toggle : null,
       roomDoorOpen: key == AlertSettingKey.roomDoorOpen ? toggle : null,
+      temperatureInterior: key == AlertSettingKey.temperatureInterior
+          ? toggle
+          : null,
       highTemperatureHeatingActive:
           key == AlertSettingKey.highTemperatureHeatingActive ? toggle : null,
       lowTemperatureHumidifierActive:
@@ -224,6 +243,7 @@ class AlertSettings {
     return AlertSettings._normalized(
       muntersDoorOpen: reordered[AlertSettingKey.muntersDoorOpen]!,
       roomDoorOpen: reordered[AlertSettingKey.roomDoorOpen]!,
+      temperatureInterior: reordered[AlertSettingKey.temperatureInterior]!,
       highTemperatureHeatingActive:
           reordered[AlertSettingKey.highTemperatureHeatingActive]!,
       lowTemperatureHumidifierActive:
@@ -239,6 +259,7 @@ class AlertSettings {
     return <String, Object?>{
       'muntersDoorOpen': muntersDoorOpen.toFirestore(),
       'roomDoorOpen': roomDoorOpen.toFirestore(),
+      'temperatureInterior': temperatureInterior.toFirestore(),
       'highTemperatureHeatingActive': highTemperatureHeatingActive
           .toFirestore(),
       'lowTemperatureHumidifierActive': lowTemperatureHumidifierActive
@@ -254,6 +275,7 @@ class AlertSettings {
     return other is AlertSettings &&
         other.muntersDoorOpen == muntersDoorOpen &&
         other.roomDoorOpen == roomDoorOpen &&
+        other.temperatureInterior == temperatureInterior &&
         other.highTemperatureHeatingActive == highTemperatureHeatingActive &&
         other.lowTemperatureHumidifierActive ==
             lowTemperatureHumidifierActive &&
@@ -266,6 +288,7 @@ class AlertSettings {
   int get hashCode => Object.hash(
     muntersDoorOpen,
     roomDoorOpen,
+    temperatureInterior,
     highTemperatureHeatingActive,
     lowTemperatureHumidifierActive,
     highHumidity,

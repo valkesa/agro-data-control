@@ -13,6 +13,7 @@ Future<void> main() async {
   await _testBackoff();
   await _testInFlightFailureCountsOnce();
   await _testCachedConfigSurvivesFailures();
+  await _testConfigVersionChangesOnlyForRelevantSettings();
 }
 
 void _testAlertOrderParsing() {
@@ -23,6 +24,7 @@ void _testAlertOrderParsing() {
       'alerts': <String, Object?>{
         'muntersDoorOpen': <String, Object?>{'order': 7},
         'roomDoorOpen': <String, Object?>{'order': -1},
+        'temperatureInterior': <String, Object?>{'order': null},
         'highTemperatureHeatingActive': <String, Object?>{'order': 1},
         'lowTemperatureHumidifierActive': <String, Object?>{'order': 1},
         'highDifferentialPressure': <String, Object?>{'order': 5},
@@ -38,12 +40,13 @@ void _testAlertOrderParsing() {
     AlertType.highTemperatureHeatingActive,
     AlertType.lowTemperatureHumidifierActive,
     AlertType.roomDoorOpen,
+    AlertType.temperatureInterior,
     AlertType.highHumidity,
     AlertType.highDifferentialPressure,
     AlertType.muntersDoorOpen,
     AlertType.dewPointRisk,
   ].map(settings.alerts.effectiveOrder).toList(growable: false);
-  _expect(orders.join(',') == '1,2,3,4,5,6,7', 'normalizes alert order');
+  _expect(orders.join(',') == '1,2,3,4,5,6,7,8', 'normalizes alert order');
   _expect(
     settings.alerts.compareAlertTypes(
           AlertType.highHumidity,
@@ -131,6 +134,7 @@ void _testMetadataRegistry() {
         <AlertType>[
           AlertType.muntersDoorOpen,
           AlertType.roomDoorOpen,
+          AlertType.temperatureInterior,
           AlertType.highTemperatureHeatingActive,
           AlertType.lowTemperatureHumidifierActive,
           AlertType.highDifferentialPressure,
@@ -298,6 +302,50 @@ Future<void> _testCachedConfigSurvivesFailures() async {
   _expect(loader.calls == 0, 'cached settings avoid failing loader');
 }
 
+Future<void> _testConfigVersionChangesOnlyForRelevantSettings() async {
+  final AlertSettingsCache cache = AlertSettingsCache();
+  final CachedAlertSettings first = cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(temperatureMin: 18),
+  );
+  _expect(first.configVersion == 1, 'initial settings version');
+
+  final CachedAlertSettings identical = cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(temperatureMin: 18),
+  );
+  _expect(identical.configVersion == 1, 'identical settings keep version');
+
+  final Map<String, Object?> reordered = _settingsRaw(temperatureMin: 18);
+  final Map<String, Object?> alerts = Map<String, Object?>.from(
+    reordered['alerts']! as Map,
+  );
+  alerts['highHumidity'] = <String, Object?>{
+    'enabled': true,
+    'sendWhatsapp': true,
+    'order': 1,
+  };
+  reordered['alerts'] = alerts;
+  final CachedAlertSettings orderOnly = cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: reordered,
+  );
+  _expect(
+    orderOnly.configVersion == 1,
+    'order-only change keeps config version',
+  );
+
+  final CachedAlertSettings changed = cache.updateFromPayload(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    payload: _settingsRaw(temperatureMin: 19),
+  );
+  _expect(changed.configVersion == 2, 'threshold change increments version');
+}
+
 CachedAlertSettings _settings() {
   return CachedAlertSettings.fromRaw(
     tenantId: 'tenant-a',
@@ -308,7 +356,7 @@ CachedAlertSettings _settings() {
   );
 }
 
-Map<String, Object?> _settingsRaw() {
+Map<String, Object?> _settingsRaw({double? temperatureMin}) {
   return <String, Object?>{
     'alerts': <String, Object?>{
       'muntersDoorOpen': <String, Object?>{
@@ -319,6 +367,9 @@ Map<String, Object?> _settingsRaw() {
     },
     'munters': <String, Object?>{
       'munters1': <String, Object?>{
+        'tempInterior': <String, Object?>{
+          if (temperatureMin != null) 'min': temperatureMin,
+        },
         'humidityInterior': <String, Object?>{
           'alarm': <String, Object?>{'redMinExclusive': 95},
         },

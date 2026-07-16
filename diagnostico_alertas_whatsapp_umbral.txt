@@ -1,0 +1,265 @@
+Diagnostico: alertas WhatsApp al cambiar umbrales
+
+Contexto
+--------
+Tenemos alertas de WhatsApp generadas por el backend cuando una medicion de PLC
+entra en condicion de alerta. Por ejemplo:
+
+- Temperatura interior menor al umbral minimo configurado.
+- Temperatura interior mayor al umbral maximo configurado.
+- Presion diferencial mayor al umbral maximo configurado.
+
+El backend evalua periodicamente el snapshot de los PLC y mantiene un registro
+en memoria de alertas activas. Ese registro se usa para evitar enviar el mismo
+WhatsApp muchas veces mientras la condicion sigue activa.
+
+
+Problema observado
+------------------
+Se cambio manualmente el umbral minimo de temperatura interior a 20 C.
+
+En ese momento las mediciones estaban aproximadamente asi:
+
+- PLC1 / Munters1: temperatura interior 18.5 / 18.6 C.
+- PLC2 / Munters2: temperatura interior 19.4 / 19.6 C.
+
+Con umbral minimo 20 C, ambas salas deberian estar en alerta de temperatura
+interior baja. Sin embargo no llego WhatsApp.
+
+Se verifico que:
+
+- El backend estaba corriendo correctamente.
+- Firestore tenia guardado tempInterior.min = 20.
+- La alerta temperatureInterior estaba activa y con sendWhatsapp = true.
+- Una simulacion del motor con el snapshot actual generaba alertas activas para
+  Munters1 y Munters2.
+
+Por lo tanto, el problema no parece estar en la lectura del PLC ni en la logica
+basica de evaluacion del umbral. El problema esta en cuando el backend decide
+que corresponde enviar una notificacion.
+
+
+Causa probable
+--------------
+El backend envia WhatsApp cuando detecta una transicion:
+
+  normal -> alerta
+
+Si una alerta ya estaba activa y sigue activa, el backend la considera:
+
+  alerta -> alerta
+
+En ese caso no reenvia WhatsApp, para evitar spam.
+
+Esto funciona bien cuando la medicion cruza el umbral por movimiento real del
+PLC. Ejemplo:
+
+1. Temperatura = 20.5 C, umbral minimo = 20 C.
+2. Luego temperatura baja a 19.8 C.
+3. El backend detecta normal -> alerta.
+4. Envia WhatsApp.
+
+Pero el caso observado es diferente: la medicion no cambio para cruzar el
+umbral; lo que cambio fue el umbral.
+
+Ejemplo:
+
+1. Temperatura = 18.6 C, umbral minimo = 19 C.
+2. La alerta ya podia estar activa.
+3. Se cambia el umbral minimo a 20 C.
+4. Temperatura sigue siendo 18.6 C.
+5. Para el backend puede seguir siendo alerta -> alerta.
+6. No se genera un nuevo evento de activacion.
+7. No se envia WhatsApp.
+
+Incluso si antes no estaba activa para una sala, puede haber otros factores:
+
+- Cache de configuracion.
+- Cooldown de notificaciones.
+- Estado activo previo en memoria.
+- Cambio de configuracion no tratado como evento disparador.
+
+
+Situacion actual de configuracion
+---------------------------------
+La UI muestra un solo set de umbrales para las dos salas.
+
+Internamente, hoy esos umbrales se guardan principalmente bajo:
+
+  munters.munters1
+
+El backend actualmente usa esos valores para evaluar ambas salas. Es decir, en
+la practica los umbrales son compartidos, aunque el nombre del bloque sea
+munters1.
+
+Esto funciona para el uso normal, porque lo mas habitual es que Munters1 y
+Munters2 usen los mismos umbrales. Pero conceptualmente es confuso, porque:
+
+- PLC1 = Munters1.
+- PLC2 = Munters2.
+- La configuracion parece pertenecer solo a Munters1.
+
+
+Soluciones posibles
+-------------------
+
+Opcion A: Forzar reenvio al cambiar configuracion
+-------------------------------------------------
+Cuando el backend detecta que cambiaron los umbrales, puede limpiar o invalidar
+el registro de alertas activas. Entonces, en el siguiente snapshot, toda
+condicion que este fuera de rango vuelve a aparecer como nueva activacion.
+
+Ventajas:
+
+- Es simple.
+- Resuelve el caso operativo inmediatamente.
+- Si se cambia un umbral y eso deja una sala en alerta, llega WhatsApp.
+
+Desventajas:
+
+- Al cambiar configuracion podria reenviar alertas que ya estaban activas.
+- Si hay muchas alertas activas al momento de guardar, puede enviar varias
+  notificaciones.
+- Necesita apoyarse en cooldown para evitar spam.
+
+Comentario:
+
+Esta opcion es probablemente suficiente para una primera version. Es clara para
+el usuario: si cambia umbrales y el sistema queda en alerta, se avisa.
+
+
+Opcion B: Detectar cambios de umbral por alerta
+-----------------------------------------------
+Guardar junto al estado activo de cada alerta la configuracion con la que fue
+detectada. Por ejemplo:
+
+- Tipo de alerta.
+- Umbral usado.
+- Si era minimo o maximo.
+- Valor medido.
+- Fecha de primer disparo.
+- Fecha de ultimo envio.
+
+Luego, si una alerta ya estaba activa pero cambia el umbral, el backend puede
+decidir si corresponde reenviar.
+
+Ejemplo:
+
+- Antes: temperatura 18.6 C, umbral minimo 19 C.
+- Despues: temperatura 18.6 C, umbral minimo 20 C.
+- Sigue activa, pero el umbral cambio de 19 a 20.
+- El backend puede enviar una nueva alerta indicando la nueva condicion.
+
+Ventajas:
+
+- Mas preciso.
+- Evita limpiar todo el registro de alertas activas.
+- Permite reglas mas inteligentes.
+
+Desventajas:
+
+- Mas complejo.
+- Hay que definir bien cuando un cambio de umbral amerita reenvio.
+- Requiere mas metadata en el estado activo.
+
+Reglas posibles:
+
+- Reenviar si el umbral cambio y la alerta sigue activa.
+- Reenviar solo si paso el cooldown.
+- Reenviar solo si la alerta antes no existia para esa sala/tipo.
+- No reenviar si el cambio de umbral hace la alerta menos severa.
+
+
+Opcion C: Boton manual "Probar / reenviar alertas actuales"
+-----------------------------------------------------------
+Agregar una accion manual en la UI para enviar las alertas activas actuales por
+WhatsApp.
+
+Ventajas:
+
+- Control explicito del usuario.
+- Sirve para pruebas y puesta en marcha.
+- Evita reglas automaticas ambiguas.
+
+Desventajas:
+
+- No resuelve completamente el caso automatico.
+- Depende de que el usuario recuerde ejecutar la accion.
+
+Comentario:
+
+Puede complementar a otra opcion. No deberia ser la unica solucion.
+
+
+Opcion D: Configuracion independiente por PLC
+---------------------------------------------
+Hacer que la UI permita configurar umbrales separados:
+
+- Sala 1 / Munters1 / PLC1.
+- Sala 2 / Munters2 / PLC2.
+
+Y agregar una opcion tipo "aplicar a ambas salas" para el caso normal.
+
+Ventajas:
+
+- Modelo correcto y explicito.
+- Permite excepciones reales entre salas.
+- Evita confusiones con munters1/munters2.
+
+Desventajas:
+
+- Mas trabajo de UI.
+- Hay que ajustar guardado, lectura y evaluacion backend.
+- Hay que cuidar que el flujo no se vuelva mas complejo para el usuario.
+
+Comentario:
+
+Esta opcion es conceptualmente la mejor, pero no necesariamente hace falta para
+resolver el problema inmediato de WhatsApp al cambiar umbrales.
+
+
+Recomendacion tecnica inicial
+-----------------------------
+Para resolver rapido y con bajo riesgo:
+
+1. Mantener por ahora una sola configuracion visible en la UI.
+2. Guardar esa misma configuracion tanto en munters1 como en munters2, para que
+   el documento sea conceptualmente correcto.
+3. Ajustar el backend para leer umbrales por muntersId, con fallback a munters1.
+4. Al actualizar configuracion de alertas/umbrales, forzar que las alertas se
+   reevaluen como potenciales nuevas activaciones, respetando cooldown.
+
+Esto mantiene la experiencia actual simple, pero deja el camino preparado para
+configuracion independiente por PLC mas adelante.
+
+
+Preguntas para decidir con asesor
+---------------------------------
+1. Cuando un usuario cambia un umbral y una sala queda en alerta, debe enviarse
+   WhatsApp siempre?
+
+2. Si la alerta ya estaba activa antes del cambio de umbral, debe reenviarse o
+   no?
+
+3. Debe aplicarse cooldown tambien a alertas disparadas por cambio de
+   configuracion?
+
+4. Queremos mantener un set global de umbrales por ahora, o avanzar ya hacia
+   configuracion independiente por PLC?
+
+5. Hace falta un boton manual para "reenviar alertas actuales" o "probar alertas
+   activas"?
+
+
+Estado operativo recomendado
+----------------------------
+Mientras no se implemente una regla explicita para cambios de umbral, no conviene
+usar el cambio de umbral como prueba confiable de envio de WhatsApp.
+
+Para probar el envio real hoy, lo mas confiable es:
+
+- Partir desde una condicion normal.
+- Esperar que la medicion cruce el umbral por cambio real.
+- O reiniciar/limpiar estado activo antes de probar, sabiendo que eso puede
+  reenviar alertas existentes.
+

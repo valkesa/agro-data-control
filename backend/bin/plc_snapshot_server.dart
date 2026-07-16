@@ -48,6 +48,11 @@ Future<void> main(List<String> args) async {
         processor: AlertNotificationProcessor(
           recipientsConfig: alertRecipientsConfig,
           sender: AlertNotificationSender(whatsAppService: whatsAppService),
+          clientName: config.clientName,
+          siteName: config.siteName,
+          builder: NotificationBatchBuilder(
+            templateBuilder: WhatsAppTemplateBuilder.fromEnvironment(),
+          ),
         ),
       );
   final AlertProcessingCoordinator alertProcessingCoordinator =
@@ -275,6 +280,16 @@ Future<void> _handleRequestInternal(
     return;
   }
 
+  if (request.method == 'GET' && _isWhatsAppWebhookPath(path)) {
+    await _handleWhatsAppWebhookVerification(request);
+    return;
+  }
+
+  if (request.method == 'POST' && _isWhatsAppWebhookPath(path)) {
+    await _handleWhatsAppWebhookEvent(request);
+    return;
+  }
+
   if (request.method == 'GET' && _isWhatsAppAlertRecipientsPath(path)) {
     await _handleWhatsAppAlertRecipientsRequest(
       request,
@@ -322,6 +337,10 @@ Future<void> _handleRequestInternal(
 bool _isWhatsAppTestPath(String path) {
   return path == '/api/notifications/whatsapp/test' ||
       path == '/notifications/whatsapp/test';
+}
+
+bool _isWhatsAppWebhookPath(String path) {
+  return path == '/api/whatsapp/webhook' || path == '/whatsapp/webhook';
 }
 
 bool _isWhatsAppAlertRecipientsPath(String path) {
@@ -382,10 +401,10 @@ Future<void> _handleAlertSettingsCacheRequest(
     }, statusCode: error.statusCode);
     return;
   }
-  if (user.role != 'owner') {
+  if (user.role != 'owner' && user.role != 'admin') {
     await _writeJson(request.response, <String, Object?>{
       'ok': false,
-      'error': 'Forbidden: owner role required',
+      'error': 'Forbidden: owner or admin role required',
     }, statusCode: HttpStatus.forbidden);
     return;
   }
@@ -840,6 +859,106 @@ Future<void> _handleWhatsAppTestRequest(
       'error': 'Unexpected WhatsApp error',
       'details': error.toString(),
     }, statusCode: HttpStatus.badGateway);
+  }
+}
+
+Future<void> _handleWhatsAppWebhookVerification(HttpRequest request) async {
+  final String mode = request.uri.queryParameters['hub.mode'] ?? '';
+  final String token = request.uri.queryParameters['hub.verify_token'] ?? '';
+  final String challenge = request.uri.queryParameters['hub.challenge'] ?? '';
+  final String expectedToken =
+      Platform.environment['WHATSAPP_WEBHOOK_VERIFY_TOKEN']?.trim() ?? '';
+
+  if (mode == 'subscribe' &&
+      expectedToken.isNotEmpty &&
+      token == expectedToken) {
+    _logHttp('whatsapp webhook verification succeeded');
+    request.response
+      ..statusCode = HttpStatus.ok
+      ..headers.contentType = ContentType.text
+      ..write(challenge);
+    await request.response.close().timeout(_httpWriteTimeout);
+    return;
+  }
+
+  _logHttp('whatsapp webhook verification failed mode=$mode');
+  await _writeJson(request.response, <String, Object?>{
+    'ok': false,
+    'error': 'Verification failed',
+  }, statusCode: HttpStatus.forbidden);
+}
+
+Future<void> _handleWhatsAppWebhookEvent(HttpRequest request) async {
+  Map<String, Object?> body;
+  try {
+    body = await _readJsonBody(request);
+  } on FormatException catch (error) {
+    _logHttp('whatsapp webhook body parse failed error=${error.message}');
+    await _writeJson(request.response, <String, Object?>{'ok': true});
+    return;
+  }
+
+  final List<Object?> entries = body['entry'] is List
+      ? body['entry'] as List
+      : const <Object?>[];
+  for (final Object? entry in entries) {
+    if (entry is! Map) continue;
+    final List<Object?> changes = entry['changes'] is List
+        ? entry['changes'] as List
+        : const <Object?>[];
+    for (final Object? change in changes) {
+      if (change is! Map) continue;
+      final Object? value = change['value'];
+      if (value is! Map) continue;
+      _logWhatsAppWebhookStatuses(value);
+      _logWhatsAppWebhookInboundMessages(value);
+    }
+  }
+
+  await _writeJson(request.response, <String, Object?>{'ok': true});
+}
+
+void _logWhatsAppWebhookStatuses(Map<Object?, Object?> value) {
+  final Object? statuses = value['statuses'];
+  if (statuses is! List) {
+    return;
+  }
+  for (final Object? status in statuses) {
+    if (status is! Map) continue;
+    final String messageId = status['id']?.toString() ?? '';
+    final String statusValue = status['status']?.toString() ?? '';
+    final String recipientId = status['recipient_id']?.toString() ?? '';
+    final String timestamp = status['timestamp']?.toString() ?? '';
+    final Object? errors = status['errors'];
+    String errorSummary = '';
+    if (errors is List && errors.isNotEmpty) {
+      errorSummary = errors
+          .whereType<Map>()
+          .map(
+            (Map error) =>
+                'code=${error['code']} title=${error['title']} message=${error['message']}',
+          )
+          .join('; ');
+    }
+    _logHttp(
+      'whatsapp webhook status messageId=$messageId status=$statusValue recipient=${_maskPhone(recipientId)} timestamp=$timestamp errors=$errorSummary',
+    );
+  }
+}
+
+void _logWhatsAppWebhookInboundMessages(Map<Object?, Object?> value) {
+  final Object? messages = value['messages'];
+  if (messages is! List) {
+    return;
+  }
+  for (final Object? message in messages) {
+    if (message is! Map) continue;
+    final String from = message['from']?.toString() ?? '';
+    final String type = message['type']?.toString() ?? '';
+    final String messageId = message['id']?.toString() ?? '';
+    _logHttp(
+      'whatsapp webhook inbound messageId=$messageId from=${_maskPhone(from)} type=$type',
+    );
   }
 }
 

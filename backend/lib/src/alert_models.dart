@@ -56,6 +56,7 @@ class EvaluatedAlert {
     required this.thresholdKind,
     required this.unit,
     required this.evaluatedAt,
+    this.configVersion = 0,
     this.measuredValue,
     this.thresholdValue,
   });
@@ -69,6 +70,7 @@ class EvaluatedAlert {
   final AlertThresholdKind thresholdKind;
   final String unit;
   final DateTime evaluatedAt;
+  final int configVersion;
 }
 
 class ActiveAlertState {
@@ -78,6 +80,7 @@ class ActiveAlertState {
     required this.firstDetectedAt,
     required this.lastEvaluatedAt,
     required this.sendWhatsapp,
+    required this.configVersionEvaluated,
     this.latestMeasuredValue,
     this.latestThresholdValue,
   });
@@ -91,6 +94,7 @@ class ActiveAlertState {
       latestMeasuredValue: alert.measuredValue,
       latestThresholdValue: alert.thresholdValue,
       sendWhatsapp: alert.sendWhatsapp,
+      configVersionEvaluated: alert.configVersion,
     );
   }
 
@@ -101,6 +105,7 @@ class ActiveAlertState {
   final num? latestMeasuredValue;
   final num? latestThresholdValue;
   final bool sendWhatsapp;
+  final int configVersionEvaluated;
 
   ActiveAlertState updateFrom(EvaluatedAlert alert) {
     return ActiveAlertState(
@@ -111,6 +116,7 @@ class ActiveAlertState {
       latestMeasuredValue: alert.measuredValue,
       latestThresholdValue: alert.thresholdValue,
       sendWhatsapp: alert.sendWhatsapp,
+      configVersionEvaluated: alert.configVersion,
     );
   }
 }
@@ -120,9 +126,11 @@ class AlertTransitionBatch {
     required this.activated,
     required this.stillActive,
     required this.recovered,
+    this.configChangedActivated = const <EvaluatedAlert>[],
   });
 
   final List<EvaluatedAlert> activated;
+  final List<EvaluatedAlert> configChangedActivated;
   final List<EvaluatedAlert> stillActive;
   final List<ActiveAlertState> recovered;
 }

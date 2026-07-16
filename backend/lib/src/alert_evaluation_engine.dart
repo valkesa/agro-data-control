@@ -15,6 +15,7 @@ List<AlertEvaluator> buildDefaultAlertEvaluators() {
   return List<AlertEvaluator>.unmodifiable(<AlertEvaluator>[
     const MuntersDoorOpenEvaluator(),
     const RoomDoorOpenEvaluator(),
+    const TemperatureInteriorEvaluator(),
     const HighTemperatureHeatingEvaluator(),
     const LowTemperatureHumidifierEvaluator(),
     const HighDifferentialPressureEvaluator(),
@@ -78,6 +79,9 @@ class AlertEvaluationContext {
   final CachedAlertSettings settings;
   final DateTime evaluatedAt;
   final RoomWashStatus roomWashStatus;
+
+  CachedAlertThresholds get thresholds =>
+      settings.thresholdsFor(identity.muntersId);
 }
 
 class AlertEvaluationEngine {
@@ -141,6 +145,7 @@ class MuntersDoorOpenEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.none,
       unit: '',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }
@@ -165,7 +170,61 @@ class RoomDoorOpenEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.none,
       unit: '',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
+  }
+}
+
+class TemperatureInteriorEvaluator extends AlertEvaluator {
+  const TemperatureInteriorEvaluator();
+
+  @override
+  AlertType get type => AlertType.temperatureInterior;
+
+  @override
+  EvaluatedAlert? evaluate(AlertEvaluationContext context) {
+    final CachedAlertToggle toggle =
+        context.settings.alerts.temperatureInterior;
+    final double? temperature = _finiteDouble(context.snapshot['tempInterior']);
+    final double? minimum = context.thresholds.temperatureMin;
+    final double? maximum = context.thresholds.temperatureMax;
+    if (!toggle.enabled ||
+        temperature == null ||
+        minimum == null ||
+        maximum == null ||
+        !minimum.isFinite ||
+        !maximum.isFinite) {
+      return null;
+    }
+    if (temperature < minimum) {
+      return EvaluatedAlert(
+        key: context.identity.key(type),
+        type: type,
+        isActive: true,
+        sendWhatsapp: toggle.sendWhatsapp,
+        measuredValue: temperature,
+        thresholdValue: minimum,
+        thresholdKind: AlertThresholdKind.minimum,
+        unit: '°C',
+        evaluatedAt: context.evaluatedAt,
+        configVersion: context.settings.configVersion,
+      );
+    }
+    if (temperature > maximum) {
+      return EvaluatedAlert(
+        key: context.identity.key(type),
+        type: type,
+        isActive: true,
+        sendWhatsapp: toggle.sendWhatsapp,
+        measuredValue: temperature,
+        thresholdValue: maximum,
+        thresholdKind: AlertThresholdKind.maximum,
+        unit: '°C',
+        evaluatedAt: context.evaluatedAt,
+        configVersion: context.settings.configVersion,
+      );
+    }
+    return null;
   }
 }
 
@@ -180,7 +239,7 @@ class HighTemperatureHeatingEvaluator extends AlertEvaluator {
     final CachedAlertToggle toggle =
         context.settings.alerts.highTemperatureHeatingActive;
     final double? temperature = _finiteDouble(context.snapshot['tempInterior']);
-    final double? maximum = context.settings.thresholds.temperatureMax;
+    final double? maximum = context.thresholds.temperatureMax;
     final bool heatingActive =
         context.snapshot['resistencia1'] == true ||
         context.snapshot['resistencia2'] == true;
@@ -202,6 +261,7 @@ class HighTemperatureHeatingEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.maximum,
       unit: '°C',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }
@@ -217,7 +277,7 @@ class LowTemperatureHumidifierEvaluator extends AlertEvaluator {
     final CachedAlertToggle toggle =
         context.settings.alerts.lowTemperatureHumidifierActive;
     final double? temperature = _finiteDouble(context.snapshot['tempInterior']);
-    final double? minimum = context.settings.thresholds.temperatureMin;
+    final double? minimum = context.thresholds.temperatureMin;
     final bool pumpActive = context.snapshot['bombaHumidificador'] == true;
     if (!toggle.enabled ||
         temperature == null ||
@@ -237,6 +297,7 @@ class LowTemperatureHumidifierEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.minimum,
       unit: '°C',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }
@@ -254,7 +315,7 @@ class HighDifferentialPressureEvaluator extends AlertEvaluator {
     final double? pressure = _finiteDouble(
       context.snapshot['presionDiferencial'],
     );
-    final double? maximum = context.settings.thresholds.filterPressureMax;
+    final double? maximum = context.thresholds.filterPressureMax;
     if (!toggle.enabled ||
         pressure == null ||
         maximum == null ||
@@ -272,6 +333,7 @@ class HighDifferentialPressureEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.maximum,
       unit: 'Pa',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }
@@ -286,8 +348,7 @@ class HighHumidityEvaluator extends AlertEvaluator {
   EvaluatedAlert? evaluate(AlertEvaluationContext context) {
     final CachedAlertToggle toggle = context.settings.alerts.highHumidity;
     final double? rawHumidity = _finiteDouble(context.snapshot['humInterior']);
-    final double? redMinExclusive =
-        context.settings.thresholds.humidityRedMinExclusive;
+    final double? redMinExclusive = context.thresholds.humidityRedMinExclusive;
     if (!toggle.enabled ||
         rawHumidity == null ||
         redMinExclusive == null ||
@@ -309,6 +370,7 @@ class HighHumidityEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.maximum,
       unit: '%',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }
@@ -325,7 +387,7 @@ class DewPointRiskEvaluator extends AlertEvaluator {
     final double? temperature = _finiteDouble(context.snapshot['tempInterior']);
     final double? humidity = _finiteDouble(context.snapshot['humInterior']);
     final double? redMaxInclusive =
-        context.settings.thresholds.dewPointMarginRedMaxInclusive;
+        context.thresholds.dewPointMarginRedMaxInclusive;
     if (!toggle.enabled ||
         temperature == null ||
         humidity == null ||
@@ -350,6 +412,7 @@ class DewPointRiskEvaluator extends AlertEvaluator {
       thresholdKind: AlertThresholdKind.minimumMargin,
       unit: '°C',
       evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
     );
   }
 }

@@ -95,36 +95,13 @@ class ControlDashboardConfigService {
     debugPrint('[Firestore] dashboard config save started path=$path');
 
     try {
+      final Map<String, Object?> sharedMuntersSettings = _sharedMuntersSettings(
+        thresholds,
+      );
       await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
         'munters': <String, Object?>{
-          'munters1': <String, Object?>{
-            'tempInterior': <String, Object?>{
-              'min': thresholds.tempInteriorMin,
-              'opt': thresholds.tempInteriorOpt,
-              'max': thresholds.tempInteriorMax,
-            },
-            'humidityInterior': <String, Object?>{
-              'min': thresholds.humidityInteriorMin,
-              'opt': thresholds.humidityInteriorOpt,
-              'max': thresholds.humidityInteriorMax,
-              'alarm': <String, Object?>{
-                'yellowMinInclusive':
-                    thresholds.humidityAlarmYellowMinInclusive,
-                'redMinExclusive': thresholds.humidityAlarmRedMinExclusive,
-              },
-            },
-            'dewPointMargin': <String, Object?>{
-              'alarm': <String, Object?>{
-                'redMaxInclusive':
-                    thresholds.dewPointMarginAlarmRedMaxInclusive,
-                'yellowMaxExclusive':
-                    thresholds.dewPointMarginAlarmYellowMaxExclusive,
-              },
-            },
-            'presionDiferencial': <String, Object?>{
-              'max': thresholds.filterPressureMax,
-            },
-          },
+          'munters1': sharedMuntersSettings,
+          'munters2': sharedMuntersSettings,
         },
         'ui': <String, Object?>{
           'thermalFlow': <String, Object?>{
@@ -161,37 +138,14 @@ class ControlDashboardConfigService {
     debugPrint('[Firestore] dashboard alerts save started path=$path');
 
     try {
+      final Map<String, Object?> sharedMuntersSettings = _sharedMuntersSettings(
+        thresholds,
+      );
       await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
         'alerts': alertSettings.toFirestore(),
         'munters': <String, Object?>{
-          'munters1': <String, Object?>{
-            'tempInterior': <String, Object?>{
-              'min': thresholds.tempInteriorMin,
-              'opt': thresholds.tempInteriorOpt,
-              'max': thresholds.tempInteriorMax,
-            },
-            'humidityInterior': <String, Object?>{
-              'min': thresholds.humidityInteriorMin,
-              'opt': thresholds.humidityInteriorOpt,
-              'max': thresholds.humidityInteriorMax,
-              'alarm': <String, Object?>{
-                'yellowMinInclusive':
-                    thresholds.humidityAlarmYellowMinInclusive,
-                'redMinExclusive': thresholds.humidityAlarmRedMinExclusive,
-              },
-            },
-            'dewPointMargin': <String, Object?>{
-              'alarm': <String, Object?>{
-                'redMaxInclusive':
-                    thresholds.dewPointMarginAlarmRedMaxInclusive,
-                'yellowMaxExclusive':
-                    thresholds.dewPointMarginAlarmYellowMaxExclusive,
-              },
-            },
-            'presionDiferencial': <String, Object?>{
-              'max': thresholds.filterPressureMax,
-            },
-          },
+          'munters1': sharedMuntersSettings,
+          'munters2': sharedMuntersSettings,
         },
         'ui': <String, Object?>{
           'thermalFlow': <String, Object?>{
@@ -408,6 +362,36 @@ class ControlDashboardConfigService {
     }
     return null;
   }
+}
+
+Map<String, Object?> _sharedMuntersSettings(
+  ControlDashboardThresholds thresholds,
+) {
+  return <String, Object?>{
+    'tempInterior': <String, Object?>{
+      'min': thresholds.tempInteriorMin,
+      'opt': thresholds.tempInteriorOpt,
+      'max': thresholds.tempInteriorMax,
+    },
+    'humidityInterior': <String, Object?>{
+      'min': thresholds.humidityInteriorMin,
+      'opt': thresholds.humidityInteriorOpt,
+      'max': thresholds.humidityInteriorMax,
+      'alarm': <String, Object?>{
+        'yellowMinInclusive': thresholds.humidityAlarmYellowMinInclusive,
+        'redMinExclusive': thresholds.humidityAlarmRedMinExclusive,
+      },
+    },
+    'dewPointMargin': <String, Object?>{
+      'alarm': <String, Object?>{
+        'redMaxInclusive': thresholds.dewPointMarginAlarmRedMaxInclusive,
+        'yellowMaxExclusive': thresholds.dewPointMarginAlarmYellowMaxExclusive,
+      },
+    },
+    'presionDiferencial': <String, Object?>{
+      'max': thresholds.filterPressureMax,
+    },
+  };
 }
 
 class ControlDashboardConfigResult {

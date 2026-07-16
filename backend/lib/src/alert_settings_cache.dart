@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'alert_priority.dart';
@@ -13,6 +14,10 @@ class AlertSettingsCache {
   _inFlightLoads = <AlertSettingsCacheKey, Future<CachedAlertSettings?>>{};
   final Map<AlertSettingsCacheKey, AlertSettingsLoadFailureState> _failures =
       <AlertSettingsCacheKey, AlertSettingsLoadFailureState>{};
+  final Map<AlertSettingsCacheKey, int> _versions =
+      <AlertSettingsCacheKey, int>{};
+  final Map<AlertSettingsCacheKey, String> _signatures =
+      <AlertSettingsCacheKey, String>{};
   int loadCount = 0;
 
   int get count => _cache.length;
@@ -50,11 +55,11 @@ class AlertSettingsCache {
       tenantId: tenantId,
       siteId: siteId,
     );
+    final DateTime effectiveNow = now ?? DateTime.now().toUtc();
     final CachedAlertSettings? cached = _cache[key];
     if (cached != null) {
       return cached;
     }
-    final DateTime effectiveNow = now ?? DateTime.now().toUtc();
     final AlertSettingsLoadFailureState? failure = _failures[key];
     if (failure != null && failure.nextRetryAt.isAfter(effectiveNow)) {
       throw AlertSettingsLoadBackoffException(
@@ -77,7 +82,7 @@ class AlertSettingsCache {
       loader: loader,
       tenantId: tenantId,
       siteId: siteId,
-      now: now,
+      now: effectiveNow,
     );
     _inFlightLoads[key] = loadFuture;
     try {
@@ -97,16 +102,17 @@ class AlertSettingsCache {
     if (!_looksLikeAlertSettingsPayload(payload)) {
       throw const FormatException('Invalid alert settings payload');
     }
+    final AlertSettingsCacheKey key = AlertSettingsCacheKey(
+      tenantId: tenantId,
+      siteId: siteId,
+    );
     final CachedAlertSettings parsed = CachedAlertSettings.fromRaw(
       tenantId: tenantId,
       siteId: siteId,
       raw: payload,
       loadedAt: now ?? DateTime.now().toUtc(),
       source: source,
-    );
-    final AlertSettingsCacheKey key = AlertSettingsCacheKey(
-      tenantId: tenantId,
-      siteId: siteId,
+      configVersion: _versionForPayload(key, payload),
     );
     _cache[key] = parsed;
     _failures.remove(key);
@@ -118,6 +124,8 @@ class AlertSettingsCache {
     _cache.clear();
     _inFlightLoads.clear();
     _failures.clear();
+    _versions.clear();
+    _signatures.clear();
   }
 
   Future<CachedAlertSettings?> _loadAndCache({
@@ -139,6 +147,7 @@ class AlertSettingsCache {
         raw: raw,
         loadedAt: now ?? DateTime.now().toUtc(),
         source: 'firestore',
+        configVersion: _versionForPayload(key, raw),
       );
       _cache[key] = parsed;
       final AlertSettingsLoadFailureState? previousFailure = _failures.remove(
@@ -168,6 +177,25 @@ class AlertSettingsCache {
       );
       rethrow;
     }
+  }
+
+  int _versionForPayload(
+    AlertSettingsCacheKey key,
+    Map<String, Object?> payload,
+  ) {
+    final String signature = _settingsSignature(payload);
+    final String? previousSignature = _signatures[key];
+    if (previousSignature == signature) {
+      return _versions[key] ?? 0;
+    }
+    final int previousVersion = _versions[key] ?? 0;
+    final int nextVersion = previousVersion + 1;
+    _signatures[key] = signature;
+    _versions[key] = nextVersion;
+    _logSettingsCache(
+      'event=alert_config_version_changed tenant=${key.tenantId} site=${key.siteId} previousVersion=$previousVersion currentVersion=$nextVersion',
+    );
+    return nextVersion;
   }
 }
 
@@ -220,6 +248,53 @@ bool _looksLikeAlertSettingsPayload(Map<String, Object?> payload) {
   return payload['alerts'] is Map || payload['munters'] is Map;
 }
 
+String _settingsSignature(Map<String, Object?> payload) {
+  return jsonEncode(
+    _canonicalJsonValue(<String, Object?>{
+      'alerts': _notifiableAlertToggles(payload['alerts']),
+      'munters': payload['munters'],
+    }),
+  );
+}
+
+Object? _notifiableAlertToggles(Object? rawAlerts) {
+  if (rawAlerts is! Map) {
+    return rawAlerts;
+  }
+  return <String, Object?>{
+    for (final MapEntry<Object?, Object?> entry in rawAlerts.entries)
+      entry.key.toString(): _notifiableAlertToggle(entry.value),
+  };
+}
+
+Object? _notifiableAlertToggle(Object? rawToggle) {
+  if (rawToggle is! Map) {
+    return rawToggle;
+  }
+  return <String, Object?>{
+    'enabled': rawToggle['enabled'],
+    'sendWhatsapp': rawToggle['sendWhatsapp'],
+  };
+}
+
+Object? _canonicalJsonValue(Object? value) {
+  if (value is Map) {
+    final List<String> keys =
+        value.keys.map((Object? key) => key.toString()).toList(growable: false)
+          ..sort();
+    return <String, Object?>{
+      for (final String key in keys) key: _canonicalJsonValue(value[key]),
+    };
+  }
+  if (value is Iterable) {
+    return value.map(_canonicalJsonValue).toList(growable: false);
+  }
+  if (value is DateTime) {
+    return value.toUtc().toIso8601String();
+  }
+  return value;
+}
+
 abstract class AlertSettingsLoader {
   Future<Map<String, Object?>?> load(String tenantId, String siteId);
 }
@@ -246,9 +321,10 @@ class CachedAlertSettings {
     required this.tenantId,
     required this.siteId,
     required this.alerts,
-    required this.thresholds,
+    required this.thresholdsByMuntersId,
     required this.loadedAt,
     required this.source,
+    required this.configVersion,
     this.updatedAt,
   });
 
@@ -258,31 +334,49 @@ class CachedAlertSettings {
     required Map<String, Object?> raw,
     required DateTime loadedAt,
     required String source,
+    int configVersion = 0,
   }) {
     return CachedAlertSettings(
       tenantId: tenantId,
       siteId: siteId,
       alerts: CachedAlertToggles.fromRaw(raw['alerts']),
-      thresholds: CachedAlertThresholds.fromRaw(raw),
+      thresholdsByMuntersId: _thresholdsByMuntersId(raw),
       loadedAt: loadedAt,
       updatedAt: _readDateTime(raw['updatedAt']),
       source: source,
+      configVersion: configVersion,
     );
   }
 
   final String tenantId;
   final String siteId;
   final CachedAlertToggles alerts;
-  final CachedAlertThresholds thresholds;
+  final Map<String, CachedAlertThresholds> thresholdsByMuntersId;
   final DateTime loadedAt;
   final DateTime? updatedAt;
   final String source;
+  final int configVersion;
+
+  CachedAlertThresholds get thresholds => thresholdsFor('munters1');
+
+  CachedAlertThresholds thresholdsFor(String muntersId) {
+    final String normalized = muntersId.trim();
+    if (normalized.isNotEmpty && thresholdsByMuntersId[normalized] != null) {
+      return thresholdsByMuntersId[normalized]!;
+    }
+    return thresholdsByMuntersId['munters1'] ??
+        CachedAlertThresholds.fromRawForMunters(
+          const <String, Object?>{},
+          'munters1',
+        );
+  }
 }
 
 class CachedAlertToggles {
   const CachedAlertToggles({
     required this.muntersDoorOpen,
     required this.roomDoorOpen,
+    required this.temperatureInterior,
     required this.highTemperatureHeatingActive,
     required this.lowTemperatureHumidifierActive,
     required this.highDifferentialPressure,
@@ -294,59 +388,65 @@ class CachedAlertToggles {
     final Map<String, Object?> source = raw is Map
         ? Map<String, Object?>.from(raw as Map<Object?, Object?>)
         : <String, Object?>{};
-    final Map<AlertType, CachedAlertToggle> normalized =
-        _normalizeOrders(<AlertType, CachedAlertToggle>{
-          AlertType.muntersDoorOpen: CachedAlertToggle.fromRaw(
-            source['muntersDoorOpen'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(AlertType.muntersDoorOpen) +
-                1,
-          ),
-          AlertType.roomDoorOpen: CachedAlertToggle.fromRaw(
-            source['roomDoorOpen'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(AlertType.roomDoorOpen) + 1,
-          ),
-          AlertType.highTemperatureHeatingActive: CachedAlertToggle.fromRaw(
-            source['highTemperatureHeatingActive'] ??
-                source['lowTemperatureHeatingActive'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(
-                  AlertType.highTemperatureHeatingActive,
-                ) +
-                1,
-          ),
-          AlertType.lowTemperatureHumidifierActive: CachedAlertToggle.fromRaw(
-            source['lowTemperatureHumidifierActive'] ??
-                source['highTemperatureHumidifierActive'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(
-                  AlertType.lowTemperatureHumidifierActive,
-                ) +
-                1,
-          ),
-          AlertType.highDifferentialPressure: CachedAlertToggle.fromRaw(
-            source['highDifferentialPressure'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(
-                  AlertType.highDifferentialPressure,
-                ) +
-                1,
-          ),
-          AlertType.highHumidity: CachedAlertToggle.fromRaw(
-            source['highHumidity'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(AlertType.highHumidity) + 1,
-          ),
-          AlertType.dewPointRisk: CachedAlertToggle.fromRaw(
-            source['dewPointRisk'],
-            defaultOrder:
-                AlertMetadataRegistry.priorityIndex(AlertType.dewPointRisk) + 1,
-          ),
-        });
+    final Map<AlertType, CachedAlertToggle>
+    normalized = _normalizeOrders(<AlertType, CachedAlertToggle>{
+      AlertType.muntersDoorOpen: CachedAlertToggle.fromRaw(
+        source['muntersDoorOpen'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.muntersDoorOpen) + 1,
+      ),
+      AlertType.roomDoorOpen: CachedAlertToggle.fromRaw(
+        source['roomDoorOpen'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.roomDoorOpen) + 1,
+      ),
+      AlertType.temperatureInterior: CachedAlertToggle.fromRaw(
+        source['temperatureInterior'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.temperatureInterior) +
+            1,
+      ),
+      AlertType.highTemperatureHeatingActive: CachedAlertToggle.fromRaw(
+        source['highTemperatureHeatingActive'] ??
+            source['lowTemperatureHeatingActive'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(
+              AlertType.highTemperatureHeatingActive,
+            ) +
+            1,
+      ),
+      AlertType.lowTemperatureHumidifierActive: CachedAlertToggle.fromRaw(
+        source['lowTemperatureHumidifierActive'] ??
+            source['highTemperatureHumidifierActive'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(
+              AlertType.lowTemperatureHumidifierActive,
+            ) +
+            1,
+      ),
+      AlertType.highDifferentialPressure: CachedAlertToggle.fromRaw(
+        source['highDifferentialPressure'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(
+              AlertType.highDifferentialPressure,
+            ) +
+            1,
+      ),
+      AlertType.highHumidity: CachedAlertToggle.fromRaw(
+        source['highHumidity'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.highHumidity) + 1,
+      ),
+      AlertType.dewPointRisk: CachedAlertToggle.fromRaw(
+        source['dewPointRisk'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.dewPointRisk) + 1,
+      ),
+    });
     return CachedAlertToggles(
       muntersDoorOpen: normalized[AlertType.muntersDoorOpen]!,
       roomDoorOpen: normalized[AlertType.roomDoorOpen]!,
+      temperatureInterior: normalized[AlertType.temperatureInterior]!,
       highTemperatureHeatingActive:
           normalized[AlertType.highTemperatureHeatingActive]!,
       lowTemperatureHumidifierActive:
@@ -359,6 +459,7 @@ class CachedAlertToggles {
 
   final CachedAlertToggle muntersDoorOpen;
   final CachedAlertToggle roomDoorOpen;
+  final CachedAlertToggle temperatureInterior;
   final CachedAlertToggle highTemperatureHeatingActive;
   final CachedAlertToggle lowTemperatureHumidifierActive;
   final CachedAlertToggle highDifferentialPressure;
@@ -369,6 +470,7 @@ class CachedAlertToggles {
     return switch (type) {
       AlertType.muntersDoorOpen => muntersDoorOpen,
       AlertType.roomDoorOpen => roomDoorOpen,
+      AlertType.temperatureInterior => temperatureInterior,
       AlertType.highTemperatureHeatingActive => highTemperatureHeatingActive,
       AlertType.lowTemperatureHumidifierActive =>
         lowTemperatureHumidifierActive,
@@ -453,6 +555,22 @@ class CachedAlertToggle {
   }
 }
 
+Map<String, CachedAlertThresholds> _thresholdsByMuntersId(
+  Map<String, Object?> raw,
+) {
+  final Set<String> muntersIds = <String>{'munters1', 'munters2'};
+  final Object? rawMunters = raw['munters'];
+  if (rawMunters is Map) {
+    muntersIds.addAll(rawMunters.keys.map((Object? key) => key.toString()));
+  }
+  return Map<String, CachedAlertThresholds>.unmodifiable(
+    <String, CachedAlertThresholds>{
+      for (final String muntersId in muntersIds)
+        muntersId: CachedAlertThresholds.fromRawForMunters(raw, muntersId),
+    },
+  );
+}
+
 class CachedAlertThresholds {
   const CachedAlertThresholds({
     required this.temperatureMin,
@@ -463,14 +581,30 @@ class CachedAlertThresholds {
   });
 
   factory CachedAlertThresholds.fromRaw(Map<String, Object?> raw) {
+    return CachedAlertThresholds.fromRawForMunters(raw, 'munters1');
+  }
+
+  factory CachedAlertThresholds.fromRawForMunters(
+    Map<String, Object?> raw,
+    String muntersId,
+  ) {
     return CachedAlertThresholds(
-      temperatureMin: _readDouble(raw, const <List<String>>[
-        <String>['munters', 'munters1', 'tempInterior', 'min'],
+      temperatureMin: _readDouble(raw, <List<String>>[
+        <String>['munters', muntersId, 'tempInterior', 'min'],
+        const <String>['munters', 'munters1', 'tempInterior', 'min'],
       ]),
-      temperatureMax: _readDouble(raw, const <List<String>>[
-        <String>['munters', 'munters1', 'tempInterior', 'max'],
+      temperatureMax: _readDouble(raw, <List<String>>[
+        <String>['munters', muntersId, 'tempInterior', 'max'],
+        const <String>['munters', 'munters1', 'tempInterior', 'max'],
       ]),
-      humidityRedMinExclusive: _readDouble(raw, const <List<String>>[
+      humidityRedMinExclusive: _readDouble(raw, <List<String>>[
+        <String>[
+          'munters',
+          muntersId,
+          'humidityInterior',
+          'alarm',
+          'redMinExclusive',
+        ],
         <String>[
           'munters',
           'munters1',
@@ -479,7 +613,14 @@ class CachedAlertThresholds {
           'redMinExclusive',
         ],
       ]),
-      dewPointMarginRedMaxInclusive: _readDouble(raw, const <List<String>>[
+      dewPointMarginRedMaxInclusive: _readDouble(raw, <List<String>>[
+        <String>[
+          'munters',
+          muntersId,
+          'dewPointMargin',
+          'alarm',
+          'redMaxInclusive',
+        ],
         <String>[
           'munters',
           'munters1',
@@ -488,8 +629,9 @@ class CachedAlertThresholds {
           'redMaxInclusive',
         ],
       ]),
-      filterPressureMax: _readDouble(raw, const <List<String>>[
-        <String>['munters', 'munters1', 'presionDiferencial', 'max'],
+      filterPressureMax: _readDouble(raw, <List<String>>[
+        <String>['munters', muntersId, 'presionDiferencial', 'max'],
+        const <String>['munters', 'munters1', 'presionDiferencial', 'max'],
       ]),
     );
   }

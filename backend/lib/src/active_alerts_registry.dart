@@ -54,6 +54,7 @@ class ActiveAlertsRegistry {
             if (alert.isActive) alert.key: alert,
         };
     final List<EvaluatedAlert> activated = <EvaluatedAlert>[];
+    final List<EvaluatedAlert> configChangedActivated = <EvaluatedAlert>[];
     final List<EvaluatedAlert> stillActive = <EvaluatedAlert>[];
     final List<ActiveAlertState> recovered = <ActiveAlertState>[];
 
@@ -62,6 +63,10 @@ class ActiveAlertsRegistry {
       if (previous == null) {
         _active[alert.key] = ActiveAlertState.fromEvaluated(alert);
         activated.add(alert);
+      } else if (previous.configVersionEvaluated != alert.configVersion) {
+        _active[alert.key] = previous.updateFrom(alert);
+        activated.add(alert);
+        configChangedActivated.add(alert);
       } else {
         _active[alert.key] = previous.updateFrom(alert);
         stillActive.add(alert);
@@ -96,6 +101,9 @@ class ActiveAlertsRegistry {
 
     return AlertTransitionBatch(
       activated: List<EvaluatedAlert>.unmodifiable(activated),
+      configChangedActivated: List<EvaluatedAlert>.unmodifiable(
+        configChangedActivated,
+      ),
       stillActive: List<EvaluatedAlert>.unmodifiable(stillActive),
       recovered: List<ActiveAlertState>.unmodifiable(recovered),
     );

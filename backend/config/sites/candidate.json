@@ -18,7 +18,7 @@
       "plcId": "munters1",
       "firestoreProjectId": "agro-data-control",
       "firestoreDatabaseId": "(default)",
-      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+      "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json"
     },
     {
       "enabled": true,
@@ -28,7 +28,7 @@
       "plcId": "munters2",
       "firestoreProjectId": "agro-data-control",
       "firestoreDatabaseId": "(default)",
-      "firestoreServiceAccountPath": "/root/backend/config/service-account.json"
+      "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json"
     }
   ],
   "doorOpenings": {
@@ -37,7 +37,7 @@
     "siteId": "sitio-demo",
     "firestoreProjectId": "agro-data-control",
     "firestoreDatabaseId": "(default)",
-    "firestoreServiceAccountPath": "/root/backend/config/service-account.json",
+    "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json",
     "doors": [
       {
         "doorId": "sala",
@@ -59,7 +59,7 @@
     "siteId": "sitio-demo",
     "firestoreProjectId": "agro-data-control",
     "firestoreDatabaseId": "(default)",
-    "firestoreServiceAccountPath": "/root/backend/config/service-account.json",
+    "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json",
     "plcs": [
       {
         "unitKey": "munters1",

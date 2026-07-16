@@ -146,6 +146,8 @@ class EnvironmentOverviewPage extends StatefulWidget {
     required this.showSnapshotPulse,
     required this.snapshotStale,
     required this.onTapBack,
+    required this.showOwnerControls,
+    this.onOpenSettings,
   });
 
   final List<MuntersModel> units;
@@ -157,6 +159,8 @@ class EnvironmentOverviewPage extends StatefulWidget {
   final bool showSnapshotPulse;
   final bool snapshotStale;
   final VoidCallback onTapBack;
+  final bool showOwnerControls;
+  final VoidCallback? onOpenSettings;
 
   @override
   State<EnvironmentOverviewPage> createState() =>
@@ -184,23 +188,45 @@ class _EnvironmentOverviewPageState extends State<EnvironmentOverviewPage> {
         children: [
           Row(
             children: [
-              const Expanded(
-                child: Text(
-                  'AgroData Monitor | Valke S.A.',
-                  textAlign: TextAlign.left,
-                  style: TextStyle(
-                    color: Color(0xFFCBD5E1),
-                    fontSize: 11,
-                    fontWeight: FontWeight.w400,
-                    height: 1,
-                  ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'AgroData Monitor | Valke S.A.',
+                      textAlign: TextAlign.left,
+                      style: TextStyle(
+                        color: Color(0xFFCBD5E1),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w400,
+                        height: 1,
+                      ),
+                    ),
+                    if (widget.showOwnerControls) ...[
+                      const SizedBox(height: 4),
+                      const Text(
+                        'EnvironmentOverviewPage',
+                        textAlign: TextAlign.left,
+                        style: TextStyle(
+                          color: Color(0xFF64748B),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          height: 1,
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               Wrap(
                 spacing: 8,
                 crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
-                  _EnvironmentOverviewHomeButton(onTap: widget.onTapBack),
+                  _EnvironmentOverviewDetailButton(onTap: widget.onTapBack),
+                  if (widget.showOwnerControls && widget.onOpenSettings != null)
+                    _EnvironmentOverviewSettingsButton(
+                      onTap: widget.onOpenSettings!,
+                    ),
                   _EnvironmentOverviewSizeSelector(
                     preset: _sizePreset,
                     onChanged: _setSizePreset,
@@ -227,21 +253,21 @@ class _EnvironmentOverviewPageState extends State<EnvironmentOverviewPage> {
   }
 }
 
-class _EnvironmentOverviewHomeButton extends StatelessWidget {
-  const _EnvironmentOverviewHomeButton({required this.onTap});
+class _EnvironmentOverviewDetailButton extends StatelessWidget {
+  const _EnvironmentOverviewDetailButton({required this.onTap});
 
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: 'Home',
+      message: 'Detalle',
       child: InkWell(
         onTap: onTap,
         borderRadius: BorderRadius.circular(7),
         child: Container(
           height: 28,
-          padding: const EdgeInsets.symmetric(horizontal: 9),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
           decoration: BoxDecoration(
             color: const Color(0xFF162133),
             borderRadius: BorderRadius.circular(7),
@@ -250,10 +276,52 @@ class _EnvironmentOverviewHomeButton extends StatelessWidget {
           child: const Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.home_rounded, size: 15, color: Color(0xFFCBD5E1)),
+              Icon(Icons.dashboard_rounded, size: 15, color: Color(0xFFCBD5E1)),
               SizedBox(width: 4),
               Text(
-                'Home',
+                'Detalle',
+                style: TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _EnvironmentOverviewSettingsButton extends StatelessWidget {
+  const _EnvironmentOverviewSettingsButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Configuración',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: Container(
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF162133),
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: const Color(0xFF223046)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.settings_rounded, size: 15, color: Color(0xFFCBD5E1)),
+              SizedBox(width: 4),
+              Text(
+                'Configuración',
                 style: TextStyle(
                   color: Color(0xFFCBD5E1),
                   fontSize: 11,
@@ -2851,6 +2919,7 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                     color: const Color(0xFFE5E7EB),
                     fontSize: 62 * scale,
                     unitFontSize: 15 * scale,
+                    overflowScaleDown: true,
                   ),
                 ),
               ),
@@ -2870,6 +2939,7 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                     color: const Color(0xFFE5E7EB),
                     fontSize: 62 * scale,
                     unitFontSize: 15 * scale,
+                    overflowScaleDown: true,
                   ),
                 ),
               ),
@@ -3344,7 +3414,6 @@ class _EnvironmentScaledValue extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final double effectiveUnitFontSize = fontSize * 0.75;
     final Widget valueRow = Row(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
@@ -3367,7 +3436,7 @@ class _EnvironmentScaledValue extends StatelessWidget {
             maxLines: 1,
             style: TextStyle(
               color: color.withValues(alpha: 0.9),
-              fontSize: effectiveUnitFontSize,
+              fontSize: unitFontSize,
               fontWeight: FontWeight.w800,
               height: 1,
             ),
@@ -3665,6 +3734,8 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
         : const Color(0xFF22C55E);
 
     final double gap = _LargeEnvironmentUnitCard._miniBoxGapBase * scale;
+    final double miniBoxHeight =
+        _LargeEnvironmentUnitCard._miniBoxBaseSize * scale;
     final double iconSize =
         _LargeEnvironmentUnitCard._extraMiniBoxIconBaseSize * scale;
     final double emphasizedIconSize = iconSize + (4 * scale);
@@ -3673,12 +3744,16 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
     final double doorIconSize = iconSize + (16 * scale);
 
     Widget boxRow(Widget left, Widget? right) {
-      return Row(
-        children: [
-          Expanded(child: left),
-          SizedBox(width: gap),
-          Expanded(child: right ?? const SizedBox.shrink()),
-        ],
+      return SizedBox(
+        height: miniBoxHeight,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Expanded(child: left),
+            SizedBox(width: gap),
+            Expanded(child: right ?? const SizedBox.shrink()),
+          ],
+        ),
       );
     }
 
@@ -3913,84 +3988,93 @@ class _LargeEnvironmentAuxMetricTile extends StatelessWidget {
         _LargeEnvironmentUnitCard._extraMiniBoxIconBaseSize * scale;
     final Widget effectiveIcon =
         iconWidget ?? Icon(icon, size: iconSize, color: iconColor);
-    final Widget tile = AspectRatio(
-      aspectRatio: 1,
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          final Color effectiveBorderColor =
-              borderColor ?? const Color(0xFF5B6B82);
-          final double effectiveBorderWidth = borderWidth ?? 1;
-          final bool blinkBorder =
-              effectiveBorderColor == const Color(0xFFEF4444) &&
-              effectiveBorderWidth > 1;
-          final Widget content = hasValue || hasLabel
-              ? Stack(
-                  children: [
-                    if (hasValue)
-                      Positioned.fill(
-                        top: constraints.maxHeight * _valueTopFactor,
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: _EnvironmentScaledValue(
-                            value: value,
-                            unit: unit,
+    Widget buildTile(BoxConstraints constraints) {
+      final Color effectiveBorderColor = borderColor ?? const Color(0xFF5B6B82);
+      final double effectiveBorderWidth = borderWidth ?? 1;
+      final bool blinkBorder =
+          effectiveBorderColor == const Color(0xFFEF4444) &&
+          effectiveBorderWidth > 1;
+      final Widget content = hasValue || hasLabel
+          ? Stack(
+              children: [
+                if (hasValue)
+                  Positioned.fill(
+                    top: constraints.maxHeight * _valueTopFactor,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: _EnvironmentScaledValue(
+                        value: value,
+                        unit: unit,
+                        color: const Color(0xFFE5E7EB),
+                        fontSize:
+                            _LargeEnvironmentUnitCard
+                                ._extraMiniBoxValueBaseSize *
+                            scale,
+                        unitFontSize:
+                            _LargeEnvironmentUnitCard
+                                ._extraMiniBoxValueBaseSize *
+                            scale,
+                      ),
+                    ),
+                  )
+                else if (hasLabel)
+                  Positioned.fill(
+                    top: constraints.maxHeight * 0.60,
+                    left: 5 * scale,
+                    right: 5 * scale,
+                    child: Align(
+                      alignment: Alignment.topCenter,
+                      child: FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Text(
+                          label!,
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
                             color: const Color(0xFFE5E7EB),
-                            fontSize:
-                                _LargeEnvironmentUnitCard
-                                    ._extraMiniBoxValueBaseSize *
-                                scale,
-                            unitFontSize:
-                                _LargeEnvironmentUnitCard
-                                    ._extraMiniBoxValueBaseSize *
-                                scale,
-                          ),
-                        ),
-                      )
-                    else if (hasLabel)
-                      Positioned.fill(
-                        top: constraints.maxHeight * 0.60,
-                        left: 5 * scale,
-                        right: 5 * scale,
-                        child: Align(
-                          alignment: Alignment.topCenter,
-                          child: FittedBox(
-                            fit: BoxFit.scaleDown,
-                            child: Text(
-                              label!,
-                              maxLines: 1,
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                color: const Color(0xFFE5E7EB),
-                                fontSize: 15 * scale,
-                                fontWeight: FontWeight.w800,
-                                height: 1,
-                              ),
-                            ),
+                            fontSize: 15 * scale,
+                            fontWeight: FontWeight.w800,
+                            height: 1,
                           ),
                         ),
                       ),
-                    Positioned(
-                      top:
-                          constraints.maxHeight *
-                          (hasLabel ? 0.11 : _markerTopFactor),
-                      left: 0,
-                      right: 0,
-                      child: Center(child: effectiveIcon),
                     ),
-                  ],
-                )
-              : Center(child: effectiveIcon);
-          return _BlinkingBorderContainer(
-            blink: blinkBorder,
-            borderColor: effectiveBorderColor,
-            borderWidth: effectiveBorderWidth,
-            borderRadius: 8 * scale,
-            backgroundColor: const Color(0xFF0F1B2C),
-            padding: EdgeInsets.all(4 * scale),
-            child: content,
-          );
-        },
-      ),
+                  ),
+                Positioned(
+                  top:
+                      constraints.maxHeight *
+                      (hasLabel ? 0.11 : _markerTopFactor),
+                  left: 0,
+                  right: 0,
+                  child: Center(child: effectiveIcon),
+                ),
+              ],
+            )
+          : Center(child: effectiveIcon);
+      return _BlinkingBorderContainer(
+        blink: blinkBorder,
+        borderColor: effectiveBorderColor,
+        borderWidth: effectiveBorderWidth,
+        borderRadius: 8 * scale,
+        backgroundColor: const Color(0xFF0F1B2C),
+        padding: EdgeInsets.all(4 * scale),
+        child: content,
+      );
+    }
+
+    final Widget tile = LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.hasBoundedHeight) {
+          return buildTile(constraints);
+        }
+        return AspectRatio(
+          aspectRatio: 1,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) =>
+                buildTile(constraints),
+          ),
+        );
+      },
     );
     final String? message = tooltip;
     if (message == null || message.isEmpty) {
@@ -4020,39 +4104,50 @@ class _LargeAdditionalMiniBox extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return AspectRatio(
-      aspectRatio: 1,
-      child: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          return Container(
-            padding: EdgeInsets.all(4 * scale),
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F1B2C),
-              borderRadius: BorderRadius.circular(8 * scale),
-              border: Border.all(color: const Color(0xFF5B6B82)),
+    Widget buildTile(BoxConstraints constraints) {
+      return Container(
+        padding: EdgeInsets.all(4 * scale),
+        decoration: BoxDecoration(
+          color: const Color(0xFF0F1B2C),
+          borderRadius: BorderRadius.circular(8 * scale),
+          border: Border.all(color: const Color(0xFF5B6B82)),
+        ),
+        child: Stack(
+          children: [
+            Positioned.fill(
+              top: constraints.maxHeight * _valueTopFactor,
+              child: Align(
+                alignment: Alignment.topCenter,
+                child:
+                    valueChild ??
+                    _LargeExtraValueText(value ?? '-', scale: scale),
+              ),
             ),
-            child: Stack(
-              children: [
-                Positioned.fill(
-                  top: constraints.maxHeight * _valueTopFactor,
-                  child: Align(
-                    alignment: Alignment.topCenter,
-                    child:
-                        valueChild ??
-                        _LargeExtraValueText(value ?? '-', scale: scale),
-                  ),
-                ),
-                Positioned(
-                  top: constraints.maxHeight * _markerTopFactor,
-                  left: 0,
-                  right: 0,
-                  child: Center(child: marker),
-                ),
-              ],
+            Positioned(
+              top: constraints.maxHeight * _markerTopFactor,
+              left: 0,
+              right: 0,
+              child: Center(child: marker),
             ),
-          );
-        },
-      ),
+          ],
+        ),
+      );
+    }
+
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        if (constraints.hasBoundedHeight) {
+          return buildTile(constraints);
+        }
+        return AspectRatio(
+          aspectRatio: 1,
+          child: LayoutBuilder(
+            builder: (BuildContext context, BoxConstraints constraints) {
+              return buildTile(constraints);
+            },
+          ),
+        );
+      },
     );
   }
 }

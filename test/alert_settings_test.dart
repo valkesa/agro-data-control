@@ -37,7 +37,7 @@ void main() {
       equals(<String, Object?>{
         'enabled': true,
         'sendWhatsapp': true,
-        'order': 6,
+        'order': 7,
       }),
     );
   });
@@ -66,8 +66,8 @@ void main() {
     final AlertSettings settings = AlertSettings.fromRaw(<String, dynamic>{});
 
     expect(settings.orderedKeys, equals(AlertSettingKey.values));
-    expect(settings.highHumidity.order, 6);
-    expect(settings.dewPointRisk.order, 7);
+    expect(settings.highHumidity.order, 7);
+    expect(settings.dewPointRisk.order, 8);
   });
 
   test('normalizes duplicated and invalid order values', () {
@@ -75,6 +75,7 @@ void main() {
       'alerts': <String, dynamic>{
         'muntersDoorOpen': <String, dynamic>{'order': -1},
         'roomDoorOpen': <String, dynamic>{'order': 2},
+        'temperatureInterior': <String, dynamic>{'order': null},
         'highTemperatureHeatingActive': <String, dynamic>{'order': 2},
         'lowTemperatureHumidifierActive': <String, dynamic>{'order': null},
         'highDifferentialPressure': <String, dynamic>{'order': 20},
@@ -87,7 +88,7 @@ void main() {
       settings.orderedKeys
           .map((AlertSettingKey key) => settings.toggleFor(key).order)
           .toList(),
-      equals(<int>[1, 2, 3, 4, 5, 6, 7]),
+      equals(<int>[1, 2, 3, 4, 5, 6, 7, 8]),
     );
   });
 
@@ -101,6 +102,7 @@ void main() {
       equals(<AlertSettingKey>[
         AlertSettingKey.muntersDoorOpen,
         AlertSettingKey.roomDoorOpen,
+        AlertSettingKey.temperatureInterior,
         AlertSettingKey.highTemperatureHeatingActive,
         AlertSettingKey.highHumidity,
         AlertSettingKey.lowTemperatureHumidifierActive,
@@ -112,7 +114,7 @@ void main() {
       moved.orderedKeys
           .map((AlertSettingKey key) => moved.toggleFor(key).order)
           .toList(),
-      equals(<int>[1, 2, 3, 4, 5, 6, 7]),
+      equals(<int>[1, 2, 3, 4, 5, 6, 7, 8]),
     );
   });
 

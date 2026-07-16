@@ -218,7 +218,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       const SitePlcConfigService();
   final PressMagnifierController _magnifierController =
       PressMagnifierController();
-  String _selectedTab = 'comparativo';
+  String _selectedTab = 'environmentOverview';
   DashboardSnapshot _snapshot = DashboardSnapshot.placeholder();
   Timer? _refreshTimer;
   Timer? _maintenanceExpiryTimer;
@@ -943,7 +943,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
     required _DashboardBootstrapResult bootstrap,
     required DashboardRangeSettings updated,
   }) async {
-    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String? tenantId = bootstrap.effectiveTenantId;
     if (tenantId == null || !bootstrap.canEditConfig) {
       setState(() {
         _rangeSettings = updated;
@@ -1043,6 +1043,19 @@ class _AgroDataShellState extends State<AgroDataShell> {
       '[Firebase settings] temperatureMin=${effectiveSettings.temperatureMin} temperatureMax=${effectiveSettings.temperatureMax} humidityMin=${effectiveSettings.humidityMin} humidityMax=${effectiveSettings.humidityMax} filterPressureMax=${effectiveSettings.filterPressureMax} thermalFlowThresholdC=${effectiveSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${effectiveSettings.thermalFlowMarkedDeltaC}',
     );
 
+    final bool cacheSynced =
+        await AlertSettingsCacheSyncService(
+          backendSnapshotEndpoint: _activeBackendEndpoint,
+        ).sync(
+          siteId: bootstrap.siteId,
+          ranges: effectiveSettings,
+          alerts: _alertSettings,
+        );
+
+    if (!mounted) {
+      return;
+    }
+
     setState(() {
       _rangeSettings = effectiveSettings;
       _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
@@ -1060,13 +1073,22 @@ class _AgroDataShellState extends State<AgroDataShell> {
         ),
       );
     });
+    if (!cacheSynced) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'La configuración fue guardada, pero el backend no pudo actualizarse inmediatamente.',
+          ),
+        ),
+      );
+    }
   }
 
   Future<void> _saveAlertSettings({
     required _DashboardBootstrapResult bootstrap,
     required _AlertSettingsDialogResult updated,
   }) async {
-    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String? tenantId = bootstrap.effectiveTenantId;
     if (tenantId == null || !bootstrap.canEditConfig) {
       setState(() {
         _rangeSettings = updated.rangeSettings;
@@ -2509,6 +2531,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           showSnapshotPulse: _showSnapshotPulse,
                           snapshotStale: _snapshotStale,
                           onTapBack: _goHomeDashboard,
+                          showOwnerControls: _userRole == UserAppRole.owner,
+                          onOpenSettings: _openSettings,
                         );
                       }
 
@@ -5211,21 +5235,9 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
         title: 'Puerta de sala abierta',
         settings: settings,
       ),
-      AlertSettingKey.highTemperatureHeatingActive => _AlertSettingsTableRow(
+      AlertSettingKey.temperatureInterior => _AlertSettingsTableRow(
         keyType: key,
-        title: 'Temp. alta con calefacción activa',
-        settings: settings,
-        values: <_AlertTableValueSpec>[
-          _AlertTableValueSpec(
-            label: 'Máxima',
-            controller: _temperatureMaxController,
-            suffix: '°C',
-          ),
-        ],
-      ),
-      AlertSettingKey.lowTemperatureHumidifierActive => _AlertSettingsTableRow(
-        keyType: key,
-        title: 'Temp. baja con bomba humidificadora activa',
+        title: 'Temperatura interior',
         settings: settings,
         values: <_AlertTableValueSpec>[
           _AlertTableValueSpec(
@@ -5233,7 +5245,22 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
             controller: _temperatureMinController,
             suffix: '°C',
           ),
+          _AlertTableValueSpec(
+            label: 'Máxima',
+            controller: _temperatureMaxController,
+            suffix: '°C',
+          ),
         ],
+      ),
+      AlertSettingKey.highTemperatureHeatingActive => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Temp. alta con calefacción activa',
+        settings: settings,
+      ),
+      AlertSettingKey.lowTemperatureHumidifierActive => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Temp. baja con bomba humidificadora activa',
+        settings: settings,
       ),
       AlertSettingKey.highDifferentialPressure => _AlertSettingsTableRow(
         keyType: key,

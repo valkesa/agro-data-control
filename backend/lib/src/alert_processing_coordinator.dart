@@ -157,6 +157,7 @@ class AlertProcessingCoordinator {
                 alert: alert,
                 unitJson: unitJson,
                 settings: settings!,
+                muntersId: room.muntersId,
               ),
         );
     _logTransitions(transitionBatch, evaluatedAt);
@@ -222,8 +223,11 @@ class AlertProcessingCoordinator {
 
   void _logTransitions(AlertTransitionBatch batch, DateTime evaluatedAt) {
     for (final EvaluatedAlert alert in batch.activated) {
+      final bool configChanged = batch.configChangedActivated.any(
+        (EvaluatedAlert configAlert) => configAlert.key == alert.key,
+      );
       stdout.writeln(
-        '[alerts] event=alert_activated tenantId=${alert.key.tenantId} siteId=${alert.key.siteId} roomId=${alert.key.roomId} roomNumber=${alert.key.roomNumber ?? ''} muntersId=${alert.key.muntersId ?? ''} alertType=${alert.type.id} measuredValue=${alert.measuredValue ?? ''} thresholdValue=${alert.thresholdValue ?? ''} sendWhatsapp=${alert.sendWhatsapp} evaluatedAt=${evaluatedAt.toIso8601String()}',
+        '[alerts] event=alert_activated reason=${configChanged ? 'config_changed' : 'measurement'} tenantId=${alert.key.tenantId} siteId=${alert.key.siteId} roomId=${alert.key.roomId} roomNumber=${alert.key.roomNumber ?? ''} muntersId=${alert.key.muntersId ?? ''} alertType=${alert.type.id} measuredValue=${alert.measuredValue ?? ''} thresholdValue=${alert.thresholdValue ?? ''} sendWhatsapp=${alert.sendWhatsapp} configVersion=${alert.configVersion} evaluatedAt=${evaluatedAt.toIso8601String()}',
       );
     }
     for (final ActiveAlertState alert in batch.recovered) {
@@ -247,28 +251,36 @@ class AlertProcessingCoordinator {
     required ActiveAlertState alert,
     required Map<String, Object?> unitJson,
     required CachedAlertSettings settings,
+    required String muntersId,
   }) {
+    final CachedAlertThresholds thresholds = settings.thresholdsFor(muntersId);
     return switch (alert.type) {
+      AlertType.temperatureInterior => _recoverTemperatureInterior(
+        measured: _finiteDouble(unitJson['tempInterior']),
+        minimum: thresholds.temperatureMin,
+        maximum: thresholds.temperatureMax,
+        hysteresis: runtime.config.hysteresis.temperatureC,
+      ),
       AlertType.highTemperatureHeatingActive => _recoverMaximum(
         measured: _finiteDouble(unitJson['tempInterior']),
-        threshold: settings.thresholds.temperatureMax,
+        threshold: thresholds.temperatureMax,
         hysteresis: runtime.config.hysteresis.temperatureC,
       ),
       AlertType.lowTemperatureHumidifierActive => _recoverMinimum(
         measured: _finiteDouble(unitJson['tempInterior']),
-        threshold: settings.thresholds.temperatureMin,
+        threshold: thresholds.temperatureMin,
         hysteresis: runtime.config.hysteresis.temperatureC,
       ),
       AlertType.highHumidity => _recoverMaximum(
         measured: _finiteDouble(
           unitJson['humInterior'],
         )?.clamp(0, 100).toDouble(),
-        threshold: settings.thresholds.humidityRedMinExclusive,
+        threshold: thresholds.humidityRedMinExclusive,
         hysteresis: runtime.config.hysteresis.humidityPercent,
       ),
       AlertType.dewPointRisk => _recoverMinimumMargin(
         margin: _currentDewPointMargin(unitJson),
-        threshold: settings.thresholds.dewPointMarginRedMaxInclusive,
+        threshold: thresholds.dewPointMarginRedMaxInclusive,
         hysteresis: runtime.config.hysteresis.dewPointRiskC,
       ),
       AlertType.muntersDoorOpen ||
@@ -276,6 +288,22 @@ class AlertProcessingCoordinator {
       AlertType.highDifferentialPressure => true,
     };
   }
+}
+
+bool _recoverTemperatureInterior({
+  required double? measured,
+  required double? minimum,
+  required double? maximum,
+  required double hysteresis,
+}) {
+  if (measured == null ||
+      minimum == null ||
+      maximum == null ||
+      !minimum.isFinite ||
+      !maximum.isFinite) {
+    return true;
+  }
+  return measured >= minimum + hysteresis && measured <= maximum - hysteresis;
 }
 
 bool _recoverMaximum({

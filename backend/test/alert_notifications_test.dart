@@ -10,6 +10,7 @@ Future<void> main() async {
   _testFormatter();
   _testTemplateDistribution();
   _testTemplateBuilderSingleAndMultiple();
+  _testTemplateBuilderFromEnvironment();
   await _testBatching();
   await _testSender();
 }
@@ -42,29 +43,22 @@ void _testFormatter() {
 }
 
 void _testTemplateDistribution() {
-  _expect(distributeAlertLines(_alerts(2)).join('|') == 'A1|A2|-', '2 alerts');
-  _expect(distributeAlertLines(_alerts(3)).join('|') == 'A1|A2|A3', '3 alerts');
+  _expect(distributeAlertLines(_alerts(2)).join('|') == 'A1|A2', '2 alerts');
   _expect(
-    distributeAlertLines(_alerts(4)).join('|') == 'A1 - A2|A3|A4',
+    distributeAlertLines(_alerts(3)).join('|') == 'A1 - A2|A3',
+    '3 alerts',
+  );
+  _expect(
+    distributeAlertLines(_alerts(4)).join('|') == 'A1 - A2|A3 - A4',
     '4 alerts',
   );
   _expect(
-    distributeAlertLines(_alerts(5)).join('|') == 'A1 - A2|A3 - A4|A5',
+    distributeAlertLines(_alerts(5)).join('|') == 'A1 - A2 - A3|A4 - A5',
     '5 alerts',
   );
   _expect(
-    distributeAlertLines(_alerts(6)).join('|') == 'A1 - A2|A3 - A4|A5 - A6',
+    distributeAlertLines(_alerts(6)).join('|') == 'A1 - A2 - A3|A4 - A5 - A6',
     '6 alerts',
-  );
-  _expect(
-    distributeAlertLines(_alerts(7)).join('|') ==
-        'A1 - A2 - A3|A4 - A5|A6 - A7',
-    '7 alerts',
-  );
-  _expect(
-    distributeAlertLines(_alerts(8)).join('|') ==
-        'A1 - A2 - A3|A4 - A5 - A6|A7 - A8',
-    '8 alerts',
   );
 }
 
@@ -88,16 +82,16 @@ void _testTemplateBuilderSingleAndMultiple() {
       )
       .single;
   _expect(
-    singleMessage.templateName == 'agrodata_alerts_single_b',
+    singleMessage.templateName == 'alerts_single_c',
     'single template name',
   );
   _expect(singleMessage.languageCode == 'es_AR', 'single language code');
   _expect(
     singleMessage.bodyParameters.length == 2 &&
         singleMessage.bodyParameters[0] ==
-            'Temperatura interior: 31 C (max: 30 C)' &&
+            'The Good Pig | Sitio principal | Sala 1' &&
         singleMessage.bodyParameters[1] ==
-            'The Good Pig | Sitio principal | Sala 1',
+            'Temperatura interior: 31 C (max: 30 C)',
     'single variables',
   );
 
@@ -115,10 +109,64 @@ void _testTemplateBuilderSingleAndMultiple() {
       )
       .single;
   _expect(
-    multipleMessage.templateName == 'agrodata_alerts_multiple',
+    multipleMessage.templateName == 'alerts_multiple_c',
     'multiple template name',
   );
-  _expect(multipleMessage.bodyParameters[4] == '-', 'multiple third line dash');
+  _expect(multipleMessage.bodyParameters.length == 3, 'multiple variables');
+  _expect(
+    multipleMessage.bodyParameters[0] ==
+        'The Good Pig | Sitio principal | Sala 1',
+    'multiple context variable',
+  );
+  _expect(
+    multipleMessage.bodyParameters[1] ==
+            'Presion diferencial: 280 Pa (max: 250 Pa)' &&
+        multipleMessage.bodyParameters[2] ==
+            'Humedad interior: 98 % (max: 95 %)',
+    'multiple alert variables',
+  );
+}
+
+void _testTemplateBuilderFromEnvironment() {
+  final WhatsAppTemplateBuilder builder =
+      WhatsAppTemplateBuilder.fromEnvironment(
+        environment: const <String, String>{
+          'WHATSAPP_ALERT_SINGLE_TEMPLATE_NAME': 'custom_single',
+          'WHATSAPP_ALERT_MULTIPLE_TEMPLATE_NAME': 'custom_multiple',
+          'WHATSAPP_ALERT_SINGLE_TEMPLATE_LANGUAGE': 'es',
+          'WHATSAPP_ALERT_MULTIPLE_TEMPLATE_LANGUAGE': 'es_419',
+        },
+      );
+  final AlertRecipient recipient = _recipient();
+  final WhatsAppTemplateMessage singleMessage = builder
+      .build(
+        batch: _batch(
+          alerts: <EvaluatedAlert>[_alert(AlertType.muntersDoorOpen)],
+        ),
+        clientName: recipient.displayClientName,
+        siteName: recipient.displaySiteName,
+      )
+      .single;
+  _expect(singleMessage.templateName == 'custom_single', 'env single template');
+  _expect(singleMessage.languageCode == 'es', 'env single language');
+
+  final WhatsAppTemplateMessage multipleMessage = builder
+      .build(
+        batch: _batch(
+          alerts: <EvaluatedAlert>[
+            _alert(AlertType.muntersDoorOpen),
+            _alert(AlertType.roomDoorOpen),
+          ],
+        ),
+        clientName: recipient.displayClientName,
+        siteName: recipient.displaySiteName,
+      )
+      .single;
+  _expect(
+    multipleMessage.templateName == 'custom_multiple',
+    'env multiple template',
+  );
+  _expect(multipleMessage.languageCode == 'es_419', 'env multiple language');
 }
 
 Future<void> _testBatching() async {
@@ -214,6 +262,8 @@ Future<void> _testSender() async {
   final AlertNotificationProcessor processor = AlertNotificationProcessor(
     recipientsConfig: const WhatsAppAlertRecipientsConfig(),
     sender: AlertNotificationSender(whatsAppService: whatsApp),
+    clientName: 'The Good Pig',
+    siteName: 'Sitio principal',
   );
   final PendingNotificationBatch batch = _batch(
     tenantId: 'the_good_pig',
@@ -223,7 +273,7 @@ Future<void> _testSender() async {
   final NotificationBatchSendResult result = await processor.process(batch);
   _expect(result.successCount == 2, 'configured recipients succeed');
   _expect(
-    whatsApp.calls.first.templateName == 'agrodata_alerts_single_b',
+    whatsApp.calls.first.templateName == 'alerts_single_c',
     'sender uses single template',
   );
   _expect(whatsApp.calls.first.languageCode == 'es_AR', 'sender uses es_AR');
@@ -252,6 +302,8 @@ Future<void> _testSender() async {
           whatsAppService: timeoutWhatsApp,
           sendTimeout: Duration.zero,
         ),
+        clientName: 'The Good Pig',
+        siteName: 'Sitio principal',
       );
   final PendingNotificationBatch timeoutBatch = _batch(
     tenantId: 'the_good_pig',
@@ -382,6 +434,8 @@ class _FakeNotificationProcessor extends AlertNotificationProcessor {
         sender: AlertNotificationSender(
           whatsAppService: _FakeWhatsAppService(),
         ),
+        clientName: 'The Good Pig',
+        siteName: 'Sitio principal',
       );
 
   final List<PendingNotificationBatch> processed = <PendingNotificationBatch>[];

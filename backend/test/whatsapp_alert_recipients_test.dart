@@ -185,14 +185,15 @@ void main() {
   );
 
   _expect(
-    alertPriorityOrder.length == 7 &&
+    alertPriorityOrder.length == 8 &&
         alertPriorityOrder[0] == AlertType.muntersDoorOpen &&
         alertPriorityOrder[1] == AlertType.roomDoorOpen &&
-        alertPriorityOrder[2] == AlertType.highTemperatureHeatingActive &&
-        alertPriorityOrder[3] == AlertType.lowTemperatureHumidifierActive &&
-        alertPriorityOrder[4] == AlertType.highDifferentialPressure &&
-        alertPriorityOrder[5] == AlertType.highHumidity &&
-        alertPriorityOrder[6] == AlertType.dewPointRisk,
+        alertPriorityOrder[2] == AlertType.temperatureInterior &&
+        alertPriorityOrder[3] == AlertType.highTemperatureHeatingActive &&
+        alertPriorityOrder[4] == AlertType.lowTemperatureHumidifierActive &&
+        alertPriorityOrder[5] == AlertType.highDifferentialPressure &&
+        alertPriorityOrder[6] == AlertType.highHumidity &&
+        alertPriorityOrder[7] == AlertType.dewPointRisk,
     'keeps expected alert priority order',
   );
   _expect(
@@ -202,6 +203,7 @@ void main() {
   _expect(
     AlertType.muntersDoorOpen.id == 'munters_door_open' &&
         AlertType.roomDoorOpen.id == 'room_door_open' &&
+        AlertType.temperatureInterior.id == 'temperature_interior' &&
         AlertType.highTemperatureHeatingActive.id ==
             'high_temperature_heating_active' &&
         AlertType.lowTemperatureHumidifierActive.id ==
@@ -213,8 +215,8 @@ void main() {
   );
   _expect(
     alertPriorityIndex(AlertType.muntersDoorOpen) == 0 &&
-        alertPriorityIndex(AlertType.highDifferentialPressure) == 4 &&
-        alertPriorityIndex(AlertType.dewPointRisk) == 6,
+        alertPriorityIndex(AlertType.highDifferentialPressure) == 5 &&
+        alertPriorityIndex(AlertType.dewPointRisk) == 7,
     'keeps stable alert priority indexes',
   );
 }

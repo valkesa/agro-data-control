@@ -30,35 +30,14 @@ class AlertSettingsCacheSyncService {
       return false;
     }
 
+    final Map<String, Object?> sharedMuntersSettings = _sharedMuntersSettings(
+      ranges,
+    );
     final Map<String, Object?> settings = <String, Object?>{
       'alerts': alerts.toFirestore(),
       'munters': <String, Object?>{
-        'munters1': <String, Object?>{
-          'tempInterior': <String, Object?>{
-            'min': ranges.temperatureMin,
-            'opt': (ranges.temperatureMin + ranges.temperatureMax) / 2,
-            'max': ranges.temperatureMax,
-          },
-          'humidityInterior': <String, Object?>{
-            'min': ranges.humidityMin,
-            'opt': (ranges.humidityMin + ranges.humidityMax) / 2,
-            'max': ranges.humidityMax,
-            'alarm': <String, Object?>{
-              'yellowMinInclusive': ranges.humidityAlarmYellowMin,
-              'redMinExclusive': ranges.humidityAlarmRedMinExclusive,
-            },
-          },
-          'dewPointMargin': <String, Object?>{
-            'alarm': <String, Object?>{
-              'redMaxInclusive': ranges.dewPointMarginAlarmRedMax,
-              'yellowMaxExclusive':
-                  ranges.dewPointMarginAlarmYellowMaxExclusive,
-            },
-          },
-          'presionDiferencial': <String, Object?>{
-            'max': ranges.filterPressureMax,
-          },
-        },
+        'munters1': sharedMuntersSettings,
+        'munters2': sharedMuntersSettings,
       },
     };
 
@@ -92,4 +71,30 @@ class AlertSettingsCacheSyncService {
       endpoint,
     ).replace(path: '/api/alerts/settings-cache', query: '');
   }
+}
+
+Map<String, Object?> _sharedMuntersSettings(DashboardRangeSettings ranges) {
+  return <String, Object?>{
+    'tempInterior': <String, Object?>{
+      'min': ranges.temperatureMin,
+      'opt': (ranges.temperatureMin + ranges.temperatureMax) / 2,
+      'max': ranges.temperatureMax,
+    },
+    'humidityInterior': <String, Object?>{
+      'min': ranges.humidityMin,
+      'opt': (ranges.humidityMin + ranges.humidityMax) / 2,
+      'max': ranges.humidityMax,
+      'alarm': <String, Object?>{
+        'yellowMinInclusive': ranges.humidityAlarmYellowMin,
+        'redMinExclusive': ranges.humidityAlarmRedMinExclusive,
+      },
+    },
+    'dewPointMargin': <String, Object?>{
+      'alarm': <String, Object?>{
+        'redMaxInclusive': ranges.dewPointMarginAlarmRedMax,
+        'yellowMaxExclusive': ranges.dewPointMarginAlarmYellowMaxExclusive,
+      },
+    },
+    'presionDiferencial': <String, Object?>{'max': ranges.filterPressureMax},
+  };
 }
