@@ -2616,6 +2616,7 @@ class _LargeEnvironmentUnitCard extends StatelessWidget {
                       blocked: blocked,
                       salaDoorOpen: blocked ? null : unit.salaAbierta,
                       muntersDoorOpen: blocked ? null : unit.munterAbierto,
+                      muntersDoorLabel: unit.name,
                       nh3: blocked ? null : unit.nh3,
                       ventilationPower: blocked
                           ? null
@@ -2707,6 +2708,10 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
             temperatureC: unit.tempInterior,
             relativeHumidityPercent: unit.humInterior,
           );
+    final double? dewPointDelta = _calculateDewPointDeltaC(
+      temperatureC: temp,
+      dewPointC: dewPoint,
+    );
     final bool tempInRange =
         temp != null &&
         temp >= rangeSettings.temperatureMin &&
@@ -2768,7 +2773,9 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
           borderColor: !tempInRange && temp != null
               ? const Color(0xFFEF4444)
               : normalTileBorderColor,
-          borderWidth: !tempInRange && temp != null ? 2.4 * scale : null,
+          borderWidth: !tempInRange && temp != null
+              ? _environmentRedAlertBorderWidthFactor * scale
+              : null,
           alarmTooltip: temperatureAlarmTooltip,
           child: compactWidget
               ? SizedBox(
@@ -2864,7 +2871,7 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
               SizedBox(width: 10 * scale),
               Expanded(
                 child: _EnvironmentMetricTile(
-                  title: compactWidget ? 'PR' : 'Punto de Rocio',
+                  title: compactWidget ? '∆PR' : '∆ Punto de Rocio',
                   iconWidget: _AnimatedDewPointIcon(
                     color: compactWidget
                         ? const Color(0xFF38BDF8)
@@ -2887,7 +2894,7 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                     scale,
                   ),
                   child: _EnvironmentScaledValue(
-                    value: dewPoint?.toStringAsFixed(1),
+                    value: dewPointDelta?.toStringAsFixed(1),
                     unit: '°C',
                     color: dewPointColor,
                     fontSize: compactWidget ? 14 : 62 * scale,
@@ -3680,6 +3687,7 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
     required this.blocked,
     required this.salaDoorOpen,
     required this.muntersDoorOpen,
+    required this.muntersDoorLabel,
     required this.nh3,
     required this.ventilationPower,
     required this.differentialPressure,
@@ -3694,6 +3702,7 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
   final bool blocked;
   final bool? salaDoorOpen;
   final bool? muntersDoorOpen;
+  final String muntersDoorLabel;
   final double? nh3;
   final double? ventilationPower;
   final double? differentialPressure;
@@ -3719,7 +3728,7 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
     final double? ventilationBorderWidth =
         ventilationStatus.kind == _ModuleStatusKind.alert ||
             ventilationStatus.kind == _ModuleStatusKind.error
-        ? 2.4 * scale
+        ? _environmentRedAlertBorderWidthFactor * scale
         : ventilationBorderColor == null
         ? null
         : 1.8 * scale;
@@ -3768,7 +3777,9 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             iconSize: doorIconSize,
           ),
           _LargeDoorMiniBox(
-            label: 'Munters',
+            label: muntersDoorLabel.trim().isNotEmpty
+                ? muntersDoorLabel.trim()
+                : 'Munters',
             open: muntersDoorOpen,
             scale: scale,
             iconSize: doorIconSize,
@@ -3800,7 +3811,9 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             ),
             iconColor: filterIconColor,
             borderColor: filterAlarm ? const Color(0xFFEF4444) : null,
-            borderWidth: filterAlarm ? 2.4 * scale : null,
+            borderWidth: filterAlarm
+                ? _environmentRedAlertBorderWidthFactor * scale
+                : null,
             value: differentialPressure?.toStringAsFixed(0),
             unit: 'Pa',
             scale: scale,
@@ -3938,7 +3951,9 @@ class _LargeDoorMiniBox extends StatelessWidget {
       iconWidget: isOpen ? _DoorOpenIcon(color: color, size: iconSize) : null,
       iconColor: color,
       borderColor: isOpen ? const Color(0xFFEF4444) : null,
-      borderWidth: isOpen ? 2.4 * scale : null,
+      borderWidth: isOpen
+          ? _environmentRedAlertBorderWidthFactor * scale
+          : null,
       tooltip: isOpen ? '$label abierta' : '$label cerrada',
       value: null,
       unit: '',
@@ -6196,6 +6211,8 @@ enum _RangeAssessment { pending, optimal, limit, outOfRange }
 
 enum _EnvironmentAlarmLevel { pending, green, yellow, red }
 
+const double _environmentRedAlertBorderWidthFactor = 3.6;
+
 _EnvironmentAlarmLevel _assessHumidityInteriorAlarm(
   double? humidity,
   DashboardRangeSettings rangeSettings,
@@ -6249,7 +6266,7 @@ Color? _alarmLevelBorderColor(_EnvironmentAlarmLevel level) {
 
 double? _alarmLevelBorderWidth(_EnvironmentAlarmLevel level, double scale) {
   return switch (level) {
-    _EnvironmentAlarmLevel.red => 2.4 * scale,
+    _EnvironmentAlarmLevel.red => _environmentRedAlertBorderWidthFactor * scale,
     _EnvironmentAlarmLevel.yellow => 1.8 * scale,
     _ => null,
   };
@@ -6448,7 +6465,7 @@ class _EnvironmentTemperatureBlock extends StatelessWidget {
     'T. Ingreso Sala',
     'T. Salida Sala',
     '∆T (Ing-Egr)',
-    'P. Rocío',
+    '∆ P. Rocío',
     'Flujo térmico',
   ];
   static const double _actionColumnWidth = 26;
@@ -6676,6 +6693,10 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
       temperatureC: egreso,
       relativeHumidityPercent: humedadRelativa,
     );
+    final double? deltaPuntoRocio = _calculateDewPointDeltaC(
+      temperatureC: egreso,
+      dewPointC: puntoRocio,
+    );
     return SizedBox(
       width: _gaugeWidth,
       height: _blockHeight,
@@ -6710,7 +6731,7 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
                   gaugeWidth: _gaugeWidth,
                 ),
                 _DewPointValue(
-                  value: puntoRocio,
+                  value: deltaPuntoRocio,
                   blocked: blocked,
                   gaugeWidth: _gaugeWidth,
                 ),
@@ -8444,6 +8465,19 @@ double? _calculateDewPointC({
   final double gamma =
       (a * temperatureC) / (b + temperatureC) + math.log(rh / 100.0);
   return (b * gamma) / (a - gamma);
+}
+
+double? _calculateDewPointDeltaC({
+  required double? temperatureC,
+  required double? dewPointC,
+}) {
+  if (temperatureC == null || dewPointC == null) {
+    return null;
+  }
+  if (!temperatureC.isFinite || !dewPointC.isFinite) {
+    return null;
+  }
+  return dewPointC - temperatureC;
 }
 
 class _DeltaTrianglePainter extends CustomPainter {

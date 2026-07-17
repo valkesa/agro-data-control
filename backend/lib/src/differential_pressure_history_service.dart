@@ -24,8 +24,11 @@ class DifferentialPressureHistoryService {
   final DifferentialPressureHistoryConfig config;
   final FirestoreDifferentialPressureHistoryRepository _repository;
 
+  static const Duration _firestoreFailureBackoff = Duration(minutes: 5);
+
   Future<void> _queue = Future<void>.value();
   final Set<String> _sampledWindowKeys = <String>{};
+  DateTime? _nextRetryAllowedAtUtc;
 
   bool get isEnabled => config.enabled && _repository.isConfigured;
 
@@ -63,6 +66,10 @@ class DifferentialPressureHistoryService {
     if (_sampledWindowKeys.contains(sampleWindowKey)) {
       return;
     }
+    if (_nextRetryAllowedAtUtc != null &&
+        observedAtUtc.isBefore(_nextRetryAllowedAtUtc!)) {
+      return;
+    }
 
     final double? pressure = extractPressureDifferential(unitsJson);
     if (pressure == null) {
@@ -78,6 +85,7 @@ class DifferentialPressureHistoryService {
       existing = await _repository.loadDaily(dateKey);
     } on Object catch (error) {
       _log('firestore error loading daily date=$dateKey error=$error');
+      _nextRetryAllowedAtUtc = observedAtUtc.add(_firestoreFailureBackoff);
       return;
     }
 
@@ -114,6 +122,7 @@ class DifferentialPressureHistoryService {
       );
     } on Object catch (error) {
       _log('firestore error saving daily date=$dateKey error=$error');
+      _nextRetryAllowedAtUtc = observedAtUtc.add(_firestoreFailureBackoff);
     }
   }
 
