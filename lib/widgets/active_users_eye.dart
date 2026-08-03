@@ -11,12 +11,14 @@ class ActiveUsersEye extends StatelessWidget {
     required this.currentRole,
     required this.presenceListenable,
     required this.presenceDetailsRequested,
+    this.compact = false,
   });
 
   final User currentUser;
   final String? currentRole;
   final ValueListenable<BackendPresenceSnapshot?> presenceListenable;
   final ValueNotifier<bool> presenceDetailsRequested;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
@@ -32,17 +34,24 @@ class ActiveUsersEye extends StatelessWidget {
                 backgroundColor: const Color(0xFF111827),
                 foregroundColor: const Color(0xFFE5E7EB),
                 side: const BorderSide(color: Color(0xFF334155)),
-                padding: const EdgeInsets.all(11),
-                minimumSize: const Size.square(42),
+                padding: compact ? EdgeInsets.zero : const EdgeInsets.all(11),
+                minimumSize: Size.square(compact ? 28 : 42),
+                fixedSize: Size.square(compact ? 28 : 42),
+                tapTargetSize: compact
+                    ? MaterialTapTargetSize.shrinkWrap
+                    : MaterialTapTargetSize.padded,
               ),
               tooltip: 'Usuarios activos',
-              icon: const Icon(Icons.visibility_rounded, size: 21),
+              icon: Icon(Icons.visibility_rounded, size: compact ? 15 : 21),
             ),
             if (presence != null && !presence.stale)
               Positioned(
-                right: -4,
-                top: -5,
-                child: _PresenceBadge(count: presence.activeUserCount),
+                right: compact ? -6 : -4,
+                top: compact ? -6 : -5,
+                child: _PresenceBadge(
+                  count: presence.activeUserCount,
+                  compact: compact,
+                ),
               ),
           ],
         );
@@ -70,20 +79,27 @@ class ActiveUsersEye extends StatelessWidget {
 }
 
 class _PresenceBadge extends StatelessWidget {
-  const _PresenceBadge({required this.count});
+  const _PresenceBadge({required this.count, required this.compact});
 
   final int count;
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
     final String label = count > 99 ? '99+' : count.toString();
     return Container(
-      constraints: const BoxConstraints(minWidth: 18, minHeight: 18),
-      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+      constraints: BoxConstraints(
+        minWidth: compact ? 15 : 18,
+        minHeight: compact ? 15 : 18,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 3 : 5,
+        vertical: compact ? 1 : 2,
+      ),
       decoration: BoxDecoration(
         color: const Color(0xFF38BDF8),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFF0F172A), width: 2),
+        border: Border.all(color: const Color(0xFF0F172A), width: 1.5),
       ),
       alignment: Alignment.center,
       child: Text(

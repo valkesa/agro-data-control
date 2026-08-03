@@ -16,6 +16,8 @@ Future<void> main() async {
   await _testWhatsAppCandidatesUseConfiguredOrder();
   await _testOrderChangeDoesNotCreateTransition();
   await _testHysteresisPreventsThresholdFlapping();
+  await _testDifferentialPressureHysteresisPreventsFlapping();
+  await _testTransientNullReadingDoesNotFalselyRecover();
   await _testCooldownSuppressesFastResend();
   await _testThresholdChangeCreatesActivation();
   await _testActiveAlertConfigChangeRespectsCooldown();
@@ -236,6 +238,130 @@ Future<void> _testHysteresisPreventsThresholdFlapping() async {
   _expect(
     nearNormal.rooms.first.transitionBatch!.recovered.length == 2,
     'temperature alert recovers after hysteresis clears',
+  );
+}
+
+Future<void> _testDifferentialPressureHysteresisPreventsFlapping() async {
+  final AlertRuntime runtime = _runtimeWithSettings(_settings());
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  await coordinator.processSnapshot(
+    _snapshot(_unit(presionDiferencial: 31)),
+    evaluatedAt: DateTime.utc(2026, 1, 1, 10),
+  );
+  _expect(
+    runtime.activeAlertsRegistry.size == 1,
+    'differential pressure alert activates',
+  );
+  SnapshotAlertProcessingResult nearNormal = await coordinator.processSnapshot(
+    _snapshot(_unit(presionDiferencial: 25)),
+    evaluatedAt: DateTime.utc(2026, 1, 1, 10, 0, 5),
+  );
+  _expect(
+    nearNormal.rooms.first.transitionBatch!.recovered.isEmpty,
+    'differential pressure alert does not recover inside hysteresis band',
+  );
+  _expect(
+    runtime.activeAlertsRegistry.size == 1,
+    'differential pressure alert remains active inside hysteresis band',
+  );
+  nearNormal = await coordinator.processSnapshot(
+    _snapshot(_unit(presionDiferencial: 20)),
+    evaluatedAt: DateTime.utc(2026, 1, 1, 10, 0, 10),
+  );
+  _expect(
+    nearNormal.rooms.first.transitionBatch!.recovered.length == 1,
+    'differential pressure alert recovers after hysteresis clears',
+  );
+}
+
+// Reproduces a real production incident: a transient Modbus read failure
+// leaves humInterior null for one snapshot cycle while the dew point risk
+// alert is active. tempInterior=22.2 / humInterior=96 gives a dew point
+// margin of ~0.669C (below the default 1.0C threshold), matching the
+// exact values seen in the incident. Before the fix, a null margin caused
+// `_recoverMinimumMargin` to return true (falsely "recovered"), letting a
+// single bad read clear the alert although the real condition never
+// improved — hysteresis was bypassed entirely and only the notification
+// cooldown limited how often WhatsApp fired.
+Future<void> _testTransientNullReadingDoesNotFalselyRecover() async {
+  final AlertRuntime runtime = _runtimeWithSettings(_settings());
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+
+  // At tempInterior=22.2 / humInterior=96, highHumidity ALSO activates
+  // (default threshold 95) — same as the real incident. Both alerts share
+  // the same null-reading vulnerability, so we track dewPointRisk
+  // specifically throughout rather than assume a fixed registry size.
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 22.2, humInterior: 96)),
+    evaluatedAt: t0,
+  );
+  _expect(
+    _hasAlert(
+      AlertType.dewPointRisk,
+      result.rooms.first.transitionBatch!.activated,
+    ),
+    'dew point risk activates from a real reading',
+  );
+
+  // Simulate the Modbus read failure: humInterior missing this cycle.
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 22.2, humInterior: null)),
+    evaluatedAt: t0.add(const Duration(seconds: 15)),
+  );
+  _expect(
+    !result.rooms.first.transitionBatch!.recovered.any(
+      (ActiveAlertState alert) => alert.type == AlertType.dewPointRisk,
+    ),
+    'a transient null reading must not be treated as recovery',
+  );
+  _expect(
+    runtime.activeAlertsRegistry.activeAlerts.any(
+      (ActiveAlertState alert) => alert.type == AlertType.dewPointRisk,
+    ),
+    'alert remains active while the reading is unavailable',
+  );
+
+  // The read succeeds again with the exact same (still-dangerous) values —
+  // this must be a silent continuation, not a fresh activation.
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 22.2, humInterior: 96)),
+    evaluatedAt: t0.add(const Duration(seconds: 30)),
+  );
+  _expect(
+    !_hasAlert(
+      AlertType.dewPointRisk,
+      result.rooms.first.transitionBatch!.activated,
+    ),
+    'restoring the same reading must not re-activate the alert',
+  );
+  _expect(
+    _hasAlert(
+      AlertType.dewPointRisk,
+      result.rooms.first.transitionBatch!.stillActive,
+    ),
+    'restoring the same reading keeps the alert as stillActive',
+  );
+
+  // Genuine improvement (humidity drops enough to widen the margin past
+  // threshold + hysteresis) must still recover normally.
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(tempInterior: 22.2, humInterior: 80)),
+    evaluatedAt: t0.add(const Duration(seconds: 45)),
+  );
+  _expect(
+    result.rooms.first.transitionBatch!.recovered.any(
+      (ActiveAlertState alert) => alert.type == AlertType.dewPointRisk,
+    ),
+    'a real improvement past the hysteresis band still recovers',
   );
 }
 

@@ -27,36 +27,23 @@ class WaterShortageRepository {
     final WriteBatch batch = db.batch();
 
     // New event document (auto-ID).
-    final DocumentReference eventRef =
-        db.collection('$rootPath/events').doc();
-    batch.set(eventRef, {
-      'timestamp': ts,
-      'monthKey': monthKey,
-    });
+    final DocumentReference eventRef = db.collection('$rootPath/events').doc();
+    batch.set(eventRef, {'timestamp': ts, 'monthKey': monthKey});
 
     // Summary document: increment total, update timestamp.
     final DocumentReference summaryRef = db.doc(rootPath);
-    batch.set(
-      summaryRef,
-      {
-        'totalEvents': FieldValue.increment(1),
-        'updatedAt': ts,
-      },
-      SetOptions(merge: true),
-    );
+    batch.set(summaryRef, {
+      'totalEvents': FieldValue.increment(1),
+      'updatedAt': ts,
+    }, SetOptions(merge: true));
 
     // Monthly document: increment count, record last event timestamp.
-    final DocumentReference monthRef =
-        db.doc('$rootPath/monthly/$monthKey');
-    batch.set(
-      monthRef,
-      {
-        'monthKey': monthKey,
-        'eventCount': FieldValue.increment(1),
-        'lastEventAt': ts,
-      },
-      SetOptions(merge: true),
-    );
+    final DocumentReference monthRef = db.doc('$rootPath/monthly/$monthKey');
+    batch.set(monthRef, {
+      'monthKey': monthKey,
+      'eventCount': FieldValue.increment(1),
+      'lastEventAt': ts,
+    }, SetOptions(merge: true));
 
     await batch.commit();
   }

@@ -1,12 +1,12 @@
 {
   "backendName": "current",
-  "clientName": "The Gene Pig",
+  "clientName": "Gene Pig",
   "siteName": "Genetica 1",
   "plcHost": "192.168.10.51",
   "routerHost": "192.168.10.1",
   "plcPort": 502,
   "unitId": 1,
-  "pollingIntervalMs": 5000,
+  "pollingIntervalMs": 10000,
   "timeoutMs": 1500,
   "httpHost": "0.0.0.0",
   "httpPort": 8080,
@@ -122,7 +122,7 @@
   },
   "units": {
     "munters1": {
-      "name": "Munters 1",
+      "name": "Sala 1",
       "plcHost": "192.168.10.50",
       "signals": {
         "tempInterior": { "area": "holdingRegister", "address": 45, "dataType": "float32", "signed": true, "scale": 0.1 },
@@ -153,7 +153,7 @@
       }
     },
     "munters2": {
-      "name": "Munters 2",
+      "name": "Sala 2",
       "plcHost": "192.168.10.51",
       "signals": {
         "tempInterior": { "area": "holdingRegister", "address": 45, "dataType": "float32", "signed": true, "scale": 0.1 },

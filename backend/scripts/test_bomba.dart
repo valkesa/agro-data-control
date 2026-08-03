@@ -303,14 +303,16 @@ Future<_ScreenData> _readScreenData(ModbusTcpClient client) async {
     operationLabel: 'test_bomba_holding@$minHr/${(maxHr - minHr) + 1}',
   );
 
-  final List<_AnalogValue> analogValues = _analogSignals.map((signal) {
-    final int raw = holdingBlock[signal.hr - minHr];
-    return _AnalogValue(
-      signal: signal,
-      raw: raw,
-      interpreted: signal.interpret(raw),
-    );
-  }).toList(growable: false);
+  final List<_AnalogValue> analogValues = _analogSignals
+      .map((signal) {
+        final int raw = holdingBlock[signal.hr - minHr];
+        return _AnalogValue(
+          signal: signal,
+          raw: raw,
+          interpreted: signal.interpret(raw),
+        );
+      })
+      .toList(growable: false);
 
   final Map<int, bool> coilValues = <int, bool>{};
   final List<_BitSignal> onlyCoils = _coilSignals
@@ -352,18 +354,21 @@ Future<_ScreenData> _readScreenData(ModbusTcpClient client) async {
           'test_bomba_discrete@$minInput/${(maxInput - minInput) + 1}',
     );
     for (final _BitSignal signal in onlyDiscreteInputs) {
-      discreteInputValues[signal.address] = inputBlock[signal.address - minInput];
+      discreteInputValues[signal.address] =
+          inputBlock[signal.address - minInput];
     }
   }
 
-  final List<_BitValue> bitValues = _coilSignals.map((signal) {
-    return _BitValue(
-      signal: signal,
-      value: signal.kind == _BitKind.coil
-          ? coilValues[signal.address]
-          : discreteInputValues[signal.address],
-    );
-  }).toList(growable: false);
+  final List<_BitValue> bitValues = _coilSignals
+      .map((signal) {
+        return _BitValue(
+          signal: signal,
+          value: signal.kind == _BitKind.coil
+              ? coilValues[signal.address]
+              : discreteInputValues[signal.address],
+        );
+      })
+      .toList(growable: false);
 
   return _ScreenData(analogValues: analogValues, bitValues: bitValues);
 }
@@ -382,9 +387,7 @@ void _renderScreen({
   }
 
   stdout.writeln('TEST BOMBA / VERIFICACION DE MAPEOS');
-  stdout.writeln(
-    'PLC $host:$port  unitId=$unitId  ${_formatTimestamp(now)}',
-  );
+  stdout.writeln('PLC $host:$port  unitId=$unitId  ${_formatTimestamp(now)}');
   stdout.writeln(
     'Historial horizontal: ${history.length}/$_maxColumns columnas',
   );
@@ -394,12 +397,14 @@ void _renderScreen({
   for (final _AnalogSignal signal in _analogSignals) {
     final List<_AnalogValue> series = history
         .map(
-          (snapshot) => snapshot.data.analogValues
-              .firstWhere((value) => value.signal.name == signal.name),
+          (snapshot) => snapshot.data.analogValues.firstWhere(
+            (value) => value.signal.name == signal.name,
+          ),
         )
         .toList(growable: false);
-    final List<String> values =
-        series.map((value) => value.interpretedLabel).toList(growable: false);
+    final List<String> values = series
+        .map((value) => value.interpretedLabel)
+        .toList(growable: false);
     _writeHistoryRow(
       label: _labelWithCountdown(signal.name, changeCountdowns[signal.name]),
       metadata: 'NAQ${signal.naq} HR${signal.hr}/VW${signal.vm}',
@@ -414,12 +419,14 @@ void _renderScreen({
   for (final _BitSignal signal in _coilSignals) {
     final List<_BitValue> series = history
         .map(
-          (snapshot) => snapshot.data.bitValues
-              .firstWhere((value) => value.signal.name == signal.name),
+          (snapshot) => snapshot.data.bitValues.firstWhere(
+            (value) => value.signal.name == signal.name,
+          ),
         )
         .toList(growable: false);
-    final List<String> values =
-        series.map((value) => value.compactStatusLabel).toList(growable: false);
+    final List<String> values = series
+        .map((value) => value.compactStatusLabel)
+        .toList(growable: false);
     _writeHistoryRow(
       label: _labelWithCountdown(signal.name, changeCountdowns[signal.name]),
       metadata: '${signal.alias} ${signal.kindLabelAndAddress}',
@@ -429,7 +436,9 @@ void _renderScreen({
   }
 
   stdout.writeln('');
-  stdout.writeln('Campos usados por frontend sin direccion Modbus configurada en default.json');
+  stdout.writeln(
+    'Campos usados por frontend sin direccion Modbus configurada en default.json',
+  );
   for (final String field in _snapshotOnlyFields) {
     stdout.writeln('  - $field');
   }
@@ -440,7 +449,9 @@ void _renderScreen({
     'tensionSalidaVentiladores usa HR85/VW170.',
   );
   stdout.writeln('Marca: `*` indica cambio respecto de la columna anterior.');
-  stdout.writeln('Nombre con `*10..1`: cambio reciente persistente por 10 ciclos.');
+  stdout.writeln(
+    'Nombre con `*10..1`: cambio reciente persistente por 10 ciclos.',
+  );
   stdout.writeln('Ctrl+C para salir.');
 }
 

@@ -370,8 +370,8 @@ class NotificationBatchBuilder {
 
 class WhatsAppTemplateBuilder {
   const WhatsAppTemplateBuilder({
-    this.singleTemplateName = 'alerts_single_c',
-    this.multipleTemplateName = 'alerts_multiple_c',
+    this.singleTemplateName = 'alerts_single_d',
+    this.multipleTemplateName = 'agrodata_alerts_multiple_d',
     this.singleLanguageCode = WhatsAppService.defaultTemplateLanguageCode,
     this.multipleLanguageCode = WhatsAppService.defaultTemplateLanguageCode,
     this.parameterMaxLength = 1024,
@@ -394,12 +394,12 @@ class WhatsAppTemplateBuilder {
       singleTemplateName: _envValue(
         env,
         'WHATSAPP_ALERT_SINGLE_TEMPLATE_NAME',
-        'alerts_single_c',
+        'alerts_single_d',
       ),
       multipleTemplateName: _envValue(
         env,
         'WHATSAPP_ALERT_MULTIPLE_TEMPLATE_NAME',
-        'alerts_multiple_c',
+        'agrodata_alerts_multiple_d',
       ),
       singleLanguageCode: _envValue(
         env,

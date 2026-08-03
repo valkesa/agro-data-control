@@ -92,10 +92,7 @@ Future<void> _testRecoversAfterBackoffWindow() async {
       );
 
   final DateTime baseTime = DateTime.utc(2026, 7, 16, 12, 0, 0);
-  service.handleSnapshot(
-    unitsJson: _unitsJson(200),
-    observedAtUtc: baseTime,
-  );
+  service.handleSnapshot(unitsJson: _unitsJson(200), observedAtUtc: baseTime);
   await service.dispose();
   _expect(repository.loadAttempts == 1, 'first attempt should run');
 

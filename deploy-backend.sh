@@ -2,9 +2,9 @@
 
 set -e
 
-VPS="root@72.60.57.85"
+VPS="agrodata-codex"
 LOCAL="$(dirname "$0")/backend/"
-REMOTE="/root/backend"
+REMOTE="/srv/agrodata/backend"
 
 echo "→ Sincronizando backend al VPS..."
 rsync -avz --delete \
@@ -13,6 +13,6 @@ rsync -avz --delete \
   "$LOCAL" "$VPS:$REMOTE"
 
 echo "→ Instalando dependencias y reiniciando servicio..."
-ssh "$VPS" "cd $REMOTE && dart pub get && systemctl restart agrodata-backend.service"
+ssh "$VPS" "cd $REMOTE && dart pub get && sudo systemctl restart agrodata-backend.service"
 
 echo "✓ Deploy completado."

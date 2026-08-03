@@ -32,7 +32,10 @@ class RuntimeEventRecord {
 
   DateTime get eventTime => endedAt ?? observedAt ?? startedAt;
 
-  static RuntimeEventRecord? fromFirestore(Map<String, dynamic> data, String id) {
+  static RuntimeEventRecord? fromFirestore(
+    Map<String, dynamic> data,
+    String id,
+  ) {
     try {
       final bool isOpen = data['isOpen'] as bool? ?? false;
       final String? deviceType = data['deviceType'] as String?;

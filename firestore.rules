@@ -227,6 +227,10 @@ service cloud.firestore {
         );
     }
 
+    function isValidSiteProvisioningStatus(status) {
+      return ['pending_backend', 'ready', 'error'].hasAny([status]);
+    }
+
     function isValidElectricalConsumptionSettings() {
       return request.resource.data.keys().hasOnly([
           'fanLevels',
@@ -479,6 +483,35 @@ service cloud.firestore {
     match /tenants/{tenantId} {
       allow list: if isOwner();
       allow read: if canReadTenant(tenantId);
+      allow create: if isOwner()
+        && request.resource.data.keys()
+          .hasOnly([
+            'name',
+            'clientName',
+            'active',
+            'createdByUid',
+            'createdByEmail',
+            'createdAt',
+            'updatedAt'
+          ])
+        && request.resource.data.keys()
+          .hasAll(['name', 'active', 'createdByUid', 'createdAt', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && (
+          !('clientName' in request.resource.data)
+          || request.resource.data.clientName is string
+        )
+        && request.resource.data.active is bool
+        && request.resource.data.active == true
+        && request.resource.data.createdByUid is string
+        && request.resource.data.createdByUid == request.auth.uid
+        && (
+          !('createdByEmail' in request.resource.data)
+          || request.resource.data.createdByEmail is string
+        )
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
 
       match /members/{uid} {
         // A tenant_admin can read all members in their own tenant.
@@ -504,19 +537,76 @@ service cloud.firestore {
 
       match /sites/{siteId} {
         allow read: if canReadTenant(tenantId);
+
+        // New structural schema: description/enabled are additive fields
+        // for the AgroSite model (lib/models/agro_site.dart). They coexist
+        // with legacy fields (technicalId/backendUrl/active) already
+        // present on existing site documents — this rule never restricts
+        // the document to ONLY these keys, so legacy fields are untouched.
+        //
+        // createdAt is set once on create and is intentionally excluded
+        // from the update allowlist below, making it immutable afterwards.
         allow update: if isOwner()
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['name', 'updatedAt'])
+              .hasOnly(['name', 'description', 'enabled', 'provisioningStatus', 'updatedAt'])
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
+          && (
+            !('description' in request.resource.data)
+            || request.resource.data.description is string
+          )
+          && (
+            !('enabled' in request.resource.data)
+            || request.resource.data.enabled is bool
+          )
+          && (
+            !('provisioningStatus' in request.resource.data)
+            || (
+              request.resource.data.provisioningStatus is string
+              && isValidSiteProvisioningStatus(request.resource.data.provisioningStatus)
+            )
+          )
           && (
             !('updatedAt' in request.resource.data)
             || request.resource.data.updatedAt is timestamp
           );
-        allow create, delete: if false;
 
-        // PLC display configuration (displayName, columnLabel).
-        // technicalId is immutable — only owner can write.
+        // Creating a brand new site from the owner UI uses only the current
+        // AgroSite payload. Do not add legacy `technicalId`, `backendUrl` or
+        // `active` fields to this branch.
+        allow create: if isOwner()
+          && request.resource.data.keys()
+              .hasOnly([
+                'name',
+                'description',
+                'enabled',
+                'provisioningStatus',
+                'createdAt',
+                'updatedAt'
+              ])
+          && request.resource.data.keys().hasAll([
+                'name',
+                'description',
+                'enabled',
+                'provisioningStatus',
+                'createdAt',
+                'updatedAt'
+              ])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.description is string
+          && request.resource.data.enabled is bool
+          && request.resource.data.provisioningStatus is string
+          && request.resource.data.provisioningStatus == 'pending_backend'
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+
+        allow delete: if false;
+
+        // LEGACY ONLY:
+        // This path is preserved exclusively for existing tenants.
+        // New tenants and new features must use tenant-level `devices` and
+        // `sectors`. Do not extend this branch for new implementations.
         match /plcs/{plcId} {
           allow read: if canReadTenant(tenantId);
           allow create, update: if isOwner()
@@ -580,6 +670,110 @@ service cloud.firestore {
             && isValidRoomWashEvent(tenantId);
           allow update, delete: if false;
         }
+      }
+
+      // --- New structural schema (Sites/Sectors/Devices) ---------------
+      // Sectors and Devices are brand new, tenant-level collections that
+      // coexist in parallel with the legacy `sites/{siteId}/plcs/{plcId}`
+      // schema above. They do not read, write, or otherwise depend on any
+      // legacy PLC LOGO! document. See lib/models/agro_sector.dart and
+      // lib/models/agro_device.dart.
+      //
+      // Same permission model as `sites` above: owner-only writes,
+      // canReadTenant() for reads. siteId is immutable after creation
+      // (a Sector/Device does not move between Sites). The tenant
+      // provisioning service writes Site/Sectors/Devices in one transaction
+      // and always sets siteId to the initial Site created in the same tenant.
+
+      match /sectors/{sectorId} {
+        allow read: if canReadTenant(tenantId);
+
+        allow create: if isOwner()
+          && request.resource.data.keys()
+              .hasOnly(['siteId', 'name', 'description', 'enabled', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys()
+              .hasAll(['siteId', 'name', 'description', 'enabled', 'createdAt', 'updatedAt'])
+          && request.resource.data.siteId is string
+          && request.resource.data.siteId.size() > 0
+          && existsAfter(/databases/$(database)/documents/tenants/$(tenantId)/sites/$(request.resource.data.siteId))
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.description is string
+          && request.resource.data.enabled is bool
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+
+        allow update: if isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name', 'description', 'enabled', 'updatedAt'])
+          && request.resource.data.siteId == resource.data.siteId
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && (
+            !('description' in request.resource.data)
+            || request.resource.data.description is string
+          )
+          && (
+            !('enabled' in request.resource.data)
+            || request.resource.data.enabled is bool
+          )
+          && (
+            !('updatedAt' in request.resource.data)
+            || request.resource.data.updatedAt is timestamp
+          );
+
+        allow delete: if false;
+      }
+
+      match /devices/{deviceId} {
+        allow read: if canReadTenant(tenantId);
+
+        allow create: if isOwner()
+          && request.resource.data.keys()
+              .hasOnly(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt'])
+          && request.resource.data.keys()
+              .hasAll(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt'])
+          && request.resource.data.siteId is string
+          && request.resource.data.siteId.size() > 0
+          && existsAfter(/databases/$(database)/documents/tenants/$(tenantId)/sites/$(request.resource.data.siteId))
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.type is string
+          && request.resource.data.type.size() > 0
+          && request.resource.data.model is string
+          && request.resource.data.description is string
+          && request.resource.data.enabled is bool
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp;
+
+        allow update: if isOwner()
+          && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['name', 'type', 'model', 'description', 'enabled', 'updatedAt'])
+          && request.resource.data.siteId == resource.data.siteId
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && (
+            !('type' in request.resource.data)
+            || (request.resource.data.type is string && request.resource.data.type.size() > 0)
+          )
+          && (
+            !('model' in request.resource.data)
+            || request.resource.data.model is string
+          )
+          && (
+            !('description' in request.resource.data)
+            || request.resource.data.description is string
+          )
+          && (
+            !('enabled' in request.resource.data)
+            || request.resource.data.enabled is bool
+          )
+          && (
+            !('updatedAt' in request.resource.data)
+            || request.resource.data.updatedAt is timestamp
+          );
+
+        allow delete: if false;
       }
     }
 

@@ -82,7 +82,7 @@ void _testTemplateBuilderSingleAndMultiple() {
       )
       .single;
   _expect(
-    singleMessage.templateName == 'alerts_single_c',
+    singleMessage.templateName == 'alerts_single_d',
     'single template name',
   );
   _expect(singleMessage.languageCode == 'es_AR', 'single language code');
@@ -109,7 +109,7 @@ void _testTemplateBuilderSingleAndMultiple() {
       )
       .single;
   _expect(
-    multipleMessage.templateName == 'alerts_multiple_c',
+    multipleMessage.templateName == 'agrodata_alerts_multiple_d',
     'multiple template name',
   );
   _expect(multipleMessage.bodyParameters.length == 3, 'multiple variables');
@@ -273,7 +273,7 @@ Future<void> _testSender() async {
   final NotificationBatchSendResult result = await processor.process(batch);
   _expect(result.successCount == 2, 'configured recipients succeed');
   _expect(
-    whatsApp.calls.first.templateName == 'alerts_single_c',
+    whatsApp.calls.first.templateName == 'alerts_single_d',
     'sender uses single template',
   );
   _expect(whatsApp.calls.first.languageCode == 'es_AR', 'sender uses es_AR');

@@ -57,9 +57,7 @@ Future<void> main(List<String> args) async {
     await client.writeSingleCoil(address: address, value: value);
     stdout.writeln('success');
   } on SocketException catch (error) {
-    stderr.writeln(
-      'Error de conexion al PLC ($host:$port): ${error.message}',
-    );
+    stderr.writeln('Error de conexion al PLC ($host:$port): ${error.message}');
     exitCode = 1;
   } on TimeoutException {
     stderr.writeln(
@@ -212,9 +210,7 @@ class _SimpleModbusWriter {
     final int remainingLength = headerData.getUint16(4, Endian.big);
 
     if (transactionId != _transactionId) {
-      throw _SimpleModbusException(
-        'Transaction id inesperado $transactionId',
-      );
+      throw _SimpleModbusException('Transaction id inesperado $transactionId');
     }
     if (protocolId != 0) {
       throw _SimpleModbusException('Protocol id invalido $protocolId');

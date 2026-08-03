@@ -24,6 +24,7 @@ class PlcDashboardService {
     bool Function()? includePresenceDetails,
     String appVersion = '1.0.0+1',
     String? deviceType,
+    bool allowGlobalEndpointFallback = true,
   }) : _endpoint = endpoint,
        _plcNames = plcNames,
        _tenantId = tenantId,
@@ -32,7 +33,8 @@ class PlcDashboardService {
        _presenceSessionId = presenceSessionId,
        _includePresenceDetails = includePresenceDetails,
        _appVersion = appVersion,
-       _deviceType = deviceType;
+       _deviceType = deviceType,
+       _allowGlobalEndpointFallback = allowGlobalEndpointFallback;
 
   final String? _endpoint;
   // plcId → displayName, loaded from Firestore via SitePlcConfigService.
@@ -44,6 +46,7 @@ class PlcDashboardService {
   final bool Function()? _includePresenceDetails;
   final String _appVersion;
   final String? _deviceType;
+  final bool _allowGlobalEndpointFallback;
 
   Future<DashboardSnapshot> fetchSnapshot() async {
     final LiveSnapshotResult result = await fetchLiveSnapshot();
@@ -51,12 +54,11 @@ class PlcDashboardService {
   }
 
   Future<LiveSnapshotResult> fetchLiveSnapshot() async {
-    final String apiUrl = _endpoint ?? AppConfig.backendSnapshotUrl;
+    final String apiUrl =
+        _endpoint ??
+        (_allowGlobalEndpointFallback ? AppConfig.backendSnapshotUrl : '');
     if (apiUrl.isEmpty) {
-      return const LiveSnapshotResult.error(
-        message: 'PLC_API_URL is empty.',
-        source: 'config',
-      );
+      return const LiveSnapshotResult.siteNotOperational();
     }
 
     final Uri uri = _snapshotUri(apiUrl);
@@ -1106,6 +1108,16 @@ class LiveSnapshotResult {
        rawPayload = null,
        receivedAt = null;
 
+  const LiveSnapshotResult.siteNotOperational()
+    : snapshot = null,
+      rawPayload = null,
+      message =
+          'La estructura del Site fue creada, pero todavía no tiene un backend operativo asociado.',
+      source = 'site_not_operational',
+      endpoint = null,
+      statusCode = null,
+      receivedAt = null;
+
   final DashboardSnapshot? snapshot;
   final Map<String, dynamic>? rawPayload;
   final String? message;
@@ -1122,6 +1134,8 @@ class LiveSnapshotResult {
 
   bool get isNetworkError =>
       source == 'client_exception' || source == 'request_failed';
+
+  bool get isSiteNotOperational => source == 'site_not_operational';
 
   String get statusLabel {
     if (isSuccess) {
@@ -1144,6 +1158,8 @@ class LiveSnapshotResult {
         return 'No se pudo conectar con el backend';
       case 'config':
         return 'Configuracion invalida del backend';
+      case 'site_not_operational':
+        return 'Site pendiente de configuración operativa';
       default:
         return 'Error leyendo backend';
     }

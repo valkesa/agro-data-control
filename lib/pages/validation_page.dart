@@ -62,7 +62,10 @@ class _SnapshotValidationPageState extends State<SnapshotValidationPage> {
     }
 
     setState(() {
-      _current = _SnapshotSourceState.fromResult(results[0], fallbackName: 'current');
+      _current = _SnapshotSourceState.fromResult(
+        results[0],
+        fallbackName: 'current',
+      );
       _candidate = _SnapshotSourceState.fromResult(
         results[1],
         fallbackName: 'candidate',
@@ -192,9 +195,15 @@ class _SummaryCard extends StatelessWidget {
           _SummaryLine(label: 'lastUpdatedAt', value: state.rootLastUpdatedAt),
           _SummaryLine(label: 'backendOnline', value: state.backendOnline),
           _SummaryLine(label: 'munters1.estado', value: state.munters1State),
-          _SummaryLine(label: 'munters1.plcOnline', value: state.munters1Online),
+          _SummaryLine(
+            label: 'munters1.plcOnline',
+            value: state.munters1Online,
+          ),
           _SummaryLine(label: 'munters2.estado', value: state.munters2State),
-          _SummaryLine(label: 'munters2.plcOnline', value: state.munters2Online),
+          _SummaryLine(
+            label: 'munters2.plcOnline',
+            value: state.munters2Online,
+          ),
           if (state.errorMessage != null) ...[
             const SizedBox(height: 8),
             Text(
@@ -229,10 +238,7 @@ class _SummaryLine extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                color: Color(0xFF94A3B8),
-                fontSize: 11,
-              ),
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 11),
             ),
           ),
           Expanded(
@@ -258,16 +264,17 @@ class _SnapshotSourceState {
   });
 
   const _SnapshotSourceState.loading()
-      : endpoint = '',
-        backendName = 'loading',
-        payload = const <String, dynamic>{},
-        errorMessage = null;
+    : endpoint = '',
+      backendName = 'loading',
+      payload = const <String, dynamic>{},
+      errorMessage = null;
 
   factory _SnapshotSourceState.fromResult(
     LiveSnapshotResult result, {
     required String fallbackName,
   }) {
-    final Map<String, dynamic> payload = result.rawPayload ?? const <String, dynamic>{};
+    final Map<String, dynamic> payload =
+        result.rawPayload ?? const <String, dynamic>{};
     return _SnapshotSourceState(
       endpoint: result.endpoint ?? '-',
       backendName: (payload['backendName'] ?? fallbackName).toString(),
@@ -311,8 +318,9 @@ class _SnapshotSourceState {
     }
 
     final Object? statusObject = payload['status'];
-    final Map<Object?, Object?>? statusMap =
-        statusObject is Map ? statusObject : null;
+    final Map<Object?, Object?>? statusMap = statusObject is Map
+        ? statusObject
+        : null;
     final Object? statusError = statusMap?['lastError'];
     if (statusError != null && statusError.toString().trim().isNotEmpty) {
       return statusError.toString();
@@ -352,9 +360,7 @@ class _SnapshotSourceState {
       return 'Sin heartbeat';
     }
 
-    return primaryUnit['plcRunning'] == true
-        ? 'Run (cambió)'
-        : 'Stop (igual)';
+    return primaryUnit['plcRunning'] == true ? 'Run (cambió)' : 'Stop (igual)';
   }
 
   Map<Object?, Object?>? _primaryUnitMap() {
@@ -401,10 +407,8 @@ List<_ComparisonRowData> _buildComparisonRows(
   final Map<String, String> currentSources = _extractSignalSources(current);
   final Map<String, String> candidateSources = _extractSignalSources(candidate);
 
-  final Set<String> keys = <String>{
-    ...currentFlat.keys,
-    ...candidateFlat.keys,
-  }..removeWhere((key) => key.contains('.signalSources.'));
+  final Set<String> keys = <String>{...currentFlat.keys, ...candidateFlat.keys}
+    ..removeWhere((key) => key.contains('.signalSources.'));
   final List<String> sortedKeys = keys.toList()..sort();
 
   final List<_ComparisonRowData> rows = <_ComparisonRowData>[
@@ -415,7 +419,8 @@ List<_ComparisonRowData> _buildComparisonRows(
       currentSource: null,
       candidateSource: null,
       matches:
-          currentState.backendCommunication == candidateState.backendCommunication,
+          currentState.backendCommunication ==
+          candidateState.backendCommunication,
     ),
     _ComparisonRowData(
       path: 'Ping PLC',
@@ -453,11 +458,7 @@ List<_ComparisonRowData> _buildComparisonRows(
   return rows;
 }
 
-void _flattenMap(
-  String prefix,
-  Object? value,
-  Map<String, Object?> output,
-) {
+void _flattenMap(String prefix, Object? value, Map<String, Object?> output) {
   if (value is Map) {
     final List<String> keys = value.keys.map((key) => key.toString()).toList()
       ..sort();
@@ -507,11 +508,7 @@ Map<String, String> _extractSignalSources(Map<String, dynamic> payload) {
 }
 
 class _HeaderCell extends StatelessWidget {
-  const _HeaderCell(
-    this.text, {
-    required this.width,
-    this.showDivider = true,
-  });
+  const _HeaderCell(this.text, {required this.width, this.showDivider = true});
 
   final String text;
   final double width;
@@ -591,7 +588,10 @@ class _TableHeaderRow extends StatelessWidget {
     return const Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _HeaderCell('Variable', width: _SnapshotValidationPageState._variableColumnWidth),
+        _HeaderCell(
+          'Variable',
+          width: _SnapshotValidationPageState._variableColumnWidth,
+        ),
         _HeaderCell(
           'Origen Modbus actual',
           width: _SnapshotValidationPageState._sourceColumnWidth,
@@ -628,9 +628,7 @@ class _TableDataRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 6),
       decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: Color(0xFF1E293B), width: 1),
-        ),
+        border: Border(bottom: BorderSide(color: Color(0xFF1E293B), width: 1)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,

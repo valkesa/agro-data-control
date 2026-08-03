@@ -124,9 +124,7 @@ Future<void> main(List<String> args) async {
       previous = current;
     }
   } on SocketException catch (error) {
-    stderr.writeln(
-      'Error de conexion al PLC ($host:$port): ${error.message}',
-    );
+    stderr.writeln('Error de conexion al PLC ($host:$port): ${error.message}');
     exitCode = 1;
   } on TimeoutException {
     stderr.writeln(

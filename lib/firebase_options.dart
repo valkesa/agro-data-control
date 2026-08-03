@@ -61,5 +61,4 @@ class DefaultFirebaseOptions {
     storageBucket: 'agro-data-control.firebasestorage.app',
     measurementId: 'G-8XL2C0XZ49',
   );
-
 }

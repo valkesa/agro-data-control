@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
+import '../models/agro_site.dart';
 
 class TenantDocument {
   const TenantDocument({
@@ -22,6 +23,8 @@ class SiteDocument {
     required this.name,
     required this.backendUrl,
     required this.active,
+    required this.enabled,
+    required this.provisioningStatus,
   });
 
   final String siteId;
@@ -29,13 +32,53 @@ class SiteDocument {
   final String name;
   final String? backendUrl;
   final bool active;
+  final bool enabled;
+  final String? provisioningStatus;
 
   bool get hasValidName => name.trim().isNotEmpty;
   bool get hasValidTechnicalId => technicalId == siteId;
-  bool get hasValidActiveBackend =>
-      !active || (backendUrl != null && backendUrl!.trim().isNotEmpty);
-  bool get isValidActiveSite =>
-      active && hasValidName && hasValidTechnicalId && hasValidActiveBackend;
+  bool get hasConfiguredBackend => backendUrl?.trim().isNotEmpty == true;
+  bool get isLegacyOperationalSite =>
+      provisioningStatus == null && active && hasConfiguredBackend;
+  bool get isOperational {
+    if (!enabled) {
+      return false;
+    }
+    final String? status = provisioningStatus;
+    if (status != null) {
+      return status == SiteProvisioningStatus.ready && hasConfiguredBackend;
+    }
+    return isLegacyOperationalSite;
+  }
+
+  bool get isVisibleSite => enabled && hasValidName && hasValidTechnicalId;
+
+  String get operationalStatusLabel {
+    if (!enabled) {
+      return 'Deshabilitado';
+    }
+    final String? status = provisioningStatus;
+    if (status != null) {
+      return SiteProvisioningStatus.label(status);
+    }
+    return isLegacyOperationalSite ? 'Listo' : 'Pendiente de backend';
+  }
+
+  String get notOperationalMessage {
+    return switch (provisioningStatus) {
+      SiteProvisioningStatus.error => 'Error de configuración operativa',
+      _ => 'Site pendiente de configuración operativa',
+    };
+  }
+
+  String get notOperationalDetail {
+    return switch (provisioningStatus) {
+      SiteProvisioningStatus.error =>
+        'La estructura del Site existe, pero la configuración operativa requiere revisión.',
+      _ =>
+        'La estructura del Site fue creada, pero todavía no tiene un backend operativo asociado.',
+    };
+  }
 }
 
 class SiteConfigService {
@@ -92,6 +135,8 @@ class SiteConfigService {
       name: normalizedSiteId,
       backendUrl: null,
       active: true,
+      enabled: true,
+      provisioningStatus: null,
     );
   }
 
@@ -102,26 +147,34 @@ class SiteConfigService {
         : siteId;
     final String name = data['name']?.toString().trim() ?? '';
     final String? backendUrl = data['backendUrl']?.toString().trim();
+    final Object? activeRaw = data['active'];
+    final Object? enabledRaw = data['enabled'];
+    final String? provisioningStatus = SiteProvisioningStatus.normalize(
+      data['provisioningStatus'],
+    );
     return SiteDocument(
       siteId: siteId,
       technicalId: technicalId,
       name: name.isEmpty ? siteId : name,
       backendUrl: backendUrl?.isEmpty == true ? null : backendUrl,
-      active: data['active'] == true,
+      active: activeRaw is bool ? activeRaw : false,
+      enabled: enabledRaw is bool
+          ? enabledRaw
+          : activeRaw is bool
+          ? activeRaw
+          : true,
+      provisioningStatus: provisioningStatus,
     );
   }
 
   void _logSiteValidation(SiteDocument site, {required String path}) {
-    if (site.hasValidName &&
-        site.hasValidTechnicalId &&
-        site.hasValidActiveBackend) {
+    if (site.hasValidName && site.hasValidTechnicalId) {
       return;
     }
     debugPrint(
       '[SiteConfig] invalid site config path=$path '
       'nameValid=${site.hasValidName} '
-      'technicalIdValid=${site.hasValidTechnicalId} '
-      'activeBackendValid=${site.hasValidActiveBackend}',
+      'technicalIdValid=${site.hasValidTechnicalId}',
     );
   }
 
@@ -143,7 +196,6 @@ class SiteConfigService {
       final QuerySnapshot<Map<String, dynamic>> snap = await FirebaseFirestore
           .instance
           .collection(FirestorePaths.tenantSitesCollection(tenantId))
-          .where('active', isEqualTo: true)
           .get();
 
       final List<SiteDocument> sites = snap.docs
@@ -161,7 +213,7 @@ class SiteConfigService {
             );
             return site;
           })
-          .where((SiteDocument site) => site.isValidActiveSite)
+          .where((SiteDocument site) => site.isVisibleSite)
           .toList();
 
       if (sites.isEmpty) {

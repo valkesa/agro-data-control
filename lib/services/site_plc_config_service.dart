@@ -4,6 +4,11 @@ import 'package:flutter/foundation.dart';
 import '../firebase/firestore_paths.dart';
 import '../models/plc_display_config.dart';
 
+/// Legacy PLC display repository retained for existing tenants only.
+///
+/// Do not use this service for tenant provisioning or new device features.
+/// New tenants must use tenant-level `devices` and `sectors` instead of
+/// `tenants/{tenantId}/sites/{siteId}/plcs/{plcId}`.
 class SitePlcConfigService {
   const SitePlcConfigService();
 

@@ -563,9 +563,15 @@ class _ExpandedTemperatureHistoryDialogState
                 if (hasExterior)
                   const _LegendDot(color: Color(0xFFF59E0B), label: 'Exterior'),
                 if (_hasHeaterType(widget.bundle.heaterRecords, 'heater1'))
-                  const _LegendBar(color: Color(0xFFF97316), label: 'Resist. 1'),
+                  const _LegendBar(
+                    color: Color(0xFFF97316),
+                    label: 'Resist. 1',
+                  ),
                 if (_hasHeaterType(widget.bundle.heaterRecords, 'heater2'))
-                  const _LegendBar(color: Color(0xFFEF4444), label: 'Resist. 2'),
+                  const _LegendBar(
+                    color: Color(0xFFEF4444),
+                    label: 'Resist. 2',
+                  ),
               ],
             ),
           ],
@@ -888,13 +894,21 @@ class _MiniChartPainter extends CustomPainter {
     if (totalMs <= 0) return;
 
     _paintBarsForDevice(
-      canvas, chartRect, firstTs, totalMs, 'heater1',
+      canvas,
+      chartRect,
+      firstTs,
+      totalMs,
+      'heater1',
       const Color(0x66F97316),
       chartRect.bottom - chartRect.height * 0.25,
       chartRect.bottom,
     );
     _paintBarsForDevice(
-      canvas, chartRect, firstTs, totalMs, 'heater2',
+      canvas,
+      chartRect,
+      firstTs,
+      totalMs,
+      'heater2',
       const Color(0x55EF4444),
       chartRect.bottom - chartRect.height * 0.50,
       chartRect.bottom - chartRect.height * 0.25,
@@ -915,14 +929,16 @@ class _MiniChartPainter extends CustomPainter {
         _heaterIntervalsForDevice(deviceType);
     final Paint paint = Paint()..color = color;
     for (final ({DateTime start, DateTime end}) iv in intervals) {
-      final double x1 = (chartRect.left +
-              (iv.start.difference(firstTs).inMilliseconds / totalMs) *
-                  chartRect.width)
-          .clamp(chartRect.left, chartRect.right);
-      final double x2 = (chartRect.left +
-              (iv.end.difference(firstTs).inMilliseconds / totalMs) *
-                  chartRect.width)
-          .clamp(chartRect.left, chartRect.right);
+      final double x1 =
+          (chartRect.left +
+                  (iv.start.difference(firstTs).inMilliseconds / totalMs) *
+                      chartRect.width)
+              .clamp(chartRect.left, chartRect.right);
+      final double x2 =
+          (chartRect.left +
+                  (iv.end.difference(firstTs).inMilliseconds / totalMs) *
+                      chartRect.width)
+              .clamp(chartRect.left, chartRect.right);
       if (x2 <= x1 + 0.5) continue;
       canvas.drawRect(Rect.fromLTRB(x1, top, x2, bottom), paint);
     }
@@ -948,9 +964,7 @@ class _MiniChartPainter extends CustomPainter {
       }
     }
     return bySession.values
-        .where(
-          (RuntimeEventRecord r) => !r.isHeartbeat || r.deviceIsOn == true,
-        )
+        .where((RuntimeEventRecord r) => !r.isHeartbeat || r.deviceIsOn == true)
         .map(
           (RuntimeEventRecord r) => (
             start: r.startedAt,
@@ -1293,7 +1307,6 @@ String _tooltipAvgLabel(TemperatureHistoryPointBase point, _ChartMode mode) =>
     mode == _ChartMode.hourly
     ? '${_formatDate(point.timestamp)} ${_formatHour(point.timestamp)}'
     : _formatDate(point.timestamp);
-
 
 String _axisLabel(TemperatureHistoryPointBase point, _ChartMode mode) {
   return mode == _ChartMode.hourly

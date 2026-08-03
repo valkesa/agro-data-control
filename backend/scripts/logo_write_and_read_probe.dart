@@ -85,16 +85,11 @@ Future<void> main(List<String> args) async {
       await Future<void>.delayed(Duration(milliseconds: delayMs));
     }
 
-    final List<bool> after = await client.readCoils(
-      start: start,
-      count: count,
-    );
+    final List<bool> after = await client.readCoils(start: start, count: count);
     stdout.writeln('\ncomparacion antes/despues');
     _printComparisonTable(start: start, before: before, after: after);
   } on SocketException catch (error) {
-    stderr.writeln(
-      'Error de conexion al PLC ($host:$port): ${error.message}',
-    );
+    stderr.writeln('Error de conexion al PLC ($host:$port): ${error.message}');
     stderr.writeln(client.buildDiagnostics());
     exitCode = 1;
   } on TimeoutException {
@@ -143,9 +138,7 @@ void _printComparisonTable({
     );
 
     if (beforeValue != afterValue) {
-      changes.add(
-        'coil ${start + index} $beforeValue -> $afterValue',
-      );
+      changes.add('coil ${start + index} $beforeValue -> $afterValue');
     }
   }
 
@@ -226,10 +219,7 @@ class _SimpleModbusProbeClient {
     }
   }
 
-  Future<List<bool>> readCoils({
-    required int start,
-    required int count,
-  }) async {
+  Future<List<bool>> readCoils({required int start, required int count}) async {
     final ByteData pdu = ByteData(5)
       ..setUint8(0, 0x01)
       ..setUint16(1, start, Endian.big)
@@ -246,7 +236,11 @@ class _SimpleModbusProbeClient {
     final List<bool> values = <bool>[];
     for (int byteIndex = 0; byteIndex < byteCount; byteIndex += 1) {
       final int currentByte = response[2 + byteIndex];
-      for (int bitIndex = 0; bitIndex < 8 && values.length < count; bitIndex += 1) {
+      for (
+        int bitIndex = 0;
+        bitIndex < 8 && values.length < count;
+        bitIndex += 1
+      ) {
         values.add(((currentByte >> bitIndex) & 0x01) == 1);
       }
     }
@@ -318,9 +312,7 @@ class _SimpleModbusProbeClient {
     final int remainingLength = headerData.getUint16(4, Endian.big);
 
     if (transactionId != _transactionId) {
-      throw _SimpleModbusException(
-        'Transaction id inesperado $transactionId',
-      );
+      throw _SimpleModbusException('Transaction id inesperado $transactionId');
     }
     if (protocolId != 0) {
       throw _SimpleModbusException('Protocol id invalido $protocolId');

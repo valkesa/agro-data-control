@@ -84,6 +84,32 @@ class FirestorePaths {
   static String tenantSitesCollection(String tenantId) =>
       'tenants/$tenantId/sites';
 
+  // Current structural schema. New tenants and new features must use these
+  // tenant-level collections.
+  static String tenantSectorsCollection(String tenantId) =>
+      'tenants/$tenantId/sectors';
+
+  static String sectorDoc(String tenantId, String sectorId) =>
+      'tenants/$tenantId/sectors/$sectorId';
+
+  static String tenantDevicesCollection(String tenantId) =>
+      'tenants/$tenantId/devices';
+
+  static String deviceDoc(String tenantId, String deviceId) =>
+      'tenants/$tenantId/devices/$deviceId';
+
+  // LEGACY SCHEMA:
+  // The collection `tenants/{tenantId}/sites/{siteId}/plcs/{plcId}` is kept
+  // only for backward compatibility with existing tenants.
+  //
+  // New tenants and new features MUST use the current structure:
+  //
+  // tenants/{tenantId}/sites/{siteId}
+  // tenants/{tenantId}/sectors/{sectorId}
+  // tenants/{tenantId}/devices/{deviceId}
+  //
+  // Do not create new documents under `/plcs`.
+  // Do not reuse the legacy PLC schema as the basis for new implementations.
   static String plcsCollection(String tenantId, String siteId) =>
       'tenants/$tenantId/sites/$siteId/plcs';
 

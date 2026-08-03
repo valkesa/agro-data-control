@@ -37,8 +37,10 @@ void main(List<String> args) async {
         'tenants/$_tenantId/sites/$_siteId/plcs/$plcId/runtimeEvents';
 
     // Fetch all HB documents for this PLC.
-    final List<Map<String, dynamic>> docs =
-        await _fetchAllHbDocs(auth, collectionPath);
+    final List<Map<String, dynamic>> docs = await _fetchAllHbDocs(
+      auth,
+      collectionPath,
+    );
 
     print('$plcId: fetched ${docs.length} HB documents');
 
@@ -219,11 +221,7 @@ Future<void> _batchDelete(ServiceAccountAuth auth, List<String> names) async {
   );
 
   final List<Object?> writes = names
-      .map(
-        (String name) => <String, Object?>{
-          'delete': name,
-        },
-      )
+      .map((String name) => <String, Object?>{'delete': name})
       .toList();
 
   final HttpClient client = HttpClient();

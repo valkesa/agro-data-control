@@ -283,13 +283,24 @@ class AlertProcessingCoordinator {
         threshold: thresholds.dewPointMarginRedMaxInclusive,
         hysteresis: runtime.config.hysteresis.dewPointRiskC,
       ),
-      AlertType.muntersDoorOpen ||
-      AlertType.roomDoorOpen ||
-      AlertType.highDifferentialPressure => true,
+      AlertType.highDifferentialPressure => _recoverMaximum(
+        measured: _finiteDouble(unitJson['presionDiferencial']),
+        threshold: thresholds.filterPressureMax,
+        hysteresis: runtime.config.hysteresis.differentialPressurePa,
+      ),
+      AlertType.muntersDoorOpen || AlertType.roomDoorOpen => true,
     };
   }
 }
 
+// Fail-safe by design: if a reading can't be computed this cycle (e.g. a
+// transient Modbus read failure leaves a signal null), we must NOT treat
+// that as "recovered". Doing so would let a single bad read silently clear
+// an active alert while the real condition never changed, defeating
+// hysteresis entirely — the alert would immediately reactivate on the next
+// good read, gated only by the notification cooldown. Missing/invalid data
+// means "we don't know", so the alert stays active (`false`) until we can
+// actually confirm recovery.
 bool _recoverTemperatureInterior({
   required double? measured,
   required double? minimum,
@@ -301,7 +312,7 @@ bool _recoverTemperatureInterior({
       maximum == null ||
       !minimum.isFinite ||
       !maximum.isFinite) {
-    return true;
+    return false;
   }
   return measured >= minimum + hysteresis && measured <= maximum - hysteresis;
 }
@@ -312,7 +323,7 @@ bool _recoverMaximum({
   required double hysteresis,
 }) {
   if (measured == null || threshold == null || !threshold.isFinite) {
-    return true;
+    return false;
   }
   return measured <= threshold - hysteresis;
 }
@@ -323,7 +334,7 @@ bool _recoverMinimum({
   required double hysteresis,
 }) {
   if (measured == null || threshold == null || !threshold.isFinite) {
-    return true;
+    return false;
   }
   return measured >= threshold + hysteresis;
 }
@@ -334,7 +345,7 @@ bool _recoverMinimumMargin({
   required double hysteresis,
 }) {
   if (margin == null || threshold == null || !threshold.isFinite) {
-    return true;
+    return false;
   }
   return margin >= threshold + hysteresis;
 }

@@ -34,7 +34,9 @@ void main() async {
   }
 
   print('');
-  print('TOTAL  →  HB: $totalHb   cerrados: $totalClosed   total: ${totalHb + totalClosed}');
+  print(
+    'TOTAL  →  HB: $totalHb   cerrados: $totalClosed   total: ${totalHb + totalClosed}',
+  );
 }
 
 Future<int> _count(
@@ -88,7 +90,8 @@ Future<int> _count(
     final List<dynamic> results = jsonDecode(responseBody) as List<dynamic>;
     if (results.isEmpty) return 0;
     final Map<String, dynamic> first = results.first as Map<String, dynamic>;
-    final Map<String, dynamic>? result = first['result'] as Map<String, dynamic>?;
+    final Map<String, dynamic>? result =
+        first['result'] as Map<String, dynamic>?;
     if (result == null) return 0;
     final Map<String, dynamic>? aggregateFields =
         result['aggregateFields'] as Map<String, dynamic>?;

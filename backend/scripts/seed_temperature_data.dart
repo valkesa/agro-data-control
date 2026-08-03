@@ -15,11 +15,14 @@ import 'package:agro_data_control_backend/src/plc_installation_config.dart';
 
 void main() async {
   stdout.writeln('=== seed_temperature_data ===');
-  stdout.writeln('Grabando 3 registros horarios de temperatura inventados...\n');
+  stdout.writeln(
+    'Grabando 3 registros horarios de temperatura inventados...\n',
+  );
 
-  final String scriptDir = File(Platform.script.toFilePath()).parent.parent.path;
-  final String serviceAccountPath =
-      '$scriptDir/config/service-account.json';
+  final String scriptDir = File(
+    Platform.script.toFilePath(),
+  ).parent.parent.path;
+  final String serviceAccountPath = '$scriptDir/config/service-account.json';
 
   stdout.writeln('Usando service account: $serviceAccountPath');
 
@@ -38,7 +41,9 @@ void main() async {
       FirestoreTemperatureHistoryRepository(config: config);
 
   if (!repo.isConfigured) {
-    stderr.writeln('ERROR: repositorio no configurado: ${repo.missingConfigurationReason}');
+    stderr.writeln(
+      'ERROR: repositorio no configurado: ${repo.missingConfigurationReason}',
+    );
     exit(1);
   }
 
@@ -118,7 +123,9 @@ void main() async {
   }
 
   stdout.writeln('\n✓ Datos grabados correctamente en Firestore.');
-  stdout.writeln('  Path: tenants/the-gene-pig/sites/genetica-1/plcs/munters2/metrics/temperature/');
+  stdout.writeln(
+    '  Path: tenants/the-gene-pig/sites/genetica-1/plcs/munters2/metrics/temperature/',
+  );
   stdout.writeln('  Horarios: 20260413_08, 20260413_12, 20260413_17');
   stdout.writeln('  Diario:   2026-04-13');
 }

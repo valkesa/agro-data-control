@@ -25,7 +25,9 @@ void main() async {
   stdout.writeln('=== delete_seed_temperature_data ===');
   stdout.writeln('Borrando ${_documentPaths.length} documentos de prueba...\n');
 
-  final String scriptDir = File(Platform.script.toFilePath()).parent.parent.path;
+  final String scriptDir = File(
+    Platform.script.toFilePath(),
+  ).parent.parent.path;
   final String serviceAccountPath = '$scriptDir/config/service-account.json';
 
   final ServiceAccountAuth auth = ServiceAccountAuth(

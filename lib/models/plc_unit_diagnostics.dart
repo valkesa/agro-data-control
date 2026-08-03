@@ -17,13 +17,11 @@ class PlcUnitDiagnostics {
   // wired in config; operational backend-down is still resolved in frontend.
   static const String plcNotConfigured = 'PLC_NOT_CONFIGURED';
   static const String plcUnreachable = 'PLC_UNREACHABLE';
-  static const String plcReachableNoValidData =
-      'PLC_REACHABLE_NO_VALID_DATA';
+  static const String plcReachableNoValidData = 'PLC_REACHABLE_NO_VALID_DATA';
   static const String plcRunConfirmed = 'PLC_RUN_CONFIRMED';
   static const String plcStopConfirmed = 'PLC_STOP_CONFIRMED';
   static const String plcStateUnknown = 'PLC_STATE_UNKNOWN';
-  static const String plcReachableStateUnknown =
-      'PLC_REACHABLE_STATE_UNKNOWN';
+  static const String plcReachableStateUnknown = 'PLC_REACHABLE_STATE_UNKNOWN';
   static const String plcHealthy = 'PLC_HEALTHY';
 
   final bool backendAlive;

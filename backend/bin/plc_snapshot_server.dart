@@ -221,29 +221,51 @@ Future<void> _handleRequestInternal(
   final String path = request.uri.path;
   if (request.method == 'GET' &&
       (path == '/snapshot' || path == '/api/snapshot')) {
+    final AuthenticatedBackendUser authenticatedUser;
+    try {
+      authenticatedUser = await authService.requireAuthenticated(request);
+    } on BackendAuthException catch (error) {
+      await _writeJson(request.response, <String, Object?>{
+        'ok': false,
+        'error': error.message,
+        'details': error.details?.toString() ?? 'auth_failed',
+      }, statusCode: error.statusCode);
+      return;
+    }
+    final bool isGlobalOwner = authenticatedUser.role == 'owner';
+    final bool tenantMatchesBackend =
+        authenticatedUser.tenantId != null &&
+        authenticatedUser.tenantId == runtime.config.doorOpenings.tenantId;
+    if (!isGlobalOwner && !tenantMatchesBackend) {
+      _logHttp(
+        'snapshot forbidden uid=${authenticatedUser.uid} userTenant=${authenticatedUser.tenantId ?? ''} backendTenant=${runtime.config.doorOpenings.tenantId}',
+      );
+      await _writeJson(request.response, <String, Object?>{
+        'ok': false,
+        'error': 'Forbidden: tenant mismatch',
+      }, statusCode: HttpStatus.forbidden);
+      return;
+    }
+
     final Map<String, Object?> payload = Map<String, Object?>.from(
       runtime.snapshotJson(),
     );
     final String tenantId = request.uri.queryParameters['tenantId'] ?? '';
     final String siteId = request.uri.queryParameters['siteId'] ?? '';
     final DateTime now = DateTime.now().toUtc();
-    final AuthenticatedBackendUser? authenticatedUser = await authService
-        .tryAuthenticate(request);
-    if (authenticatedUser != null) {
-      presenceRegistry.recordSnapshotHeartbeat(
-        uid: authenticatedUser.uid,
-        email: authenticatedUser.email,
-        displayName: authenticatedUser.displayName,
-        tenantId: tenantId,
-        siteId: siteId,
-        sessionId: _headerValue(request, 'X-AgroData-Session-Id'),
-        seenAt: now,
-        userAgent: request.headers.value(HttpHeaders.userAgentHeader),
-        ip: _clientIp(request),
-        appVersion: _headerValue(request, 'X-AgroData-App-Version'),
-        deviceType: _headerValue(request, 'X-AgroData-Device-Type'),
-      );
-    }
+    presenceRegistry.recordSnapshotHeartbeat(
+      uid: authenticatedUser.uid,
+      email: authenticatedUser.email,
+      displayName: authenticatedUser.displayName,
+      tenantId: tenantId,
+      siteId: siteId,
+      sessionId: _headerValue(request, 'X-AgroData-Session-Id'),
+      seenAt: now,
+      userAgent: request.headers.value(HttpHeaders.userAgentHeader),
+      ip: _clientIp(request),
+      appVersion: _headerValue(request, 'X-AgroData-App-Version'),
+      deviceType: _headerValue(request, 'X-AgroData-Device-Type'),
+    );
     if (tenantId.trim().isNotEmpty && siteId.trim().isNotEmpty) {
       payload['presence'] = presenceRegistry.snapshotJson(
         tenantId: tenantId.trim(),

@@ -265,6 +265,11 @@ class FirebaseCustomClaimsService {
     if (targetTenant.isEmpty && targetHasNoOperationalAccess) {
       return;
     }
+    if (profile.role == AgroDataRole.owner) {
+      // Owners are global and are not scoped to a single tenant, so an
+      // owner requester can sync another owner regardless of tenant.
+      return;
+    }
     if (targetTenant != requesterTenant) {
       throw CustomClaimsException(
         statusCode: HttpStatus.forbidden,

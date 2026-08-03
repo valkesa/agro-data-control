@@ -13,6 +13,7 @@ class AppConfig {
 
   static const String candidateBackendSnapshotUrl = String.fromEnvironment(
     'PLC_API_URL_CANDIDATE',
-    defaultValue: 'https://agrodata-control.valke.com.ar/api/candidate/snapshot',
+    defaultValue:
+        'https://agrodata-control.valke.com.ar/api/candidate/snapshot',
   );
 }

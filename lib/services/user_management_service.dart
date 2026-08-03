@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
+import '../models/agro_device.dart';
+import '../models/agro_sector.dart';
+import '../models/agro_site.dart';
 import 'custom_claims_sync_service.dart';
 
 class UserAppRole {
@@ -54,6 +57,77 @@ class SiteInfo {
 
   final String siteId;
   final String name;
+}
+
+class CreateTenantResult {
+  const CreateTenantResult({
+    required this.tenantId,
+    required this.siteId,
+    required this.sectorIds,
+    required this.deviceIds,
+  });
+
+  final String tenantId;
+  final String siteId;
+  final List<String> sectorIds;
+  final List<String> deviceIds;
+
+  String userMessage() {
+    return 'Tenant $tenantId creado con site $siteId, '
+        '${sectorIds.length} sectores y ${deviceIds.length} devices.';
+  }
+}
+
+class SectorCreateInput {
+  const SectorCreateInput({
+    required this.sectorId,
+    required this.name,
+    this.description = '',
+    this.enabled = true,
+  });
+
+  final String sectorId;
+  final String name;
+  final String description;
+  final bool enabled;
+
+  SectorCreateInput normalized() {
+    return SectorCreateInput(
+      sectorId: _normalizeDocumentId(sectorId),
+      name: name.trim(),
+      description: description.trim(),
+      enabled: enabled,
+    );
+  }
+}
+
+class DeviceCreateInput {
+  const DeviceCreateInput({
+    required this.deviceId,
+    required this.name,
+    required this.type,
+    this.model = '',
+    this.description = '',
+    this.enabled = true,
+  });
+
+  final String deviceId;
+  final String name;
+  final String type;
+  final String model;
+  final String description;
+  final bool enabled;
+
+  DeviceCreateInput normalized() {
+    return DeviceCreateInput(
+      deviceId: _normalizeDocumentId(deviceId),
+      name: name.trim(),
+      type: _normalizeDocumentId(type),
+      model: model.trim(),
+      description: description.trim(),
+      enabled: enabled,
+    );
+  }
 }
 
 class UserProfile {
@@ -159,6 +233,199 @@ class UserManagementService {
     debugPrint('[UserManagement] updateUserRole uid=$uid role=$role');
     await FirebaseFirestore.instance.collection('users').doc(uid).update(
       <String, Object?>{'role': role},
+    );
+  }
+
+  Future<CreateTenantResult> createTenant({
+    required String tenantId,
+    required String tenantName,
+    required String siteId,
+    required String siteName,
+    String siteDescription = '',
+    required List<SectorCreateInput> sectors,
+    required List<DeviceCreateInput> devices,
+  }) async {
+    final String cleanTenantId = _normalizeDocumentId(tenantId);
+    final String cleanTenantName = tenantName.trim();
+    final String cleanSiteId = _normalizeDocumentId(siteId);
+    final String cleanSiteName = siteName.trim();
+    final String cleanSiteDescription = siteDescription.trim();
+    final List<SectorCreateInput> cleanSectors = sectors
+        .map((SectorCreateInput sector) => sector.normalized())
+        .where((SectorCreateInput sector) => sector.sectorId.isNotEmpty)
+        .toList(growable: false);
+    final List<DeviceCreateInput> cleanDevices = devices
+        .map((DeviceCreateInput device) => device.normalized())
+        .where((DeviceCreateInput device) => device.deviceId.isNotEmpty)
+        .toList(growable: false);
+
+    if (cleanTenantId.isEmpty) {
+      throw StateError('El tenantId es requerido.');
+    }
+    if (cleanTenantName.isEmpty) {
+      throw StateError('El nombre del tenant es requerido.');
+    }
+    if (cleanSiteId.isEmpty) {
+      throw StateError('El siteId es requerido.');
+    }
+    if (cleanSiteName.isEmpty) {
+      throw StateError('El nombre del site es requerido.');
+    }
+    if (cleanSectors.isEmpty) {
+      throw StateError('Configurá al menos un sector.');
+    }
+    if (cleanDevices.isEmpty) {
+      throw StateError('Configurá al menos un device.');
+    }
+    if (cleanSectors.any((SectorCreateInput sector) => sector.name.isEmpty)) {
+      throw StateError('Todos los sectores deben tener nombre.');
+    }
+    if (cleanDevices.any((DeviceCreateInput device) => device.name.isEmpty)) {
+      throw StateError('Todos los devices deben tener nombre.');
+    }
+    if (cleanDevices.any((DeviceCreateInput device) => device.type.isEmpty)) {
+      throw StateError('Todos los devices deben tener tipo.');
+    }
+    final Set<String> sectorIds = cleanSectors
+        .map((SectorCreateInput sector) => sector.sectorId)
+        .toSet();
+    if (sectorIds.length != cleanSectors.length) {
+      throw StateError('Los Sector ID no pueden repetirse.');
+    }
+    final Set<String> deviceIds = cleanDevices
+        .map((DeviceCreateInput device) => device.deviceId)
+        .toSet();
+    if (deviceIds.length != cleanDevices.length) {
+      throw StateError('Los Device ID no pueden repetirse.');
+    }
+    final User? currentUser = FirebaseAuth.instance.currentUser;
+    final String? createdByUid = currentUser?.uid.trim();
+    if (createdByUid == null || createdByUid.isEmpty) {
+      throw StateError('No hay usuario autenticado para auditar el alta.');
+    }
+    final String? createdByEmail = currentUser?.email?.trim();
+
+    final FirebaseFirestore db = FirebaseFirestore.instance;
+    final DocumentReference<Map<String, dynamic>> tenantRef = db
+        .collection(FirestorePaths.tenantsCollection())
+        .doc(cleanTenantId);
+    final DocumentReference<Map<String, dynamic>> siteRef = db.doc(
+      FirestorePaths.siteDoc(cleanTenantId, cleanSiteId),
+    );
+    final Map<String, DocumentReference<Map<String, dynamic>>> sectorRefs =
+        <String, DocumentReference<Map<String, dynamic>>>{
+          for (final SectorCreateInput sector in cleanSectors)
+            sector.sectorId: db.doc(
+              FirestorePaths.sectorDoc(cleanTenantId, sector.sectorId),
+            ),
+        };
+    final Map<String, DocumentReference<Map<String, dynamic>>> deviceRefs =
+        <String, DocumentReference<Map<String, dynamic>>>{
+          for (final DeviceCreateInput device in cleanDevices)
+            device.deviceId: db.doc(
+              FirestorePaths.deviceDoc(cleanTenantId, device.deviceId),
+            ),
+        };
+
+    await db.runTransaction((Transaction transaction) async {
+      final DocumentSnapshot<Map<String, dynamic>> tenantSnapshot =
+          await transaction.get(tenantRef);
+      if (tenantSnapshot.exists) {
+        throw StateError('Ya existe un tenant con id $cleanTenantId.');
+      }
+      final DocumentSnapshot<Map<String, dynamic>> siteSnapshot =
+          await transaction.get(siteRef);
+      if (siteSnapshot.exists) {
+        throw StateError('Ya existe el site $cleanSiteId en $cleanTenantId.');
+      }
+      for (final MapEntry<String, DocumentReference<Map<String, dynamic>>> entry
+          in sectorRefs.entries) {
+        final DocumentSnapshot<Map<String, dynamic>> sectorSnapshot =
+            await transaction.get(entry.value);
+        if (sectorSnapshot.exists) {
+          throw StateError(
+            'Ya existe el sector ${entry.key} en $cleanTenantId.',
+          );
+        }
+      }
+      for (final MapEntry<String, DocumentReference<Map<String, dynamic>>> entry
+          in deviceRefs.entries) {
+        final DocumentSnapshot<Map<String, dynamic>> deviceSnapshot =
+            await transaction.get(entry.value);
+        if (deviceSnapshot.exists) {
+          throw StateError(
+            'Ya existe el device ${entry.key} en $cleanTenantId.',
+          );
+        }
+      }
+
+      transaction.set(tenantRef, <String, Object?>{
+        'name': cleanTenantName,
+        'active': true,
+        'createdByUid': createdByUid,
+        if (createdByEmail != null && createdByEmail.isNotEmpty)
+          'createdByEmail': createdByEmail,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      transaction.set(
+        siteRef,
+        AgroSite(
+          id: cleanSiteId,
+          tenantId: cleanTenantId,
+          name: cleanSiteName,
+          description: cleanSiteDescription,
+          enabled: true,
+          provisioningStatus: SiteProvisioningStatus.pendingBackend,
+          createdAt: null,
+          updatedAt: null,
+        ).toCreatePayload(),
+      );
+
+      for (final SectorCreateInput sector in cleanSectors) {
+        transaction.set(
+          sectorRefs[sector.sectorId]!,
+          AgroSector(
+            id: sector.sectorId,
+            tenantId: cleanTenantId,
+            siteId: cleanSiteId,
+            name: sector.name,
+            description: sector.description,
+            enabled: sector.enabled,
+            createdAt: null,
+            updatedAt: null,
+          ).toCreatePayload(),
+        );
+      }
+
+      for (final DeviceCreateInput device in cleanDevices) {
+        transaction.set(
+          deviceRefs[device.deviceId]!,
+          AgroDevice(
+            id: device.deviceId,
+            tenantId: cleanTenantId,
+            siteId: cleanSiteId,
+            name: device.name,
+            type: device.type,
+            model: device.model,
+            description: device.description,
+            enabled: device.enabled,
+            createdAt: null,
+            updatedAt: null,
+          ).toCreatePayload(),
+        );
+      }
+    });
+
+    return CreateTenantResult(
+      tenantId: cleanTenantId,
+      siteId: cleanSiteId,
+      sectorIds: cleanSectors
+          .map((SectorCreateInput sector) => sector.sectorId)
+          .toList(),
+      deviceIds: cleanDevices
+          .map((DeviceCreateInput device) => device.deviceId)
+          .toList(),
     );
   }
 
@@ -406,6 +673,15 @@ class UserManagementService {
     }
     return const <String>[];
   }
+}
+
+String _normalizeDocumentId(String value) {
+  return value
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-|-$'), '');
 }
 
 class UserAccessUpdateResult {

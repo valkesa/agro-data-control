@@ -28,7 +28,9 @@ class ElectricalCostService {
     required double costPerKw,
   }) async {
     final String path = FirestorePaths.electricalCostSettings(tenantId, siteId);
-    debugPrint('[Firestore] electrical cost save path=$path costPerKw=$costPerKw');
+    debugPrint(
+      '[Firestore] electrical cost save path=$path costPerKw=$costPerKw',
+    );
     await FirebaseFirestore.instance.doc(path).set(<String, Object?>{
       'costPerKw': costPerKw,
       'updatedAt': FieldValue.serverTimestamp(),

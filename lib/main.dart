@@ -191,6 +191,164 @@ class AgroDataShell extends StatefulWidget {
   State<AgroDataShell> createState() => _AgroDataShellState();
 }
 
+class _DashboardRoomWashTarget {
+  const _DashboardRoomWashTarget({
+    required this.roomId,
+    required this.roomNumber,
+    required this.muntersId,
+    required this.label,
+  });
+
+  final String roomId;
+  final int roomNumber;
+  final String muntersId;
+  final String label;
+}
+
+class _DashboardRoomWashDraft {
+  const _DashboardRoomWashDraft({required this.target, required this.washedAt});
+
+  final _DashboardRoomWashTarget target;
+  final DateTime washedAt;
+}
+
+class _DashboardRoomWashRegistrationDialog extends StatefulWidget {
+  const _DashboardRoomWashRegistrationDialog({required this.targets});
+
+  final List<_DashboardRoomWashTarget> targets;
+
+  @override
+  State<_DashboardRoomWashRegistrationDialog> createState() =>
+      _DashboardRoomWashRegistrationDialogState();
+}
+
+class _DashboardRoomWashRegistrationDialogState
+    extends State<_DashboardRoomWashRegistrationDialog> {
+  late _DashboardRoomWashTarget _selectedTarget = widget.targets.first;
+  late DateTime _washedAt = DateTime.now();
+
+  Future<void> _pickDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _washedAt,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now().add(const Duration(days: 1)),
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _washedAt = DateTime(
+        picked.year,
+        picked.month,
+        picked.day,
+        _washedAt.hour,
+        _washedAt.minute,
+      );
+    });
+  }
+
+  Future<void> _pickTime() async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_washedAt),
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() {
+      _washedAt = DateTime(
+        _washedAt.year,
+        _washedAt.month,
+        _washedAt.day,
+        picked.hour,
+        picked.minute,
+      );
+    });
+  }
+
+  void _submit() {
+    Navigator.of(context).pop(
+      _DashboardRoomWashDraft(target: _selectedTarget, washedAt: _washedAt),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      title: const Text('Registrar lavado de sala'),
+      content: SizedBox(
+        width: 360,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DropdownButtonFormField<_DashboardRoomWashTarget>(
+              initialValue: _selectedTarget,
+              dropdownColor: const Color(0xFF111827),
+              decoration: const InputDecoration(labelText: 'Sala lavada'),
+              items: [
+                for (final _DashboardRoomWashTarget target in widget.targets)
+                  DropdownMenuItem<_DashboardRoomWashTarget>(
+                    value: target,
+                    child: Text(target.label),
+                  ),
+              ],
+              onChanged: (_DashboardRoomWashTarget? value) {
+                if (value == null) {
+                  return;
+                }
+                setState(() {
+                  _selectedTarget = value;
+                });
+              },
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickDate,
+                    icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                    label: Text(_formatDashboardWashDate(_washedAt)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _pickTime,
+                    icon: const Icon(Icons.schedule_rounded, size: 16),
+                    label: Text(_formatDashboardWashTime(_washedAt)),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+      ],
+    );
+  }
+}
+
+String _formatDashboardWashDate(DateTime value) {
+  return '${value.day.toString().padLeft(2, '0')}/'
+      '${value.month.toString().padLeft(2, '0')}/'
+      '${value.year}';
+}
+
+String _formatDashboardWashTime(DateTime value) {
+  return '${value.hour.toString().padLeft(2, '0')}:'
+      '${value.minute.toString().padLeft(2, '0')}';
+}
+
 class _AgroDataShellState extends State<AgroDataShell> {
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
   static const Duration _snapshotStaleThreshold = Duration(seconds: 20);
@@ -210,6 +368,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
   String? _activeSiteName;
   String? _activeTenantName;
   String? _activeBackendEndpoint;
+  bool _activeSiteOperational = true;
+  String? _activeSiteStatusLabel;
+  String? _activeSiteNotOperationalMessage;
+  String? _activeSiteNotOperationalDetail;
   List<SiteDocument> _availableSites = const <SiteDocument>[];
   List<TenantDocument> _availableTenants = const <TenantDocument>[];
   List<PlcDisplayConfig> _plcConfigs = const <PlcDisplayConfig>[];
@@ -238,6 +400,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   StreamSubscription<ControlDashboardConfigResult>? _configSubscription;
   bool _liveRequestInFlight = false;
   bool _showSnapshotPulse = false;
+  DateTime? _lastBackendSnapshotDataAt;
   bool _backendOnline = false;
   bool _snapshotStale = false;
   late final String _presenceSessionId = _createPresenceSessionId();
@@ -259,6 +422,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   final Map<int, RoomWashEvent> _recentRoomWashByRoom = <int, RoomWashEvent>{};
   final Set<String> _processedOperationalEventIds = <String>{};
   Map<String, WaterShortageSummary> _waterShortageSummaries = {};
+  bool _comparisonReorderEnabled = false;
   late final BrowserExitGuardDisposer _disposeBrowserExitGuard;
 
   @override
@@ -285,6 +449,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
     required String? tenantId,
     required String siteId,
     Map<String, String> plcNames = const <String, String>{},
+    bool allowGlobalEndpointFallback = true,
   }) {
     return PlcDashboardService(
       endpoint: endpoint,
@@ -295,7 +460,29 @@ class _AgroDataShellState extends State<AgroDataShell> {
       presenceSessionId: _presenceSessionId,
       includePresenceDetails: () => _presenceDetailsRequested.value,
       deviceType: _presenceDeviceType(),
+      allowGlobalEndpointFallback: allowGlobalEndpointFallback,
     );
+  }
+
+  void _applySiteOperationalState(SiteDocument? site) {
+    _activeSiteOperational = site?.isOperational ?? true;
+    _activeSiteStatusLabel = site?.operationalStatusLabel;
+    _activeSiteNotOperationalMessage = site?.notOperationalMessage;
+    _activeSiteNotOperationalDetail = site?.notOperationalDetail;
+  }
+
+  void _stopLiveSnapshotPollingForNonOperationalSite() {
+    _refreshTimer?.cancel();
+    _refreshTimer = null;
+    _liveRequestInFlight = false;
+    _backendOnline = false;
+    _snapshotStale = false;
+    _showSnapshotPulse = false;
+    final BackendPresenceSnapshot? lastPresence =
+        _presenceSnapshotNotifier.value;
+    if (lastPresence != null && !lastPresence.stale) {
+      _presenceSnapshotNotifier.value = lastPresence.copyWith(stale: true);
+    }
   }
 
   String _presenceDeviceType() {
@@ -397,6 +584,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
   void _goEnvironmentOverview() {
     setState(() {
       _selectedTab = 'environmentOverview';
+    });
+  }
+
+  void _goTableView() {
+    setState(() {
+      _selectedTab = 'tableView';
+    });
+  }
+
+  void _toggleComparisonReorder() {
+    setState(() {
+      _comparisonReorderEnabled = !_comparisonReorderEnabled;
     });
   }
 
@@ -555,6 +754,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
         _activeSiteName = result.siteDocument?.name;
         _activeTenantName = result.tenantDocument?.name;
         _activeBackendEndpoint = result.siteDocument?.backendUrl;
+        _applySiteOperationalState(result.siteDocument);
         _availableSites = result.availableSites;
         _availableTenants = result.availableTenants;
         _plcConfigs = result.plcConfigs;
@@ -562,6 +762,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
           endpoint: result.siteDocument?.backendUrl,
           tenantId: result.effectiveTenantId,
           siteId: result.siteId,
+          allowGlobalEndpointFallback: result.siteDocument == null,
           plcNames: {
             for (final PlcDisplayConfig p in result.plcConfigs)
               p.plcId: p.displayName,
@@ -570,7 +771,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
       });
       final String? tenantId = result.effectiveTenantId;
       if (tenantId != null) {
-        if (result.siteId.isNotEmpty) {
+        if (result.siteId.isNotEmpty &&
+            result.siteDocument?.isOperational == true) {
           _startConfigStream(tenantId: tenantId, siteId: result.siteId);
           unawaited(
             _loadWaterShortageSummaries(
@@ -585,6 +787,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
             ),
           );
           unawaited(_refreshLiveSnapshot());
+        } else if (result.siteDocument?.isOperational == false) {
+          _stopLiveSnapshotPollingForNonOperationalSite();
         }
       }
     }
@@ -679,9 +883,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
         fetchedSiteDoc ??
         _siteConfigService.fallbackSingleSite(siteId: resolvedSiteId);
 
-    // Load PLC display config (safe fallback: empty list if collection missing).
-    final List<PlcDisplayConfig> plcConfigs = await _sitePlcConfigService
-        .fetchActivePlcs(tenantId: tenantId, siteId: resolvedSiteId);
+    // Load legacy PLC display config only for operational sites.
+    final List<PlcDisplayConfig> plcConfigs = siteDoc.isOperational
+        ? await _sitePlcConfigService.fetchActivePlcs(
+            tenantId: tenantId,
+            siteId: resolvedSiteId,
+          )
+        : const <PlcDisplayConfig>[];
 
     // Tenant users need a membership record. Global Valke roles do not.
     if (!bypassesMembership) {
@@ -755,6 +963,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
           selectedTab: _selectedTab,
           userRole: _userRole,
           canEditConfig: bootstrap.canEditConfig,
+          canOpenRuntimeEvents:
+              _userRole == UserAppRole.owner &&
+              _historyTenantId != null &&
+              _historySiteId?.isNotEmpty == true,
         ),
       );
 
@@ -799,6 +1011,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
         case _SettingsMenuAction.electricCostSettings:
           await _openElectricCostSettings();
           continue;
+        case _SettingsMenuAction.runtimeEventsBeta:
+          _goRuntimeEvents();
+          continue;
         case _SettingsMenuAction.whatsappTest:
           await _openWhatsAppTest();
           continue;
@@ -809,7 +1024,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
           await showDialog<void>(
             // ignore: use_build_context_synchronously
             context: context,
-            builder: (context) => const UserManagementPage(),
+            builder: (context) => UserManagementPage(
+              canCreateTenants: _userRole == UserAppRole.owner,
+            ),
           );
           continue;
         case _SettingsMenuAction.doorOpeningsCleanup:
@@ -1618,11 +1835,15 @@ class _AgroDataShellState extends State<AgroDataShell> {
     if (!mounted) return;
     setState(() {
       _plcConfigs = newConfigs;
-      if (updatedSite != null) _activeSiteName = updatedSite.name;
+      if (updatedSite != null) {
+        _activeSiteName = updatedSite.name;
+        _applySiteOperationalState(updatedSite);
+      }
       _service = _buildPlcDashboardService(
         endpoint: _activeBackendEndpoint,
         tenantId: tenantId,
         siteId: siteId,
+        allowGlobalEndpointFallback: updatedSite == null,
         plcNames: {
           for (final PlcDisplayConfig p in newConfigs) p.plcId: p.displayName,
         },
@@ -1710,6 +1931,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _activeSiteId = siteId;
       _activeSiteName = siteDoc.name;
       _activeBackendEndpoint = siteDoc.backendUrl;
+      _applySiteOperationalState(siteDoc);
       _historySiteId = siteId;
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
@@ -1718,15 +1940,24 @@ class _AgroDataShellState extends State<AgroDataShell> {
         endpoint: siteDoc.backendUrl,
         tenantId: tenantId,
         siteId: siteId,
+        allowGlobalEndpointFallback: fetchedSiteDoc == null,
       );
     });
 
-    _startConfigStream(tenantId: tenantId, siteId: siteId);
-    unawaited(_loadWaterShortageSummaries(tenantId: tenantId, siteId: siteId));
-    unawaited(
-      _loadInitialRecentRoomWashEvents(tenantId: tenantId, siteId: siteId),
-    );
-    unawaited(_refreshLiveSnapshot());
+    if (siteDoc.isOperational) {
+      _startConfigStream(tenantId: tenantId, siteId: siteId);
+      unawaited(
+        _loadWaterShortageSummaries(tenantId: tenantId, siteId: siteId),
+      );
+      unawaited(
+        _loadInitialRecentRoomWashEvents(tenantId: tenantId, siteId: siteId),
+      );
+      unawaited(_refreshLiveSnapshot());
+    } else {
+      _configSubscription?.cancel();
+      _configSubscription = null;
+      _stopLiveSnapshotPollingForNonOperationalSite();
+    }
   }
 
   Future<void> _switchTenant(String tenantId) async {
@@ -1749,8 +1980,12 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final TenantDocument? tenantDoc = await _siteConfigService.fetchTenant(
       tenantId: tenantId,
     );
-    final List<PlcDisplayConfig> plcConfigs = await _sitePlcConfigService
-        .fetchActivePlcs(tenantId: tenantId, siteId: siteDoc.siteId);
+    final List<PlcDisplayConfig> plcConfigs = siteDoc.isOperational
+        ? await _sitePlcConfigService.fetchActivePlcs(
+            tenantId: tenantId,
+            siteId: siteDoc.siteId,
+          )
+        : const <PlcDisplayConfig>[];
 
     try {
       await _userContextService.setActiveTenantAndSite(
@@ -1770,6 +2005,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _activeSiteName = siteDoc.name;
       _activeTenantName = tenantDoc?.name ?? tenantId;
       _activeBackendEndpoint = siteDoc.backendUrl;
+      _applySiteOperationalState(siteDoc);
       _availableSites = sites;
       _plcConfigs = plcConfigs;
       _recentRoomWashByRoom.clear();
@@ -1779,6 +2015,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
         endpoint: siteDoc.backendUrl,
         tenantId: tenantId,
         siteId: siteDoc.siteId,
+        allowGlobalEndpointFallback: false,
         plcNames: {
           for (final PlcDisplayConfig p in plcConfigs) p.plcId: p.displayName,
         },
@@ -1799,34 +2036,49 @@ class _AgroDataShellState extends State<AgroDataShell> {
       );
     });
 
-    _startConfigStream(tenantId: tenantId, siteId: siteDoc.siteId);
-    unawaited(
-      _loadWaterShortageSummaries(tenantId: tenantId, siteId: siteDoc.siteId),
-    );
-    unawaited(
-      _loadInitialRecentRoomWashEvents(
-        tenantId: tenantId,
-        siteId: siteDoc.siteId,
-      ),
-    );
-    unawaited(_refreshLiveSnapshot());
+    if (siteDoc.isOperational) {
+      _startConfigStream(tenantId: tenantId, siteId: siteDoc.siteId);
+      unawaited(
+        _loadWaterShortageSummaries(tenantId: tenantId, siteId: siteDoc.siteId),
+      );
+      unawaited(
+        _loadInitialRecentRoomWashEvents(
+          tenantId: tenantId,
+          siteId: siteDoc.siteId,
+        ),
+      );
+      unawaited(_refreshLiveSnapshot());
+    } else {
+      _configSubscription?.cancel();
+      _configSubscription = null;
+      _stopLiveSnapshotPollingForNonOperationalSite();
+    }
   }
 
   Future<void> _refreshLiveSnapshot() async {
+    if (!_activeSiteOperational) {
+      _stopLiveSnapshotPollingForNonOperationalSite();
+      return;
+    }
     if (_liveRequestInFlight) {
       return;
     }
 
     _refreshTimer?.cancel();
-
-    if (mounted) {
-      setState(() {
-        _liveRequestInFlight = true;
-      });
-    }
+    _liveRequestInFlight = true;
 
     final LiveSnapshotResult result = await _service.fetchLiveSnapshot();
     if (!mounted) {
+      return;
+    }
+    if (result.isSiteNotOperational) {
+      setState(() {
+        _activeSiteOperational = false;
+        _activeSiteNotOperationalMessage = result.statusLabel;
+        _activeSiteNotOperationalDetail = result.message;
+        _activeSiteStatusLabel = 'Pendiente de backend';
+        _stopLiveSnapshotPollingForNonOperationalSite();
+      });
       return;
     }
 
@@ -1853,7 +2105,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       }
     }
 
-    setState(() {
+    void applyResult() {
       _liveRequestInFlight = false;
 
       if (result.isSuccess) {
@@ -1868,7 +2120,11 @@ class _AgroDataShellState extends State<AgroDataShell> {
           _presenceSnapshotNotifier.value = presenceSnapshot;
         }
         _lastSuccessfulSnapshotAt = successfulSnapshotAt;
-        _showSnapshotPulse = true;
+        final DateTime? backendSnapshotDataAt = result.snapshot!.lastUpdatedAt;
+        _showSnapshotPulse =
+            backendSnapshotDataAt != null &&
+            backendSnapshotDataAt != _lastBackendSnapshotDataAt;
+        _lastBackendSnapshotDataAt = backendSnapshotDataAt;
         debugPrint(
           '[frontend-fetch] snapshot fetch success backendOnline=$_backendOnline snapshotStale=$_snapshotStale lastSuccessfulSnapshotAt=${_lastSuccessfulSnapshotAt?.toIso8601String()}',
         );
@@ -1889,7 +2145,23 @@ class _AgroDataShellState extends State<AgroDataShell> {
           '[frontend-fetch] snapshot fetch failed source=${result.source} backendOnline=$_backendOnline snapshotStale=$_snapshotStale lastSuccessfulSnapshotAt=${_lastSuccessfulSnapshotAt?.toIso8601String()} error=${result.message ?? result.statusLabel}',
         );
       }
-    });
+    }
+
+    // If the backend hasn't produced a new PLC reading since the last cycle
+    // (same lastUpdatedAt) and nothing about connectivity/staleness changed,
+    // update the internal state without setState so the UI doesn't rebuild.
+    final bool dataUnchanged =
+        result.isSuccess &&
+        _backendOnline &&
+        successfulSnapshotStale == _snapshotStale &&
+        result.snapshot!.lastUpdatedAt != null &&
+        result.snapshot!.lastUpdatedAt == _lastBackendSnapshotDataAt;
+
+    if (dataUnchanged) {
+      applyResult();
+    } else if (mounted) {
+      setState(applyResult);
+    }
 
     if (result.isSuccess) {
       _detectWaterShortageTransitions(result.snapshot!.units);
@@ -2027,6 +2299,123 @@ class _AgroDataShellState extends State<AgroDataShell> {
     });
     debugPrint(
       '[room-wash] Firestore initial load done tenant=$tenantId site=$siteId count=${loaded.length}',
+    );
+  }
+
+  List<_DashboardRoomWashTarget> _dashboardRoomWashTargets() {
+    return <_DashboardRoomWashTarget>[
+      if (_unitVisibilitySettings.showMunters1)
+        _DashboardRoomWashTarget(
+          roomId: 'room_1',
+          roomNumber: 1,
+          muntersId: _plcConfigs.isNotEmpty
+              ? _plcConfigs[0].plcId
+              : (_snapshot.units.isNotEmpty
+                    ? _snapshot.units[0].historyPlcId ?? 'munters1'
+                    : 'munters1'),
+          label: 'Sala 1',
+        ),
+      if (_unitVisibilitySettings.showMunters2)
+        _DashboardRoomWashTarget(
+          roomId: 'room_2',
+          roomNumber: 2,
+          muntersId: _plcConfigs.length > 1
+              ? _plcConfigs[1].plcId
+              : (_snapshot.units.length > 1
+                    ? _snapshot.units[1].historyPlcId ?? 'munters2'
+                    : 'munters2'),
+          label: 'Sala 2',
+        ),
+    ];
+  }
+
+  Future<void> _openDashboardRoomWashDialog() async {
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _historySiteId;
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty) {
+      _showRoomWashMessage('No hay contexto de granja/sala para guardar.');
+      return;
+    }
+
+    final List<_DashboardRoomWashTarget> targets = _dashboardRoomWashTargets();
+    if (targets.isEmpty) {
+      _showRoomWashMessage('No hay salas visibles para registrar lavado.');
+      return;
+    }
+
+    final _DashboardRoomWashDraft? draft =
+        await showDialog<_DashboardRoomWashDraft>(
+          context: context,
+          builder: (BuildContext context) {
+            return _DashboardRoomWashRegistrationDialog(targets: targets);
+          },
+        );
+    if (draft == null) {
+      return;
+    }
+
+    final User user = widget.user;
+    final String createdByName = user.displayName?.trim().isNotEmpty == true
+        ? user.displayName!.trim()
+        : (user.email?.trim().isNotEmpty == true
+              ? user.email!.trim()
+              : user.uid);
+    final RoomWashEvent event = RoomWashEvent(
+      tenantId: tenantId,
+      roomId: draft.target.roomId,
+      roomNumber: draft.target.roomNumber,
+      muntersId: draft.target.muntersId,
+      washedAt: draft.washedAt,
+      createdByUid: user.uid,
+      createdByName: createdByName,
+      source: RoomWashEvent.operatorSource,
+    );
+
+    try {
+      await _roomWashEventsService.create(
+        tenantId: tenantId,
+        siteId: siteId,
+        event: event,
+      );
+      final bool cacheSynced = await _roomWashEventsService.syncBackendCache(
+        siteId: siteId,
+        event: event,
+        backendSnapshotEndpoint: _activeBackendEndpoint,
+      );
+      unawaited(
+        _roomWashEventsService.publishOperationalEvent(
+          tenantId: tenantId,
+          siteId: siteId,
+          event: event,
+          backendSnapshotEndpoint: _activeBackendEndpoint,
+        ),
+      );
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _recentRoomWashByRoom[draft.target.roomNumber] = event;
+        _snapshot = _applyRecentRoomWashEvents(snapshot: _snapshot);
+      });
+      _showRoomWashMessage(
+        cacheSynced
+            ? 'Lavado registrado para ${draft.target.label}.'
+            : 'El lavado quedó guardado, pero el backend no pudo sincronizarse.',
+      );
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      _showRoomWashMessage('No se pudo registrar el lavado: $error');
+    }
+  }
+
+  void _showRoomWashMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), duration: const Duration(seconds: 4)),
     );
   }
 
@@ -2400,11 +2789,6 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final MuntersModel selectedUnit = _selectedTab == 'munters2'
         ? munters2
         : munters1;
-    final String screenTitle = _selectedTab == 'comparativo'
-        ? 'Dashboard'
-        : _selectedTab == 'environmentOverview'
-        ? 'Ambiente'
-        : selectedUnit.name;
     final Map<String, WaterShortageSummary> visibleWaterShortageSummaries =
         _waterShortageSummariesWithoutMaintenance();
 
@@ -2431,47 +2815,52 @@ class _AgroDataShellState extends State<AgroDataShell> {
         body: SafeArea(
           child: Column(
             children: [
-              if (_selectedTab != 'environmentOverview')
-                DashboardHeader(
-                  selectedTab: _selectedTab,
-                  screenTitle: screenTitle,
-                  onSignOut: () async {
-                    final bool shouldSignOut = await _confirmSignOut();
-                    if (!shouldSignOut || !mounted) {
-                      return;
-                    }
-                    await _signOut();
-                  },
-                  onOpenSettings: _openSettings,
-                  onSelectComparison: _goHomeDashboard,
-                  onLogoTap: _goHomeDashboard,
-                  userEmail: widget.user.email,
-                  farmName: _activeTenantName ?? _historyTenantId,
-                  roomName: _activeSiteName,
-                  activeTenantId: _historyTenantId,
-                  availableTenants: _availableTenants,
-                  onTenantChanged: _switchTenant,
-                  activeSiteId: _activeSiteId,
-                  availableSites: _availableSites,
-                  onSiteChanged: _switchSite,
-                  canSelectSite: _userRole == UserAppRole.owner,
-                  activeUsersIndicator:
-                      _userRole == UserAppRole.owner && _historyTenantId != null
-                      ? ActiveUsersEye(
-                          currentUser: widget.user,
-                          currentRole: _userRole,
-                          presenceListenable: _presenceSnapshotNotifier,
-                          presenceDetailsRequested: _presenceDetailsRequested,
-                        )
-                      : null,
-                  onRuntimeEvents:
-                      _userRole == UserAppRole.owner &&
-                          _historyTenantId != null &&
-                          _historySiteId?.isNotEmpty == true
-                      ? _goRuntimeEvents
-                      : null,
-                ),
-              if (_snapshotStale)
+              DashboardHeader(
+                selectedTab: _selectedTab,
+                onSignOut: () async {
+                  final bool shouldSignOut = await _confirmSignOut();
+                  if (!shouldSignOut || !mounted) {
+                    return;
+                  }
+                  await _signOut();
+                },
+                onOpenSettings: _openSettings,
+                onSelectDetail: _goHomeDashboard,
+                onSelectTablero: _goEnvironmentOverview,
+                onSelectTabla: _goTableView,
+                onLogoTap: _goHomeDashboard,
+                userEmail: widget.user.email,
+                farmName: _activeTenantName ?? _historyTenantId,
+                activeTenantId: _historyTenantId,
+                availableTenants: _availableTenants,
+                onTenantChanged: _switchTenant,
+                activeSiteId: _activeSiteId,
+                availableSites: _availableSites,
+                onSiteChanged: _switchSite,
+                canSelectSite: _userRole == UserAppRole.owner,
+                activeUsersIndicator:
+                    _userRole == UserAppRole.owner && _historyTenantId != null
+                    ? ActiveUsersEye(
+                        currentUser: widget.user,
+                        currentRole: _userRole,
+                        presenceListenable: _presenceSnapshotNotifier,
+                        presenceDetailsRequested: _presenceDetailsRequested,
+                        compact: true,
+                      )
+                    : null,
+                siteAlert: !_activeSiteOperational && _userRole == UserAppRole.owner
+                    ? SiteAlert(
+                        title:
+                            _activeSiteNotOperationalMessage ??
+                            'Site pendiente de configuración operativa',
+                        subtitle:
+                            _activeSiteNotOperationalDetail ??
+                            'La estructura del Site fue creada, pero todavía no tiene un backend operativo asociado.',
+                        statusLabel: _activeSiteStatusLabel,
+                      )
+                    : null,
+              ),
+              if (_activeSiteOperational && _snapshotStale)
                 _StaleSnapshotBanner(
                   backendOnline: _backendOnline,
                   lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
@@ -2530,9 +2919,41 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           rangeSettings: _rangeSettings,
                           showSnapshotPulse: _showSnapshotPulse,
                           snapshotStale: _snapshotStale,
-                          onTapBack: _goHomeDashboard,
-                          showOwnerControls: _userRole == UserAppRole.owner,
-                          onOpenSettings: _openSettings,
+                        );
+                      }
+
+                      if (_selectedTab == 'tableView') {
+                        final List<MuntersModel> visibleUnits = <MuntersModel>[
+                          if (_unitVisibilitySettings.showMunters1) munters1,
+                          if (_unitVisibilitySettings.showMunters2) munters2,
+                        ];
+                        final List<String?> visiblePlcIds = <String?>[
+                          if (_unitVisibilitySettings.showMunters1)
+                            _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].plcId
+                                : munters1.historyPlcId,
+                          if (_unitVisibilitySettings.showMunters2)
+                            _plcConfigs.length > 1
+                                ? _plcConfigs[1].plcId
+                                : munters2.historyPlcId,
+                        ];
+                        final List<String> visiblePlcLabels = <String>[
+                          if (_unitVisibilitySettings.showMunters1)
+                            _plcConfigs.isNotEmpty
+                                ? _plcConfigs[0].columnLabel
+                                : 'M1',
+                          if (_unitVisibilitySettings.showMunters2)
+                            _plcConfigs.length > 1
+                                ? _plcConfigs[1].columnLabel
+                                : 'M2',
+                        ];
+                        return EnvironmentTablePage(
+                          units: visibleUnits,
+                          labels: visiblePlcLabels,
+                          plcIds: visiblePlcIds,
+                          tenantId: _historyTenantId,
+                          siteId: _historySiteId,
+                          rangeSettings: _rangeSettings,
                         );
                       }
 
@@ -2545,17 +2966,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             doorEvents: _snapshot.doorEvents,
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
-                            backendSnapshotEndpoint: _activeBackendEndpoint,
                             showMunters1: _unitVisibilitySettings.showMunters1,
                             showMunters2: _unitVisibilitySettings.showMunters2,
                             snapshotStale: _snapshotStale,
                             showSnapshotPulse: _showSnapshotPulse,
                             rangeSettings: _rangeSettings,
-                            magnifierSettings: _magnifierSettings,
                             moduleOrder: _comparisonModuleOrder,
                             onModuleOrderChanged: _updateComparisonModuleOrder,
+                            reorderEnabled: _comparisonReorderEnabled,
+                            onToggleReorder: _toggleComparisonReorder,
+                            onDetailAction: _openDashboardRoomWashDialog,
+                            magnifierSettings: _magnifierSettings,
                             homeGeneration: _dashboardHomeGeneration,
-                            currentUser: widget.user,
                             plc1ColumnLabel: _plcConfigs.isNotEmpty
                                 ? _plcConfigs[0].columnLabel
                                 : null,
@@ -2572,7 +2994,6 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                   ? _plcConfigs[1].plcId
                                   : 'munters2',
                             ),
-                            onOpenEnvironmentOverview: _goEnvironmentOverview,
                           ),
                         );
                       }
@@ -3506,6 +3927,7 @@ enum _SettingsMenuAction {
   maintenanceSettings,
   electricConsumptionSettings,
   electricCostSettings,
+  runtimeEventsBeta,
   whatsappTest,
   manageUsers,
   doorOpeningsCleanup,
@@ -3523,12 +3945,14 @@ class _SettingsMenuDialog extends StatelessWidget {
     required this.userEmail,
     required this.selectedTab,
     required this.canEditConfig,
+    required this.canOpenRuntimeEvents,
     this.userRole,
   });
 
   final String userEmail;
   final String selectedTab;
   final bool canEditConfig;
+  final bool canOpenRuntimeEvents;
   final String? userRole;
 
   @override
@@ -3661,6 +4085,21 @@ class _SettingsMenuDialog extends StatelessWidget {
                         ),
                         child: const Text('Costo Eléctrico'),
                       ),
+                      if (canOpenRuntimeEvents) ...[
+                        const SizedBox(height: 8),
+                        FilledButton.tonal(
+                          onPressed: () => Navigator.of(
+                            context,
+                          ).pop(_SettingsMenuAction.runtimeEventsBeta),
+                          style: FilledButton.styleFrom(
+                            minimumSize: const Size(0, 42),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                          ),
+                          child: const Text('beta Consumos Eléctricos'),
+                        ),
+                      ],
                     ],
                   ],
                 ),

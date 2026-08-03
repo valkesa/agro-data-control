@@ -82,14 +82,6 @@ class FirebaseRequestAuthService {
     );
   }
 
-  Future<AuthenticatedBackendUser?> tryAuthenticate(HttpRequest request) async {
-    try {
-      return await requireAuthenticated(request);
-    } on BackendAuthException {
-      return null;
-    }
-  }
-
   Future<AuthenticatedBackendUser> requireAuthenticated(
     HttpRequest request,
   ) async {

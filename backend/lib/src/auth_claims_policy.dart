@@ -138,6 +138,23 @@ class AuthClaimsPolicy {
       );
     }
 
+    if (role == AgroDataRole.owner) {
+      // Owners are global: they are not scoped to a single tenant, so
+      // activeTenantId is optional for them (unlike every other role).
+      return AuthClaimsBuildResult.success(
+        claims: <String, Object?>{
+          'role': role,
+          if (tenantId.isNotEmpty) 'activeTenantId': tenantId,
+          'allowedSiteIds': siteIds,
+        },
+        role: role,
+        activeTenantId: tenantId,
+        allowedSiteIds: siteIds,
+        operationalAccess: operationalAgroDataRoles.contains(role),
+        reason: 'operational_claims',
+      );
+    }
+
     if (tenantId.isEmpty) {
       return AuthClaimsBuildResult.failure(
         reason: 'missing_active_tenant',

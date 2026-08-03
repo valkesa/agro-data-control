@@ -138,10 +138,7 @@ class FirestoreTemperatureHistoryRepository {
         _documentUri(documentPath),
       );
       final String token = await _auth.getAccessToken();
-      request.headers.set(
-        HttpHeaders.authorizationHeader,
-        'Bearer $token',
-      );
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
 
       final HttpClientResponse response = await request.close();
       final String body = await response.transform(utf8.decoder).join();

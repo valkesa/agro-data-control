@@ -17,20 +17,23 @@ class AlertRuntimeConfig {
 
 class AlertHysteresisConfig {
   const AlertHysteresisConfig({
-    this.dewPointRiskC = 0.2,
+    this.dewPointRiskC = 1.0,
     this.temperatureC = 1.0,
     this.humidityPercent = 2.0,
+    this.differentialPressurePa = 10,
   });
 
   final double dewPointRiskC;
   final double temperatureC;
   final double humidityPercent;
+  final double differentialPressurePa;
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'dewPointRiskC': dewPointRiskC,
       'temperatureC': temperatureC,
       'humidityPercent': humidityPercent,
+      'differentialPressurePa': differentialPressurePa,
     };
   }
 }

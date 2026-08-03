@@ -127,7 +127,12 @@ class _CerdasContentState extends State<_CerdasContent> {
     }
   }
 
-  void _openDialog(BuildContext ctx, String plcId, String plcLabel, String type) {
+  void _openDialog(
+    BuildContext ctx,
+    String plcId,
+    String plcLabel,
+    String type,
+  ) {
     showDialog<void>(
       context: ctx,
       barrierDismissible: false,
@@ -173,18 +178,21 @@ class _CerdasContentState extends State<_CerdasContent> {
       stream: plc1Stats,
       builder: (_, AsyncSnapshot<PigStatsRecord?> s1) =>
           StreamBuilder<List<PigMovementRecord>>(
-        stream: plc1Movements,
-        builder: (_, AsyncSnapshot<List<PigMovementRecord>> m1) =>
-            StreamBuilder<PigStatsRecord?>(
-          stream: plc2Stats,
-          builder: (_, AsyncSnapshot<PigStatsRecord?> s2) =>
-              StreamBuilder<List<PigMovementRecord>>(
-            stream: plc2Movements,
-            builder: (BuildContext context, AsyncSnapshot<List<PigMovementRecord>> m2) =>
-                _buildRows(context, s1, m1, s2, m2),
+            stream: plc1Movements,
+            builder: (_, AsyncSnapshot<List<PigMovementRecord>> m1) =>
+                StreamBuilder<PigStatsRecord?>(
+                  stream: plc2Stats,
+                  builder: (_, AsyncSnapshot<PigStatsRecord?> s2) =>
+                      StreamBuilder<List<PigMovementRecord>>(
+                        stream: plc2Movements,
+                        builder:
+                            (
+                              BuildContext context,
+                              AsyncSnapshot<List<PigMovementRecord>> m2,
+                            ) => _buildRows(context, s1, m1, s2, m2),
+                      ),
+                ),
           ),
-        ),
-      ),
     );
   }
 
@@ -217,9 +225,8 @@ class _CerdasContentState extends State<_CerdasContent> {
     final String? plc2Id = widget.plc2Id;
 
     int i = 0;
-    Color rc() => (i++ % 2 == 0)
-        ? const Color(0xFF0F172A)
-        : const Color(0xFF1E293B);
+    Color rc() =>
+        (i++ % 2 == 0) ? const Color(0xFF0F172A) : const Color(0xFF1E293B);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -250,16 +257,22 @@ class _CerdasContentState extends State<_CerdasContent> {
           backgroundColor: rc(),
           m1Child: plc1Id != null
               ? _ActionIcons(
-                  onIngreso: () => _openDialog(context, plc1Id, widget.plc1Label, 'in'),
-                  onEgreso: () => _openDialog(context, plc1Id, widget.plc1Label, 'out'),
-                  onHistory: () => _openHistoryDialog(context, plc1Id, widget.plc1Label),
+                  onIngreso: () =>
+                      _openDialog(context, plc1Id, widget.plc1Label, 'in'),
+                  onEgreso: () =>
+                      _openDialog(context, plc1Id, widget.plc1Label, 'out'),
+                  onHistory: () =>
+                      _openHistoryDialog(context, plc1Id, widget.plc1Label),
                 )
               : const SizedBox.shrink(),
           m2Child: plc2Id != null
               ? _ActionIcons(
-                  onIngreso: () => _openDialog(context, plc2Id, widget.plc2Label, 'in'),
-                  onEgreso: () => _openDialog(context, plc2Id, widget.plc2Label, 'out'),
-                  onHistory: () => _openHistoryDialog(context, plc2Id, widget.plc2Label),
+                  onIngreso: () =>
+                      _openDialog(context, plc2Id, widget.plc2Label, 'in'),
+                  onEgreso: () =>
+                      _openDialog(context, plc2Id, widget.plc2Label, 'out'),
+                  onHistory: () =>
+                      _openHistoryDialog(context, plc2Id, widget.plc2Label),
                 )
               : const SizedBox.shrink(),
         ),
@@ -518,12 +531,13 @@ class _MovementDialogState extends State<_MovementDialog> {
     if (user == null) return;
 
     try {
-      final PigExitReasonRecord newReason = await widget.repository.addPigExitReason(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        name: name,
-        userId: user.uid,
-      );
+      final PigExitReasonRecord newReason = await widget.repository
+          .addPigExitReason(
+            tenantId: widget.tenantId,
+            siteId: widget.siteId,
+            name: name,
+            userId: user.uid,
+          );
       if (mounted) {
         setState(() {
           _selectedReason = newReason;
@@ -538,8 +552,7 @@ class _MovementDialogState extends State<_MovementDialog> {
     }
   }
 
-  String _formatDate(DateTime d) =>
-      '${_two(d.day)}/${_two(d.month)}/${d.year}';
+  String _formatDate(DateTime d) => '${_two(d.day)}/${_two(d.month)}/${d.year}';
 
   @override
   Widget build(BuildContext context) {
@@ -718,10 +731,7 @@ class _MovementDialogState extends State<_MovementDialog> {
               ),
               child: Text(
                 _errorMessage!,
-                style: const TextStyle(
-                  color: Color(0xFFFCA5A5),
-                  fontSize: 12,
-                ),
+                style: const TextStyle(color: Color(0xFFFCA5A5), fontSize: 12),
               ),
             ),
             const SizedBox(height: 12),
@@ -848,10 +858,7 @@ class _ReasonDropdown extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _HistoryDialog extends StatelessWidget {
-  const _HistoryDialog({
-    required this.plcLabel,
-    required this.stream,
-  });
+  const _HistoryDialog({required this.plcLabel, required this.stream});
 
   final String plcLabel;
   final Stream<List<PigMovementRecord>> stream;
@@ -905,110 +912,114 @@ class _HistoryDialog extends StatelessWidget {
               Flexible(
                 child: StreamBuilder<List<PigMovementRecord>>(
                   stream: stream,
-                  builder: (
-                    BuildContext context,
-                    AsyncSnapshot<List<PigMovementRecord>> snap,
-                  ) {
-                    if (snap.connectionState == ConnectionState.waiting &&
-                        !snap.hasData) {
-                      return const Center(
-                        child: Padding(
-                          padding: EdgeInsets.all(24),
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Color(0xFF38BDF8),
-                          ),
-                        ),
-                      );
-                    }
-                    if (snap.hasError) {
-                      return Padding(
-                        padding: const EdgeInsets.all(8),
-                        child: Text(
-                          'Error: ${snap.error}',
-                          style: const TextStyle(
-                            color: Color(0xFFFCA5A5),
-                            fontSize: 12,
-                          ),
-                        ),
-                      );
-                    }
-                    final List<PigMovementRecord> movements =
-                        snap.data ?? const <PigMovementRecord>[];
-                    if (movements.isEmpty) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text(
-                          'Sin movimientos registrados.',
-                          style: TextStyle(
-                            color: Color(0xFF94A3B8),
-                            fontSize: 12,
-                          ),
-                        ),
-                      );
-                    }
-                    return ListView.separated(
-                      shrinkWrap: true,
-                      itemCount: movements.length,
-                      separatorBuilder: (_, _) =>
-                          const Divider(color: Color(0xFF1E3148), height: 1),
-                      itemBuilder: (BuildContext context, int index) {
-                        final PigMovementRecord m = movements[index];
-                        final Color typeColor = m.isIn
-                            ? const Color(0xFF22C55E)
-                            : const Color(0xFFEF4444);
-                        final String sign = m.isIn ? '+' : '−';
-                        final String dateLabel = m.date != null
-                            ? '${_two(m.date!.day)}/${_two(m.date!.month)}/${m.date!.year}'
-                            : '--';
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: Row(
-                            children: <Widget>[
-                              Text(
-                                '$sign${m.quantity}',
-                                style: TextStyle(
-                                  color: typeColor,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w700,
-                                ),
+                  builder:
+                      (
+                        BuildContext context,
+                        AsyncSnapshot<List<PigMovementRecord>> snap,
+                      ) {
+                        if (snap.connectionState == ConnectionState.waiting &&
+                            !snap.hasData) {
+                          return const Center(
+                            child: Padding(
+                              padding: EdgeInsets.all(24),
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Color(0xFF38BDF8),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: <Widget>[
-                                    Text(
-                                      dateLabel,
-                                      style: const TextStyle(
-                                        color: Color(0xFFE5E7EB),
-                                        fontSize: 12,
-                                      ),
+                            ),
+                          );
+                        }
+                        if (snap.hasError) {
+                          return Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Text(
+                              'Error: ${snap.error}',
+                              style: const TextStyle(
+                                color: Color(0xFFFCA5A5),
+                                fontSize: 12,
+                              ),
+                            ),
+                          );
+                        }
+                        final List<PigMovementRecord> movements =
+                            snap.data ?? const <PigMovementRecord>[];
+                        if (movements.isEmpty) {
+                          return const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'Sin movimientos registrados.',
+                              style: TextStyle(
+                                color: Color(0xFF94A3B8),
+                                fontSize: 12,
+                              ),
+                            ),
+                          );
+                        }
+                        return ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: movements.length,
+                          separatorBuilder: (_, _) => const Divider(
+                            color: Color(0xFF1E3148),
+                            height: 1,
+                          ),
+                          itemBuilder: (BuildContext context, int index) {
+                            final PigMovementRecord m = movements[index];
+                            final Color typeColor = m.isIn
+                                ? const Color(0xFF22C55E)
+                                : const Color(0xFFEF4444);
+                            final String sign = m.isIn ? '+' : '−';
+                            final String dateLabel = m.date != null
+                                ? '${_two(m.date!.day)}/${_two(m.date!.month)}/${m.date!.year}'
+                                : '--';
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: Row(
+                                children: <Widget>[
+                                  Text(
+                                    '$sign${m.quantity}',
+                                    style: TextStyle(
+                                      color: typeColor,
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
                                     ),
-                                    if (m.isOut && m.reasonName != null)
-                                      Text(
-                                        m.reasonName!,
-                                        style: const TextStyle(
-                                          color: Color(0xFF94A3B8),
-                                          fontSize: 11,
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: <Widget>[
+                                        Text(
+                                          dateLabel,
+                                          style: const TextStyle(
+                                            color: Color(0xFFE5E7EB),
+                                            fontSize: 12,
+                                          ),
                                         ),
-                                      ),
-                                  ],
-                                ),
+                                        if (m.isOut && m.reasonName != null)
+                                          Text(
+                                            m.reasonName!,
+                                            style: const TextStyle(
+                                              color: Color(0xFF94A3B8),
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                  Text(
+                                    m.userName,
+                                    style: const TextStyle(
+                                      color: Color(0xFF475569),
+                                      fontSize: 11,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              Text(
-                                m.userName,
-                                style: const TextStyle(
-                                  color: Color(0xFF475569),
-                                  fontSize: 11,
-                                ),
-                              ),
-                            ],
-                          ),
+                            );
+                          },
                         );
                       },
-                    );
-                  },
                 ),
               ),
             ],
@@ -1191,10 +1202,7 @@ class _FooterMessage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: TextStyle(color: color, fontSize: 12),
-    );
+    return Text(text, style: TextStyle(color: color, fontSize: 12));
   }
 }
 

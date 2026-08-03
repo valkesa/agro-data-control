@@ -38,8 +38,7 @@ class FirestoreRuntimeEventsRepository {
       'isOpen': _boolField(true),
       'deviceIsOn': _boolField(deviceIsOn),
       'startedAt': _timestampField(event.startedAt),
-      if (deviceIsOn)
-        'activeDurationSec': _intField(event.durationSec),
+      if (deviceIsOn) 'activeDurationSec': _intField(event.durationSec),
       if (event.powerPercent != null)
         'powerPercent': _intField(event.powerPercent!),
       if (event.powerWatts != null)

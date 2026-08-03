@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import '../services/user_management_service.dart';
 
 class UserManagementPage extends StatefulWidget {
-  const UserManagementPage({super.key});
+  const UserManagementPage({super.key, required this.canCreateTenants});
+
+  final bool canCreateTenants;
 
   @override
   State<UserManagementPage> createState() => _UserManagementPageState();
@@ -43,6 +45,21 @@ class _UserManagementPageState extends State<UserManagementPage> {
     }
   }
 
+  Future<void> _createTenant() async {
+    final CreateTenantResult? result = await showDialog<CreateTenantResult>(
+      context: context,
+      builder: (BuildContext context) => _CreateTenantDialog(service: _service),
+    );
+    if (result == null) {
+      return;
+    }
+    _reload();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(result.userMessage())));
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
@@ -61,6 +78,15 @@ class _UserManagementPageState extends State<UserManagementPage> {
             onPressed: _reload,
             icon: const Icon(Icons.refresh, color: Color(0xFF94A3B8)),
           ),
+          if (widget.canCreateTenants)
+            IconButton(
+              tooltip: 'Crear tenant',
+              onPressed: _createTenant,
+              icon: const Icon(
+                Icons.add_business_rounded,
+                color: Color(0xFF94A3B8),
+              ),
+            ),
         ],
       ),
       content: SizedBox(
@@ -260,6 +286,604 @@ class _Chip extends StatelessWidget {
       ),
     );
   }
+}
+
+class _CreateTenantDialog extends StatefulWidget {
+  const _CreateTenantDialog({required this.service});
+
+  final UserManagementService service;
+
+  @override
+  State<_CreateTenantDialog> createState() => _CreateTenantDialogState();
+}
+
+class _CreateTenantDialogState extends State<_CreateTenantDialog> {
+  final TextEditingController _tenantIdController = TextEditingController();
+  final TextEditingController _tenantNameController = TextEditingController();
+  final TextEditingController _siteIdController = TextEditingController(
+    text: 'sitio-1',
+  );
+  final TextEditingController _siteNameController = TextEditingController();
+  final TextEditingController _siteDescriptionController =
+      TextEditingController();
+  final List<_SectorRowState> _sectors = <_SectorRowState>[
+    _SectorRowState(id: 'sala-1', name: 'Sala 1'),
+    _SectorRowState(id: 'sala-2', name: 'Sala 2'),
+  ];
+  final List<_DeviceRowState> _devices = <_DeviceRowState>[
+    _DeviceRowState(id: 'plc-munters-1', name: 'PLC Munters 1', type: 'logo'),
+    _DeviceRowState(id: 'plc-munters-2', name: 'PLC Munters 2', type: 'logo'),
+  ];
+  bool _isSaving = false;
+
+  @override
+  void dispose() {
+    _tenantIdController.dispose();
+    _tenantNameController.dispose();
+    _siteIdController.dispose();
+    _siteNameController.dispose();
+    _siteDescriptionController.dispose();
+    for (final _SectorRowState sector in _sectors) {
+      sector.dispose();
+    }
+    for (final _DeviceRowState device in _devices) {
+      device.dispose();
+    }
+    super.dispose();
+  }
+
+  void _addSector() {
+    setState(() {
+      final int next = _sectors.length + 1;
+      _sectors.add(_SectorRowState(id: 'sala-$next', name: 'Sala $next'));
+    });
+  }
+
+  void _removeSector(int index) {
+    if (_sectors.length <= 1) return;
+    setState(() {
+      _sectors.removeAt(index).dispose();
+    });
+  }
+
+  void _addDevice() {
+    setState(() {
+      final int next = _devices.length + 1;
+      _devices.add(
+        _DeviceRowState(
+          id: 'device-$next',
+          name: 'Device $next',
+          type: 'other',
+        ),
+      );
+    });
+  }
+
+  void _removeDevice(int index) {
+    if (_devices.length <= 1) return;
+    setState(() {
+      _devices.removeAt(index).dispose();
+    });
+  }
+
+  Future<void> _save() async {
+    setState(() => _isSaving = true);
+    try {
+      final CreateTenantResult result = await widget.service.createTenant(
+        tenantId: _tenantIdController.text,
+        tenantName: _tenantNameController.text,
+        siteId: _siteIdController.text,
+        siteName: _siteNameController.text,
+        siteDescription: _siteDescriptionController.text,
+        sectors: _sectors
+            .map(
+              (_SectorRowState sector) => SectorCreateInput(
+                sectorId: sector.idController.text,
+                name: sector.nameController.text,
+                description: sector.descriptionController.text,
+                enabled: sector.enabled,
+              ),
+            )
+            .toList(growable: false),
+        devices: _devices
+            .map(
+              (_DeviceRowState device) => DeviceCreateInput(
+                deviceId: device.idController.text,
+                name: device.nameController.text,
+                type: device.typeController.text,
+                model: device.modelController.text,
+                description: device.descriptionController.text,
+                enabled: device.enabled,
+              ),
+            )
+            .toList(growable: false),
+      );
+      if (!mounted) return;
+      Navigator.of(context).pop(result);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error al crear tenant: $error')));
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text(
+        'Crear nuevo tenant',
+        style: TextStyle(color: Color(0xFFE5E7EB), fontSize: 16),
+      ),
+      content: SizedBox(
+        width: 620,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              const _SectionLabel('Tenant'),
+              const SizedBox(height: 8),
+              _DialogTextField(
+                controller: _tenantIdController,
+                label: 'Tenant ID',
+                hintText: 'the-gene-pig',
+                enabled: !_isSaving,
+                onChanged: (_) => setState(() {}),
+              ),
+              _NormalizedIdPreview(value: _tenantIdController.text),
+              const SizedBox(height: 10),
+              _DialogTextField(
+                controller: _tenantNameController,
+                label: 'Nombre tenant',
+                hintText: 'The Gene Pig',
+                enabled: !_isSaving,
+              ),
+              const SizedBox(height: 18),
+              const _SectionLabel('Site inicial'),
+              const SizedBox(height: 8),
+              _DialogTextField(
+                controller: _siteIdController,
+                label: 'Site ID',
+                hintText: 'genetica-1',
+                enabled: !_isSaving,
+                onChanged: (_) => setState(() {}),
+              ),
+              _NormalizedIdPreview(value: _siteIdController.text),
+              const SizedBox(height: 10),
+              _DialogTextField(
+                controller: _siteNameController,
+                label: 'Nombre site',
+                hintText: 'Genética 1',
+                enabled: !_isSaving,
+              ),
+              const SizedBox(height: 10),
+              _DialogTextField(
+                controller: _siteDescriptionController,
+                label: 'Descripción',
+                hintText: 'Opcional',
+                enabled: !_isSaving,
+              ),
+              const SizedBox(height: 18),
+              _SectionHeader(
+                title: 'Sectores iniciales',
+                onAdd: _isSaving ? null : _addSector,
+              ),
+              const SizedBox(height: 8),
+              for (int i = 0; i < _sectors.length; i++) ...<Widget>[
+                _SectorFields(
+                  title: 'Sector ${i + 1}',
+                  row: _sectors[i],
+                  enabled: !_isSaving,
+                  canRemove: _sectors.length > 1,
+                  onChanged: () => setState(() {}),
+                  onRemove: () => _removeSector(i),
+                ),
+                const SizedBox(height: 10),
+              ],
+              const SizedBox(height: 8),
+              _SectionHeader(
+                title: 'Devices iniciales',
+                onAdd: _isSaving ? null : _addDevice,
+              ),
+              const SizedBox(height: 8),
+              for (int i = 0; i < _devices.length; i++) ...<Widget>[
+                _DeviceFields(
+                  title: 'Device ${i + 1}',
+                  row: _devices[i],
+                  enabled: !_isSaving,
+                  canRemove: _devices.length > 1,
+                  onChanged: () => setState(() {}),
+                  onRemove: () => _removeDevice(i),
+                ),
+                const SizedBox(height: 10),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancelar'),
+        ),
+        FilledButton(
+          onPressed: _isSaving ? null : _save,
+          style: FilledButton.styleFrom(minimumSize: const Size(92, 36)),
+          child: _isSaving
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Crear'),
+        ),
+      ],
+    );
+  }
+}
+
+class _SectorRowState {
+  _SectorRowState({required String id, required String name})
+    : idController = TextEditingController(text: id),
+      nameController = TextEditingController(text: name),
+      descriptionController = TextEditingController();
+
+  final TextEditingController idController;
+  final TextEditingController nameController;
+  final TextEditingController descriptionController;
+  bool enabled = true;
+
+  void dispose() {
+    idController.dispose();
+    nameController.dispose();
+    descriptionController.dispose();
+  }
+}
+
+class _DeviceRowState {
+  _DeviceRowState({
+    required String id,
+    required String name,
+    required String type,
+  }) : idController = TextEditingController(text: id),
+       nameController = TextEditingController(text: name),
+       typeController = TextEditingController(text: type),
+       modelController = TextEditingController(),
+       descriptionController = TextEditingController();
+
+  final TextEditingController idController;
+  final TextEditingController nameController;
+  final TextEditingController typeController;
+  final TextEditingController modelController;
+  final TextEditingController descriptionController;
+  bool enabled = true;
+
+  void dispose() {
+    idController.dispose();
+    nameController.dispose();
+    typeController.dispose();
+    modelController.dispose();
+    descriptionController.dispose();
+  }
+}
+
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader({required this.title, required this.onAdd});
+
+  final String title;
+  final VoidCallback? onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: <Widget>[
+        Expanded(child: _SectionLabel(title)),
+        IconButton(
+          tooltip: 'Agregar',
+          onPressed: onAdd,
+          icon: const Icon(Icons.add_circle_outline_rounded),
+          color: const Color(0xFF93C5FD),
+          visualDensity: VisualDensity.compact,
+        ),
+      ],
+    );
+  }
+}
+
+class _SectorFields extends StatelessWidget {
+  const _SectorFields({
+    required this.title,
+    required this.row,
+    required this.enabled,
+    required this.canRemove,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final String title;
+  final _SectorRowState row;
+  final bool enabled;
+  final bool canRemove;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProvisioningFrame(
+      title: title,
+      enabled: enabled,
+      itemEnabled: row.enabled,
+      canRemove: canRemove,
+      onEnabledChanged: (bool value) {
+        row.enabled = value;
+        onChanged();
+      },
+      onRemove: onRemove,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: _DialogTextField(
+                controller: row.idController,
+                label: 'Sector ID',
+                hintText: 'sala-1',
+                enabled: enabled,
+                onChanged: (_) => onChanged(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _DialogTextField(
+                controller: row.nameController,
+                label: 'Nombre',
+                hintText: 'Sala 1',
+                enabled: enabled,
+              ),
+            ),
+          ],
+        ),
+        _NormalizedIdPreview(value: row.idController.text),
+        const SizedBox(height: 8),
+        _DialogTextField(
+          controller: row.descriptionController,
+          label: 'Descripción',
+          hintText: 'Opcional',
+          enabled: enabled,
+        ),
+      ],
+    );
+  }
+}
+
+class _DeviceFields extends StatelessWidget {
+  const _DeviceFields({
+    required this.title,
+    required this.row,
+    required this.enabled,
+    required this.canRemove,
+    required this.onChanged,
+    required this.onRemove,
+  });
+
+  final String title;
+  final _DeviceRowState row;
+  final bool enabled;
+  final bool canRemove;
+  final VoidCallback onChanged;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return _ProvisioningFrame(
+      title: title,
+      enabled: enabled,
+      itemEnabled: row.enabled,
+      canRemove: canRemove,
+      onEnabledChanged: (bool value) {
+        row.enabled = value;
+        onChanged();
+      },
+      onRemove: onRemove,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: _DialogTextField(
+                controller: row.idController,
+                label: 'Device ID',
+                hintText: 'plc-munters-1',
+                enabled: enabled,
+                onChanged: (_) => onChanged(),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _DialogTextField(
+                controller: row.typeController,
+                label: 'Tipo',
+                hintText: 'logo',
+                enabled: enabled,
+              ),
+            ),
+          ],
+        ),
+        _NormalizedIdPreview(value: row.idController.text),
+        const SizedBox(height: 8),
+        _DialogTextField(
+          controller: row.nameController,
+          label: 'Nombre',
+          hintText: 'PLC Munters 1',
+          enabled: enabled,
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: _DialogTextField(
+                controller: row.modelController,
+                label: 'Modelo',
+                hintText: 'Opcional',
+                enabled: enabled,
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _DialogTextField(
+                controller: row.descriptionController,
+                label: 'Descripción',
+                hintText: 'Opcional',
+                enabled: enabled,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ProvisioningFrame extends StatelessWidget {
+  const _ProvisioningFrame({
+    required this.title,
+    required this.enabled,
+    required this.itemEnabled,
+    required this.canRemove,
+    required this.onEnabledChanged,
+    required this.onRemove,
+    required this.children,
+  });
+
+  final String title;
+  final bool enabled;
+  final bool itemEnabled;
+  final bool canRemove;
+  final ValueChanged<bool> onEnabledChanged;
+  final VoidCallback onRemove;
+  final List<Widget> children;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF334155)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              Switch(
+                value: itemEnabled,
+                onChanged: enabled ? onEnabledChanged : null,
+                activeThumbColor: const Color(0xFF3B82F6),
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              IconButton(
+                tooltip: 'Eliminar',
+                onPressed: enabled && canRemove ? onRemove : null,
+                icon: const Icon(Icons.delete_outline_rounded),
+                color: const Color(0xFFFCA5A5),
+                visualDensity: VisualDensity.compact,
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...children,
+        ],
+      ),
+    );
+  }
+}
+
+class _DialogTextField extends StatelessWidget {
+  const _DialogTextField({
+    required this.controller,
+    required this.label,
+    required this.hintText,
+    required this.enabled,
+    this.onChanged,
+  });
+
+  final TextEditingController controller;
+  final String label;
+  final String hintText;
+  final bool enabled;
+  final ValueChanged<String>? onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      onChanged: onChanged,
+      style: const TextStyle(color: Color(0xFFE5E7EB), fontSize: 13),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hintText,
+        isDense: true,
+        filled: true,
+        fillColor: const Color(0xFF1E293B),
+        labelStyle: const TextStyle(color: Color(0xFF94A3B8)),
+        hintStyle: const TextStyle(color: Color(0xFF475569)),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: const BorderSide(color: Color(0xFF334155)),
+        ),
+      ),
+    );
+  }
+}
+
+class _NormalizedIdPreview extends StatelessWidget {
+  const _NormalizedIdPreview({required this.value});
+
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final String normalized = _normalizePreviewId(value);
+    if (value.trim().isEmpty || normalized == value.trim()) {
+      return const SizedBox(height: 4);
+    }
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(
+        'ID final: $normalized',
+        style: const TextStyle(color: Color(0xFF64748B), fontSize: 10),
+      ),
+    );
+  }
+}
+
+String _normalizePreviewId(String raw) {
+  return raw
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
+      .replaceAll(RegExp(r'-+'), '-')
+      .replaceAll(RegExp(r'^-|-$'), '');
 }
 
 // ─── Edit dialog ─────────────────────────────────────────────────────────────

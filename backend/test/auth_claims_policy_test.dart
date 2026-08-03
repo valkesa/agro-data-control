@@ -3,6 +3,7 @@ import 'package:agro_data_control_backend/src/firebase_custom_claims_service.dar
 
 void main() {
   _testValidOperationalRoles();
+  _testOwnerWithoutTenantIsGlobal();
   _testPendingAndDisabledClearOperationalClaims();
   _testInvalidProfiles();
   _testSiteNormalization();
@@ -32,6 +33,23 @@ void _testValidOperationalRoles() {
     );
     _expect(result.operationalAccess, '$role has operational access');
   }
+}
+
+void _testOwnerWithoutTenantIsGlobal() {
+  const AuthClaimsPolicy policy = AuthClaimsPolicy();
+  final AuthClaimsBuildResult result = policy.buildClaims(
+    _profile(role: AgroDataRole.owner, tenant: '', sites: const <String>[]),
+  );
+  _expect(result.success, 'owner without tenant builds claims');
+  _expect(result.claims['role'] == AgroDataRole.owner, 'owner role kept');
+  _expect(
+    !result.claims.containsKey('activeTenantId'),
+    'owner without tenant has no tenant claim',
+  );
+  _expect(
+    result.operationalAccess,
+    'owner without tenant still has operational access',
+  );
 }
 
 void _testPendingAndDisabledClearOperationalClaims() {

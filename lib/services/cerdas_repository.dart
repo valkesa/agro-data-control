@@ -76,26 +76,25 @@ class CerdasRepository {
       siteId: siteId,
     );
     debugPrint('[Firestore] pig exit reasons stream started path=$path');
-    return firestore
-        .collection(path)
-        .snapshots()
-        .map((QuerySnapshot<Map<String, dynamic>> snapshot) {
-          final List<PigExitReasonRecord> records = snapshot.docs
-              .map(
-                (QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
-                    PigExitReasonRecord.fromFirestore(
-                      doc.data(),
-                      documentId: doc.id,
-                    ),
-              )
-              .where((PigExitReasonRecord r) => r.normalizedName.isNotEmpty)
-              .toList(growable: false);
-          records.sort(
-            (PigExitReasonRecord a, PigExitReasonRecord b) =>
-                a.normalizedName.compareTo(b.normalizedName),
-          );
-          return records;
-        });
+    return firestore.collection(path).snapshots().map((
+      QuerySnapshot<Map<String, dynamic>> snapshot,
+    ) {
+      final List<PigExitReasonRecord> records = snapshot.docs
+          .map(
+            (QueryDocumentSnapshot<Map<String, dynamic>> doc) =>
+                PigExitReasonRecord.fromFirestore(
+                  doc.data(),
+                  documentId: doc.id,
+                ),
+          )
+          .where((PigExitReasonRecord r) => r.normalizedName.isNotEmpty)
+          .toList(growable: false);
+      records.sort(
+        (PigExitReasonRecord a, PigExitReasonRecord b) =>
+            a.normalizedName.compareTo(b.normalizedName),
+      );
+      return records;
+    });
   }
 
   Future<void> addPigMovement({
@@ -132,10 +131,9 @@ class CerdasRepository {
       final DocumentSnapshot<Map<String, dynamic>> statsSnapshot =
           await transaction.get(firestore.doc(statsPath));
 
-      final int currentCount =
-          statsSnapshot.exists
-              ? (_parseInt(statsSnapshot.data()?['currentCount']) ?? 0)
-              : 0;
+      final int currentCount = statsSnapshot.exists
+          ? (_parseInt(statsSnapshot.data()?['currentCount']) ?? 0)
+          : 0;
 
       final int newCount;
       if (type == 'in') {
@@ -150,14 +148,13 @@ class CerdasRepository {
         }
       }
 
-      final DocumentReference<Map<String, dynamic>> movementRef =
-          firestore.collection(movementsPath).doc();
+      final DocumentReference<Map<String, dynamic>> movementRef = firestore
+          .collection(movementsPath)
+          .doc();
 
       transaction.set(movementRef, <String, dynamic>{
         'type': type,
-        'date': Timestamp.fromDate(
-          DateTime(date.year, date.month, date.day),
-        ),
+        'date': Timestamp.fromDate(DateTime(date.year, date.month, date.day)),
         'quantity': quantity,
         'reasonId': reasonId,
         'reasonName': reasonName,
@@ -167,15 +164,11 @@ class CerdasRepository {
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
-      transaction.set(
-        firestore.doc(statsPath),
-        <String, dynamic>{
-          'currentCount': newCount,
-          'updatedAt': FieldValue.serverTimestamp(),
-          'updatedBy': userId,
-        },
-        SetOptions(merge: true),
-      );
+      transaction.set(firestore.doc(statsPath), <String, dynamic>{
+        'currentCount': newCount,
+        'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': userId,
+      }, SetOptions(merge: true));
     });
 
     debugPrint(
@@ -196,8 +189,9 @@ class CerdasRepository {
     final String trimmedName = name.trim();
     final String normalizedName = trimmedName.toLowerCase();
 
-    final DocumentReference<Map<String, dynamic>> ref =
-        firestore.collection(path).doc();
+    final DocumentReference<Map<String, dynamic>> ref = firestore
+        .collection(path)
+        .doc();
     await ref.set(<String, dynamic>{
       'name': trimmedName,
       'normalizedName': normalizedName,
@@ -206,7 +200,9 @@ class CerdasRepository {
       'createdBy': userId,
     });
 
-    debugPrint('[Firestore] pig exit reason created id=${ref.id} name=$trimmedName');
+    debugPrint(
+      '[Firestore] pig exit reason created id=${ref.id} name=$trimmedName',
+    );
 
     return PigExitReasonRecord(
       reasonId: ref.id,
