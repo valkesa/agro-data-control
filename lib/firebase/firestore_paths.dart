@@ -98,6 +98,15 @@ class FirestorePaths {
   static String deviceDoc(String tenantId, String deviceId) =>
       'tenants/$tenantId/devices/$deviceId';
 
+  static String deviceRoomsCollection(String tenantId, String deviceId) =>
+      '${deviceDoc(tenantId, deviceId)}/rooms';
+
+  static String deviceRoomDoc(
+    String tenantId,
+    String deviceId,
+    String roomId,
+  ) => '${deviceRoomsCollection(tenantId, deviceId)}/$roomId';
+
   // LEGACY SCHEMA:
   // The collection `tenants/{tenantId}/sites/{siteId}/plcs/{plcId}` is kept
   // only for backward compatibility with existing tenants.

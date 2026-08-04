@@ -12,6 +12,7 @@ import '../models/plc_maintenance_settings.dart';
 import '../models/plc_unit_diagnostics.dart';
 import '../models/room_wash_event.dart';
 import '../services/cerdas_repository.dart';
+import '../widgets/animated_humidity_icon.dart';
 import '../widgets/cerdas_module.dart';
 import '../widgets/differential_pressure_history_card.dart';
 import '../widgets/door_openings_module.dart';
@@ -136,6 +137,54 @@ class ComparisonPage extends StatefulWidget {
 /// navigation (Detalle/Tablero/Tabla), Configuración, Salir and the user
 /// email are all handled by the single shared `DashboardHeader` now
 /// (lib/widgets/dashboard_header.dart), so this page only renders content.
+/// One contiguous run of entries sharing the same device label — e.g. the
+/// N Salas of a single physical Device. [title] is null when no grouping
+/// was requested at all (legacy PLC1/PLC2 dashboards, which have no Device
+/// concept and must render exactly as before).
+class _EnvLabelGroup {
+  const _EnvLabelGroup({required this.title, required this.indices});
+
+  final String? title;
+  final List<int> indices;
+}
+
+/// Splits `0..totalCount-1` into groups of consecutive equal [labels] —
+/// e.g. `[PLC A, PLC A, PLC A, PLC B]` groups into `[(PLC A, [0,1,2]),
+/// (PLC B, [3])]`. Callers (`main.dart`) already emit devices/rooms in
+/// device order, so a simple consecutive-run split is enough — no need to
+/// re-sort here.
+///
+/// [labels] null (or length-mismatched) means "no grouping was requested":
+/// a single ungrouped group with `title: null`, so callers that render a
+/// title only `if (title != null)` skip it entirely.
+List<_EnvLabelGroup> _groupConsecutiveByLabel(
+  List<String>? labels,
+  int totalCount,
+) {
+  if (labels == null || labels.length != totalCount || totalCount == 0) {
+    return <_EnvLabelGroup>[
+      _EnvLabelGroup(
+        title: null,
+        indices: <int>[for (int i = 0; i < totalCount; i++) i],
+      ),
+    ];
+  }
+  final List<_EnvLabelGroup> groups = <_EnvLabelGroup>[];
+  int start = 0;
+  for (int i = 1; i <= totalCount; i++) {
+    if (i == totalCount || labels[i] != labels[start]) {
+      groups.add(
+        _EnvLabelGroup(
+          title: labels[start],
+          indices: <int>[for (int k = start; k < i; k++) k],
+        ),
+      );
+      start = i;
+    }
+  }
+  return groups;
+}
+
 class EnvironmentOverviewPage extends StatelessWidget {
   const EnvironmentOverviewPage({
     super.key,
@@ -147,6 +196,7 @@ class EnvironmentOverviewPage extends StatelessWidget {
     required this.rangeSettings,
     required this.showSnapshotPulse,
     required this.snapshotStale,
+    this.deviceNames,
   });
 
   final List<MuntersModel> units;
@@ -158,19 +208,29 @@ class EnvironmentOverviewPage extends StatelessWidget {
   final bool showSnapshotPulse;
   final bool snapshotStale;
 
+  /// One entry per [units] index naming the physical Device that unit's
+  /// Sala belongs to — e.g. `[PLC Maternidad, PLC Maternidad, PLC Recria]`.
+  /// Null for legacy PLC1/PLC2 dashboards (no Device concept there, no
+  /// grouping/titles rendered — same layout as before this existed).
+  final List<String>? deviceNames;
+
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
-      child: _EnvironmentOverviewPresetLayout(
-        units: units,
-        labels: labels,
-        plcIds: plcIds,
-        tenantId: tenantId,
-        siteId: siteId,
-        rangeSettings: rangeSettings,
-        showSnapshotPulse: showSnapshotPulse,
-        snapshotStale: snapshotStale,
+      child: Align(
+        alignment: Alignment.topLeft,
+        child: _EnvironmentOverviewPresetLayout(
+          units: units,
+          labels: labels,
+          plcIds: plcIds,
+          tenantId: tenantId,
+          siteId: siteId,
+          rangeSettings: rangeSettings,
+          showSnapshotPulse: showSnapshotPulse,
+          snapshotStale: snapshotStale,
+          deviceNames: deviceNames,
+        ),
       ),
     );
   }
@@ -196,6 +256,7 @@ class EnvironmentTablePage extends StatelessWidget {
     required this.tenantId,
     required this.siteId,
     required this.rangeSettings,
+    this.deviceNames,
   });
 
   final List<MuntersModel> units;
@@ -204,6 +265,11 @@ class EnvironmentTablePage extends StatelessWidget {
   final String? tenantId;
   final String? siteId;
   final DashboardRangeSettings rangeSettings;
+
+  /// One entry per [units] index naming the physical Device that unit's
+  /// Sala belongs to. Null for legacy PLC1/PLC2 dashboards — see
+  /// [EnvironmentOverviewPage.deviceNames].
+  final List<String>? deviceNames;
 
   @override
   Widget build(BuildContext context) {
@@ -225,27 +291,71 @@ class EnvironmentTablePage extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Container(
-            decoration: BoxDecoration(
-              color: const Color(0xFF0F172A),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFF223046)),
-            ),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(minWidth: 760),
-                child: _EnvironmentTableGrid(
-                  rows: rows,
-                  tenantId: tenantId,
-                  siteId: siteId,
+        children: rows.isEmpty
+            ? const [_EnvironmentEmptyDevicesState()]
+            : [
+                Container(
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFF223046)),
+                  ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(minWidth: 760),
+                      child: _EnvironmentTableGrid(
+                        rows: rows,
+                        tenantId: tenantId,
+                        siteId: siteId,
+                        rangeSettings: rangeSettings,
+                        deviceNames: deviceNames,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
+                const SizedBox(height: 10),
+                const _EnvironmentTableLegend(),
+              ],
+      ),
+    );
+  }
+}
+
+/// Shown by both Tablero and Tabla when there's nothing to render — e.g. a
+/// dynamic-Devices Site with 0 enabled Devices yet. Never render an empty
+/// `Column`/table silently; say so explicitly instead of just going blank.
+class _EnvironmentEmptyDevicesState extends StatelessWidget {
+  const _EnvironmentEmptyDevicesState();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF223046)),
+      ),
+      child: const Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.developer_board_off_outlined,
+            size: 28,
+            color: Color(0xFF64748B),
+          ),
+          SizedBox(height: 10),
+          Text(
+            'No hay equipos configurados para este site.',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Color(0xFFCBD5E1),
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 10),
-          const _EnvironmentTableLegend(),
         ],
       ),
     );
@@ -263,9 +373,18 @@ class _EnvironmentTableRow {
     required this.roomLabel,
     required this.plcId,
     required this.statusColor,
+    required this.salaDoorOpen,
+    required this.muntersDoorOpen,
     required this.temperatureC,
+    required this.exteriorTemperatureC,
+    required this.exteriorHumidityPercent,
     required this.humidityPercent,
     required this.dewPointC,
+    required this.temperatureAlarm,
+    required this.humidityAlarm,
+    required this.dewPointAlarm,
+    required this.differentialPressurePa,
+    required this.differentialPressureAlarm,
     required this.fanPercent,
     required this.heatingOn,
     required this.evaporativePanelOn,
@@ -284,6 +403,11 @@ class _EnvironmentTableRow {
     final bool blocked = _shouldBlockOperationalData(unit);
     final double? temperature = blocked ? null : unit.tempInterior;
     final double? humidity = blocked ? null : unit.displayHumInterior;
+    final _EnvironmentAlarmLevels alarmLevels = _assessEnvironmentAlarmLevels(
+      unit: unit,
+      rangeSettings: rangeSettings,
+      blocked: blocked,
+    );
     return _EnvironmentTableRow(
       roomLabel: roomLabel,
       plcId: plcId,
@@ -292,7 +416,11 @@ class _EnvironmentTableRow {
         rangeSettings: rangeSettings,
         blocked: blocked,
       ),
+      salaDoorOpen: blocked ? null : unit.salaAbierta,
+      muntersDoorOpen: blocked ? null : unit.munterAbierto,
       temperatureC: temperature,
+      exteriorTemperatureC: blocked ? null : unit.tempExterior,
+      exteriorHumidityPercent: blocked ? null : unit.displayHumExterior,
       humidityPercent: humidity,
       dewPointC: blocked
           ? null
@@ -300,6 +428,14 @@ class _EnvironmentTableRow {
               temperatureC: unit.tempInterior,
               relativeHumidityPercent: unit.humInterior,
             ),
+      temperatureAlarm: alarmLevels.temperature,
+      humidityAlarm: alarmLevels.humidity,
+      dewPointAlarm: alarmLevels.dewPoint,
+      differentialPressurePa: blocked ? null : unit.presionDiferencial,
+      differentialPressureAlarm: _assessDifferentialPressureAlarm(
+        unit,
+        rangeSettings,
+      ),
       fanPercent: blocked
           ? null
           : _normalizeVoltageToPercent(unit.tensionSalidaVentiladores),
@@ -312,9 +448,18 @@ class _EnvironmentTableRow {
   final String roomLabel;
   final String? plcId;
   final Color statusColor;
+  final bool? salaDoorOpen;
+  final bool? muntersDoorOpen;
   final double? temperatureC;
+  final double? exteriorTemperatureC;
+  final double? exteriorHumidityPercent;
   final double? humidityPercent;
   final double? dewPointC;
+  final _EnvironmentAlarmLevel temperatureAlarm;
+  final _EnvironmentAlarmLevel humidityAlarm;
+  final _EnvironmentAlarmLevel dewPointAlarm;
+  final double? differentialPressurePa;
+  final _EnvironmentAlarmLevel differentialPressureAlarm;
   final double? fanPercent;
   final bool? heatingOn;
   final bool? evaporativePanelOn;
@@ -326,11 +471,13 @@ class _EnvironmentTableHeaderData {
     required this.label,
     this.icon,
     this.iconWidget,
+    this.tooltip,
   }) : assert(icon != null || iconWidget != null);
 
   final String label;
   final IconData? icon;
   final Widget? iconWidget;
+  final String? tooltip;
 }
 
 class _EnvironmentTableGrid extends StatelessWidget {
@@ -338,11 +485,19 @@ class _EnvironmentTableGrid extends StatelessWidget {
     required this.rows,
     required this.tenantId,
     required this.siteId,
+    required this.rangeSettings,
+    this.deviceNames,
   });
 
   final List<_EnvironmentTableRow> rows;
   final String? tenantId;
   final String? siteId;
+  final DashboardRangeSettings rangeSettings;
+
+  /// One entry per [rows] index naming the physical Device that row's Sala
+  /// belongs to — see [EnvironmentOverviewPage.deviceNames]. Null renders
+  /// the flat table exactly as before grouping existed.
+  final List<String>? deviceNames;
 
   static const CerdasRepository _repository = CerdasRepository();
 
@@ -350,22 +505,64 @@ class _EnvironmentTableGrid extends StatelessWidget {
   _headers = <_EnvironmentTableHeaderData>[
     _EnvironmentTableHeaderData(icon: Icons.cottage_outlined, label: 'Sala'),
     _EnvironmentTableHeaderData(
-      icon: Icons.thermostat,
-      label: 'Temperatura °C',
+      icon: Icons.door_front_door_outlined,
+      label: 'Sala',
+      tooltip: 'Puerta Sala',
     ),
-    _EnvironmentTableHeaderData(icon: Icons.opacity, label: 'Humedad %'),
+    _EnvironmentTableHeaderData(
+      icon: Icons.door_front_door_outlined,
+      label: 'Equipo',
+      tooltip: 'Puerta Equipo M',
+    ),
+    _EnvironmentTableHeaderData(
+      icon: Icons.thermostat,
+      label: 'Temp. °C',
+      tooltip: 'Temperatura Interior',
+    ),
+    _EnvironmentTableHeaderData(
+      icon: Icons.thermostat_outlined,
+      label: 'Temp. ex °C',
+      tooltip: 'Temperatura exterior',
+    ),
+    _EnvironmentTableHeaderData(
+      iconWidget: _EnvironmentHeaderHumidityIcon(
+        visual: _HumidityHeaderVisual.medium,
+        colorOverride: Color(0xFF6FD8C4),
+        size: 18,
+        fullCycle: true,
+      ),
+      label: 'HR ex %',
+      tooltip: 'Humedad Relativa exterior',
+    ),
+    _EnvironmentTableHeaderData(
+      iconWidget: _EnvironmentHeaderHumidityIcon(
+        visual: _HumidityHeaderVisual.medium,
+        colorOverride: Color(0xFF6FD8C4),
+        size: 18,
+        fullCycle: true,
+      ),
+      label: 'HR int %',
+      tooltip: 'Humedad Relativa interior',
+    ),
     _EnvironmentTableHeaderData(
       iconWidget: _AnimatedDewPointIcon(color: Color(0xFF6FD8C4), size: 18),
-      label: 'Punto de rocío °C',
+      label: 'PR °C',
+      tooltip:
+          'Punto de Rocío\nΔPR = Margen del Punto de Rocío: diferencia entre temperatura interior y punto de rocío',
     ),
-    _EnvironmentTableHeaderData(icon: Icons.air, label: 'Ventilador %'),
+    _EnvironmentTableHeaderData(
+      icon: Icons.grid_on_rounded,
+      label: 'PD Pa',
+      tooltip: 'Presión Diferencial',
+    ),
+    _EnvironmentTableHeaderData(icon: Icons.air, label: 'Fan %'),
     _EnvironmentTableHeaderData(
       icon: Icons.local_fire_department,
       label: 'Calefacción',
     ),
     _EnvironmentTableHeaderData(
       icon: Icons.grid_on_rounded,
-      label: 'Panel evaporativo',
+      label: 'Panel\nevaporativo',
     ),
     _EnvironmentTableHeaderData(icon: Icons.pets, label: 'Cerdos'),
     _EnvironmentTableHeaderData(icon: Icons.cloud_outlined, label: 'CO2 ppm'),
@@ -378,6 +575,10 @@ class _EnvironmentTableGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final List<_EnvLabelGroup> groups = _groupConsecutiveByLabel(
+      deviceNames,
+      rows.length,
+    );
     return Table(
       border: const TableBorder(
         horizontalInside: BorderSide(color: Color(0xFF223046)),
@@ -387,38 +588,118 @@ class _EnvironmentTableGrid extends StatelessWidget {
         TableRow(
           decoration: const BoxDecoration(color: Color(0xFF162133)),
           children: <Widget>[
-            for (final _EnvironmentTableHeaderData header in _headers)
-              _headerCell(header),
+            for (int i = 0; i < _headers.length; i++)
+              _headerCell(_headers[i], limitText: _limitTextForColumn(i)),
           ],
         ),
-        for (final _EnvironmentTableRow row in rows)
-          TableRow(
-            children: <Widget>[
-              _roomCell(row),
-              _valueCell(row.temperatureC?.toStringAsFixed(1) ?? '-'),
-              _valueCell(row.humidityPercent?.toStringAsFixed(0) ?? '-'),
-              _valueCell(row.dewPointC?.toStringAsFixed(1) ?? '-'),
-              _fanCell(row.fanPercent),
-              _heatingCell(row.heatingOn),
-              _panelCell(row.evaporativePanelOn),
-              _EnvironmentTablePigCell(
-                tenantId: tenantId,
-                siteId: siteId,
-                plcId: row.plcId,
-                repository: _repository,
-              ),
-              _valueCell('Sin datos'),
-              _valueCell('Sin datos'),
-              _valueCell(row.nh3?.toStringAsFixed(0) ?? 'Sin datos'),
-            ],
-          ),
+        for (final _EnvLabelGroup group in groups) ...[
+          if (group.title != null) _groupTitleRow(group.title!),
+          for (final int index in group.indices) _dataRow(rows[index]),
+        ],
       ],
     );
   }
 
-  Widget _headerCell(_EnvironmentTableHeaderData header) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+  /// A full-width divider row naming the Device a run of Salas belongs to.
+  /// `Table` has no real column-span, so this leans on the same trick the
+  /// header row above already uses: `TableRow.decoration` paints as one
+  /// continuous band under every cell in the row regardless of each cell's
+  /// own content, so a colored title in the first cell plus empty cells
+  /// elsewhere reads as a spanning bar without breaking column alignment
+  /// with the data rows below (which share this same `Table`/column set).
+  TableRow _groupTitleRow(String title) {
+    return TableRow(
+      decoration: const BoxDecoration(color: Color(0xFF16233A)),
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: <Widget>[
+              const Icon(Icons.memory, size: 14, color: Color(0xFF6FD8C4)),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: const TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+        for (int i = 1; i < _headers.length; i++) const SizedBox.shrink(),
+      ],
+    );
+  }
+
+  TableRow _dataRow(_EnvironmentTableRow row) {
+    return TableRow(
+      children: <Widget>[
+        _roomCell(row),
+        _doorCell(row.salaDoorOpen),
+        _doorCell(row.muntersDoorOpen),
+        _valueCell(
+          row.temperatureC?.toStringAsFixed(1) ?? '-',
+          alarmLevel: row.temperatureAlarm,
+        ),
+        _valueCell(row.exteriorTemperatureC?.toStringAsFixed(1) ?? '-'),
+        _valueCell(row.exteriorHumidityPercent?.toStringAsFixed(0) ?? '-'),
+        _valueCell(
+          row.humidityPercent?.toStringAsFixed(0) ?? '-',
+          alarmLevel: row.humidityAlarm,
+        ),
+        _valueCell(
+          row.dewPointC?.toStringAsFixed(1) ?? '-',
+          alarmLevel: row.dewPointAlarm,
+        ),
+        _valueCell(
+          row.differentialPressurePa?.toStringAsFixed(0) ?? '-',
+          alarmLevel: row.differentialPressureAlarm,
+        ),
+        _fanCell(row.fanPercent),
+        _heatingCell(row.heatingOn),
+        _panelCell(row.evaporativePanelOn),
+        _EnvironmentTablePigCell(
+          tenantId: tenantId,
+          siteId: siteId,
+          plcId: row.plcId,
+          repository: _repository,
+        ),
+        _valueCell('Sin datos'),
+        _valueCell('Sin datos'),
+        _valueCell(row.nh3?.toStringAsFixed(0) ?? 'Sin datos'),
+      ],
+    );
+  }
+
+  String? _limitTextForColumn(int index) {
+    return switch (index) {
+      3 =>
+        '${_formatTableLimit(rangeSettings.temperatureMin)}°C - '
+            '${_formatTableLimit(rangeSettings.temperatureMax)}°C',
+      6 =>
+        '${_formatTableLimit(rangeSettings.humidityMin)}% - '
+            '${_formatTableLimit(rangeSettings.humidityMax)}%',
+      7 =>
+        'ΔPR: ${_formatTableLimit(rangeSettings.dewPointMarginAlarmRedMax)}°C - '
+            '${_formatTableLimit(rangeSettings.dewPointMarginAlarmYellowMaxExclusive)}°C',
+      8 => 'Max ${_formatTableLimit(rangeSettings.filterPressureMax)} Pa',
+      _ => null,
+    };
+  }
+
+  String _formatTableLimit(double value) {
+    if (value == value.roundToDouble()) {
+      return value.round().toString();
+    }
+    return value.toStringAsFixed(1);
+  }
+
+  Widget _headerCell(_EnvironmentTableHeaderData header, {String? limitText}) {
+    final Widget cell = Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 7),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
@@ -428,15 +709,34 @@ class _EnvironmentTableGrid extends StatelessWidget {
           Text(
             header.label,
             textAlign: TextAlign.center,
+            maxLines: 2,
             style: const TextStyle(
               color: Color(0xFF94A3B8),
               fontSize: 11,
               fontWeight: FontWeight.w700,
             ),
           ),
+          if (limitText != null) ...[
+            const SizedBox(height: 3),
+            Text(
+              limitText,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 9,
+                fontWeight: FontWeight.w500,
+                height: 1.1,
+              ),
+            ),
+          ],
         ],
       ),
     );
+    final String? tooltip = header.tooltip;
+    if (tooltip == null || tooltip.isEmpty) {
+      return cell;
+    }
+    return Tooltip(message: tooltip, child: cell);
   }
 
   Widget _fanCell(double? fanPercent) {
@@ -444,7 +744,7 @@ class _EnvironmentTableGrid extends StatelessWidget {
         ? '-'
         : '${(fanPercent * 100).round()}';
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
       child: Center(
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -467,44 +767,121 @@ class _EnvironmentTableGrid extends StatelessWidget {
   }
 
   Widget _heatingCell(bool? heatingOn) {
+    if (heatingOn == true) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Center(child: _AnimatedHeatingFlameIcon(active: true, size: 18)),
+      );
+    }
+    return _panelCell(heatingOn);
+  }
+
+  Widget _doorCell(bool? open) {
+    final bool isOpen = open == true;
+    final Color color = open == null
+        ? const Color(0xFF94A3B8)
+        : isOpen
+        ? const Color(0xFFEF4444)
+        : const Color(0xFFE5E7EB);
+    final Color background = open == null
+        ? const Color(0xFF1E293B)
+        : isOpen
+        ? const Color(0xFF3F1D22)
+        : Colors.transparent;
+    final Widget icon = isOpen
+        ? _DoorOpenIcon(color: color, size: 16)
+        : Icon(Icons.door_front_door_outlined, color: color, size: 16);
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
       child: Center(
-        child: heatingOn == true
-            ? const _AnimatedHeatingFlameIcon(active: true, size: 18)
-            : Text(
-                heatingOn == null ? '-' : 'OFF',
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  color: Color(0xFFCBD5E1),
-                  fontSize: 13,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: isOpen
+                  ? color.withValues(alpha: 0.55)
+                  : Colors.transparent,
+            ),
+          ),
+          child: open == null
+              ? const Text(
+                  '-',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                )
+              : isOpen
+              ? Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    icon,
+                    const SizedBox(width: 5),
+                    const Text(
+                      'Abierta',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFEF4444),
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                )
+              : icon,
+        ),
       ),
     );
   }
 
-  Widget _valueCell(String text) {
+  Widget _valueCell(String text, {_EnvironmentAlarmLevel? alarmLevel}) {
+    final bool missingData = text == 'Sin datos';
+    final _EnvironmentAlarmLevel effectiveAlarm =
+        alarmLevel ?? _EnvironmentAlarmLevel.pending;
+    final bool alert =
+        effectiveAlarm == _EnvironmentAlarmLevel.yellow ||
+        effectiveAlarm == _EnvironmentAlarmLevel.red;
+    final Color alertColor = _alarmLevelValueColor(effectiveAlarm);
+    final Color textColor = missingData
+        ? const Color(0xFF94A3B8)
+        : alert
+        ? alertColor
+        : const Color(0xFFE5E7EB);
+    final Widget value = Text(
+      text,
+      textAlign: TextAlign.center,
+      style: TextStyle(
+        color: textColor,
+        fontSize: missingData ? 10 : 13,
+        fontWeight: missingData ? FontWeight.w400 : FontWeight.w600,
+      ),
+    );
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
       child: Center(
-        child: Text(
-          text,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xFFE5E7EB),
-            fontSize: 13,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
+        child: alert
+            ? Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: alertColor.withValues(alpha: 0.16),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: alertColor.withValues(alpha: 0.55)),
+                ),
+                child: value,
+              )
+            : value,
       ),
     );
   }
 
   Widget _roomCell(_EnvironmentTableRow row) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
       child: Center(
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -543,10 +920,10 @@ class _EnvironmentTableGrid extends StatelessWidget {
         : const Color(0xFFCBD5E1);
     final String label = on == null ? '-' : (on ? 'ON' : 'OFF');
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Center(
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
             color: background,
             borderRadius: BorderRadius.circular(999),
@@ -691,6 +1068,7 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     required this.rangeSettings,
     required this.showSnapshotPulse,
     required this.snapshotStale,
+    this.deviceNames,
   });
 
   final List<MuntersModel> units;
@@ -701,36 +1079,145 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
   final DashboardRangeSettings rangeSettings;
   final bool showSnapshotPulse;
   final bool snapshotStale;
+  final List<String>? deviceNames;
+
+  static const double _maxCardWidth = 430;
+  static const double _spacing = 14;
+  static const double _groupSpacing = 22;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double cardWidth = math.min(430, constraints.maxWidth);
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            for (int i = 0; i < units.length; i++) ...[
-              SizedBox(
-                width: cardWidth,
-                child: _LargeEnvironmentUnitCard(
-                  label: i < labels.length ? labels[i] : units[i].name,
-                  unit: units[i],
-                  tenantId: tenantId,
-                  siteId: siteId,
-                  plcId: i < plcIds.length ? plcIds[i] : units[i].historyPlcId,
-                  rangeSettings: rangeSettings,
-                  blocked: _shouldBlockOperationalData(units[i]),
-                  showSnapshotPulse: showSnapshotPulse,
-                  snapshotStale: snapshotStale,
-                  scale: 0.58,
-                ),
+        if (units.isEmpty) {
+          final double emptyWidth = math.min(_maxCardWidth, constraints.maxWidth);
+          return SizedBox(
+            width: emptyWidth,
+            child: const _EnvironmentEmptyDevicesState(),
+          );
+        }
+
+        // Rule: up to 3 Salas total stack in a single column; beyond that,
+        // everything lays out 2-per-row (left-to-right, top-to-bottom).
+        // This threshold is evaluated once across ALL Salas on the page,
+        // independent of how many belong to each Device — a lone Device
+        // with 1 Sala still renders in 2-column mode if some other Device
+        // pushes the page total past 3.
+        final int columns = units.length > 3 ? 2 : 1;
+        final double cardWidth = columns == 2
+            ? math.min(_maxCardWidth, (constraints.maxWidth - _spacing) / 2)
+            : math.min(_maxCardWidth, constraints.maxWidth);
+        final double groupWidth = columns == 2
+            ? cardWidth * 2 + _spacing
+            : cardWidth;
+
+        final List<_EnvLabelGroup> groups = _groupConsecutiveByLabel(
+          deviceNames,
+          units.length,
+        );
+
+        Widget card(int i) => _LargeEnvironmentUnitCard(
+          label: i < labels.length ? labels[i] : units[i].name,
+          unit: units[i],
+          tenantId: tenantId,
+          siteId: siteId,
+          plcId: i < plcIds.length ? plcIds[i] : units[i].historyPlcId,
+          rangeSettings: rangeSettings,
+          blocked: _shouldBlockOperationalData(units[i]),
+          showSnapshotPulse: showSnapshotPulse,
+          snapshotStale: snapshotStale,
+          scale: 0.58,
+        );
+
+        List<Widget> layoutGroupCards(List<int> indices) {
+          if (columns == 1) {
+            return <Widget>[
+              for (int k = 0; k < indices.length; k++) ...[
+                SizedBox(width: cardWidth, child: card(indices[k])),
+                if (k != indices.length - 1) const SizedBox(height: _spacing),
+              ],
+            ];
+          }
+          final List<Widget> rows = <Widget>[];
+          for (int r = 0; r * 2 < indices.length; r++) {
+            final int leftIndex = indices[r * 2];
+            final int? rightIndex = r * 2 + 1 < indices.length
+                ? indices[r * 2 + 1]
+                : null;
+            rows.add(
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  SizedBox(width: cardWidth, child: card(leftIndex)),
+                  if (rightIndex != null) ...[
+                    const SizedBox(width: _spacing),
+                    SizedBox(width: cardWidth, child: card(rightIndex)),
+                  ],
+                ],
               ),
-              if (i != units.length - 1) const SizedBox(height: 14),
+            );
+            if (r * 2 + 2 < indices.length) {
+              rows.add(const SizedBox(height: _spacing));
+            }
+          }
+          return rows;
+        }
+
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            for (int g = 0; g < groups.length; g++) ...[
+              if (groups[g].title != null) ...[
+                _EnvironmentDeviceGroupHeader(
+                  title: groups[g].title!,
+                  width: groupWidth,
+                ),
+                const SizedBox(height: 8),
+              ],
+              ...layoutGroupCards(groups[g].indices),
+              if (g != groups.length - 1) const SizedBox(height: _groupSpacing),
             ],
           ],
         );
       },
+    );
+  }
+}
+
+/// Title bar above a Device's Salas in the Tablero — e.g. "PLC Maternidad"
+/// above its 8 Sala cards. Only rendered when [EnvironmentOverviewPage]
+/// receives `deviceNames` (dynamic-Devices Sites); legacy PLC1/PLC2
+/// dashboards never build this.
+class _EnvironmentDeviceGroupHeader extends StatelessWidget {
+  const _EnvironmentDeviceGroupHeader({required this.title, this.width});
+
+  final String title;
+  final double? width;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: width,
+      child: Row(
+        children: <Widget>[
+          const Icon(Icons.memory, size: 16, color: Color(0xFF6FD8C4)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              title,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: Color(0xFFCBD5E1),
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -757,6 +1244,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
   Timer? _technicalDataAutoCollapseTimer;
   Timer? _sectionsAutoCollapseTimer;
   bool _technicalDataExpanded = false;
+  final Set<String> _expandedTemperatureHistoryKeys = <String>{};
   final bool _munters1Collapsed = false;
   final bool _munters2Collapsed = false;
   bool _alarmasAutoExpandQueued = false;
@@ -796,6 +1284,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
       setState(() {
         _sectionsCollapseGeneration += 1;
         _expandedSectionIds.clear();
+        _expandedTemperatureHistoryKeys.clear();
       });
     }
   }
@@ -830,6 +1319,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
       setState(() {
         _sectionsCollapseGeneration += 1;
         _expandedSectionIds.clear();
+        _expandedTemperatureHistoryKeys.clear();
       });
     });
   }
@@ -849,6 +1339,24 @@ class _ComparisonPageState extends State<ComparisonPage> {
     if (expanded) {
       _handleSectionExpanded();
     }
+  }
+
+  String _temperatureHistoryKey(MuntersModel unit, String fallback) {
+    final String? plcId = unit.historyPlcId;
+    if (plcId != null && plcId.isNotEmpty) {
+      return plcId;
+    }
+    return fallback;
+  }
+
+  void _toggleTemperatureHistoryExpanded(String key) {
+    setState(() {
+      if (_expandedTemperatureHistoryKeys.contains(key)) {
+        _expandedTemperatureHistoryKeys.remove(key);
+      } else {
+        _expandedTemperatureHistoryKeys.add(key);
+      }
+    });
   }
 
   void _focusSection(String sectionId) {
@@ -1382,26 +1890,6 @@ class _ComparisonPageState extends State<ComparisonPage> {
           munters2Blocked: munters2DataBlocked,
         ),
         _ComparisonRow(
-          label: '',
-          alignToTop: true,
-          munters1: _ComparisonHistoryValue(
-            unitName: munters1.name,
-            rangeSettings: rangeSettings,
-            tenantId: widget.tenantId,
-            siteId: widget.siteId,
-            plcId: munters1.historyPlcId,
-            blocked: munters1DataBlocked,
-          ),
-          munters2: _ComparisonHistoryValue(
-            unitName: munters2.name,
-            rangeSettings: rangeSettings,
-            tenantId: widget.tenantId,
-            siteId: widget.siteId,
-            plcId: munters2.historyPlcId,
-            blocked: munters2DataBlocked,
-          ),
-        ),
-        _ComparisonRow(
           label: 'Humedad interior',
           munters1: _HumidityValue(
             unit: munters1,
@@ -1441,6 +1929,48 @@ class _ComparisonPageState extends State<ComparisonPage> {
                 ? '-'
                 : _formatValueWithUnit(munters2.nh3, 'ppm'),
           ),
+        ),
+        Builder(
+          builder: (BuildContext context) {
+            final String munters1HistoryKey = _temperatureHistoryKey(
+              munters1,
+              'munters1',
+            );
+            final String munters2HistoryKey = _temperatureHistoryKey(
+              munters2,
+              'munters2',
+            );
+            final bool munters1HistoryExpanded = _expandedTemperatureHistoryKeys
+                .contains(munters1HistoryKey);
+            final bool munters2HistoryExpanded = _expandedTemperatureHistoryKeys
+                .contains(munters2HistoryKey);
+            return _ComparisonRow(
+              label: 'Gráfico',
+              alignToTop: munters1HistoryExpanded || munters2HistoryExpanded,
+              munters1: _ComparisonHistoryValue(
+                unitName: munters1.name,
+                rangeSettings: rangeSettings,
+                tenantId: widget.tenantId,
+                siteId: widget.siteId,
+                plcId: munters1.historyPlcId,
+                expanded: munters1HistoryExpanded,
+                onToggle: () =>
+                    _toggleTemperatureHistoryExpanded(munters1HistoryKey),
+                blocked: munters1DataBlocked,
+              ),
+              munters2: _ComparisonHistoryValue(
+                unitName: munters2.name,
+                rangeSettings: rangeSettings,
+                tenantId: widget.tenantId,
+                siteId: widget.siteId,
+                plcId: munters2.historyPlcId,
+                expanded: munters2HistoryExpanded,
+                onToggle: () =>
+                    _toggleTemperatureHistoryExpanded(munters2HistoryKey),
+                blocked: munters2DataBlocked,
+              ),
+            );
+          },
         ),
       ],
     );
@@ -1802,11 +2332,21 @@ class _ComparisonPageState extends State<ComparisonPage> {
         icon: Icons.water_drop_outlined,
         iconColor: const Color(0xFF94A3B8),
         status: const _ModuleStatus.pending(),
+        iconWidget: const Icon(
+          Icons.water_drop_outlined,
+          color: Color(0xFF94A3B8),
+          size: 14,
+        ),
       ),
       _PlcModuleIconData(
         icon: Icons.water_drop_outlined,
         iconColor: const Color(0xFF94A3B8),
         status: const _ModuleStatus.pending(),
+        iconWidget: const Icon(
+          Icons.water_drop_outlined,
+          color: Color(0xFF94A3B8),
+          size: 14,
+        ),
       ),
     ];
     final Widget aguaSection = _SectionTable(
@@ -2723,7 +3263,16 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
               Expanded(
                 child: _EnvironmentMetricTile(
                   title: 'HR ext',
-                  icon: Icons.water_drop_outlined,
+                  iconWidget: _EnvironmentHeaderHumidityIcon(
+                    visual: blocked
+                        ? _HumidityHeaderVisual.empty
+                        : _resolveHumidityVisualForValue(
+                            exteriorHumidity,
+                            rangeSettings,
+                          ),
+                    size: _LargeEnvironmentUnitCard._widgetIconBaseSize * scale,
+                    colorOverride: measurementIconColor,
+                  ),
                   iconColor: measurementIconColor,
                   scale: scale,
                   compact: true,
@@ -3640,10 +4189,10 @@ class _LargeEnvironmentExtraData extends StatelessWidget {
             scale: scale,
           ),
           _LargeAdditionalMiniBox(
-            marker: Icon(
-              Icons.water_drop_outlined,
+            marker: _WaterConsumptionMarker(
               color: baseIconColor,
-              size: emphasizedIconSize,
+              iconSize: emphasizedIconSize,
+              scale: scale,
             ),
             value: '-',
             scale: scale,
@@ -4620,11 +5169,9 @@ class _SpinningIconState extends State<_SpinningIcon>
 
   @override
   Widget build(BuildContext context) {
-    final Widget icon = Icon(
-      widget.icon,
-      size: widget.size,
-      color: widget.color,
-    );
+    final Widget icon = widget.icon == Icons.cyclone_rounded
+        ? _FanBladeIcon(size: widget.size, color: widget.color)
+        : Icon(widget.icon, size: widget.size, color: widget.color);
     if (!widget.spinning) {
       return icon;
     }
@@ -5453,7 +6000,16 @@ _HumidityHeaderVisual _resolveEnvironmentHumidityVisualForUnit({
   if (_shouldBlockOperationalData(unit) || unit.humInterior == null) {
     return _HumidityHeaderVisual.empty;
   }
-  final double humidity = unit.humInterior!;
+  return _resolveHumidityVisualForValue(unit.humInterior, rangeSettings);
+}
+
+_HumidityHeaderVisual _resolveHumidityVisualForValue(
+  double? humidity,
+  DashboardRangeSettings rangeSettings,
+) {
+  if (humidity == null) {
+    return _HumidityHeaderVisual.empty;
+  }
   final double min = rangeSettings.humidityMin;
   final double max = rangeSettings.humidityMax;
   final double span = max - min;
@@ -5756,6 +6312,23 @@ _ModuleStatus _resolveFiltrosStatusForUnit(
     return const _ModuleStatus.alert();
   }
   return const _ModuleStatus.ok();
+}
+
+_EnvironmentAlarmLevel _assessDifferentialPressureAlarm(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  if (_shouldBlockOperationalData(unit)) {
+    return _EnvironmentAlarmLevel.pending;
+  }
+  final double? differentialPressure = unit.presionDiferencial;
+  if (differentialPressure == null) {
+    return _EnvironmentAlarmLevel.pending;
+  }
+  if (differentialPressure > rangeSettings.filterPressureMax) {
+    return _EnvironmentAlarmLevel.red;
+  }
+  return _EnvironmentAlarmLevel.green;
 }
 
 Color _resolveFiltrosIconColorForUnit(
@@ -7255,6 +7828,8 @@ class _ComparisonHistoryValue extends StatelessWidget {
     required this.tenantId,
     required this.siteId,
     required this.plcId,
+    required this.expanded,
+    required this.onToggle,
     this.blocked = false,
   });
 
@@ -7263,6 +7838,8 @@ class _ComparisonHistoryValue extends StatelessWidget {
   final String? tenantId;
   final String? siteId;
   final String? plcId;
+  final bool expanded;
+  final VoidCallback onToggle;
   final bool blocked;
 
   @override
@@ -7270,14 +7847,122 @@ class _ComparisonHistoryValue extends StatelessWidget {
     if (blocked) {
       return const _TextValue('-', fontWeight: FontWeight.w400);
     }
-    return TemperatureHistoryMiniChartsCard(
-      unitName: unitName,
-      lowerLimit: rangeSettings.temperatureMin,
-      upperLimit: rangeSettings.temperatureMax,
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
-      horizontalMargin: 8,
+    if (!expanded) {
+      return _CollapsedComparisonHistoryButton(onTap: onToggle);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: _ExpandedComparisonHistoryButton(onTap: onToggle),
+        ),
+        const SizedBox(height: 6),
+        TemperatureHistoryMiniChartsCard(
+          unitName: unitName,
+          lowerLimit: rangeSettings.temperatureMin,
+          upperLimit: rangeSettings.temperatureMax,
+          tenantId: tenantId,
+          siteId: siteId,
+          plcId: plcId,
+          horizontalMargin: 8,
+        ),
+      ],
+    );
+  }
+}
+
+class _CollapsedComparisonHistoryButton extends StatelessWidget {
+  const _CollapsedComparisonHistoryButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.center,
+      child: Tooltip(
+        message: 'Ver gráfico',
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: Container(
+            height: 28,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
+            decoration: BoxDecoration(
+              color: const Color(0xFF162133),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: const Color(0xFF223046)),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.show_chart_rounded,
+                  color: Color(0xFFCBD5E1),
+                  size: 15,
+                ),
+                SizedBox(width: 5),
+                Text(
+                  'Ver gráfico',
+                  style: TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    height: 1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ExpandedComparisonHistoryButton extends StatelessWidget {
+  const _ExpandedComparisonHistoryButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: 'Ocultar gráfico',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Container(
+          height: 24,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            color: const Color(0xFF162133),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: const Color(0xFF223046)),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.keyboard_arrow_up_rounded,
+                color: Color(0xFFCBD5E1),
+                size: 16,
+              ),
+              SizedBox(width: 4),
+              Text(
+                'Ocultar',
+                style: TextStyle(
+                  color: Color(0xFFCBD5E1),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  height: 1,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -7611,19 +8296,81 @@ class _FanStateValue extends StatelessWidget {
 
 Duration _fanSpinDurationForPercent(double? speedPercent) {
   if (speedPercent == null) {
-    return const Duration(milliseconds: 900);
+    return const Duration(milliseconds: 650);
   }
   final double clamped = speedPercent.clamp(0.0, 1.0);
   if (clamped <= 0.25) {
-    return const Duration(milliseconds: 1400);
+    return const Duration(milliseconds: 1500);
   }
   if (clamped <= 0.5) {
-    return const Duration(milliseconds: 900);
-  }
-  if (clamped <= 0.75) {
     return const Duration(milliseconds: 650);
   }
-  return const Duration(milliseconds: 420);
+  if (clamped < 0.75) {
+    return const Duration(milliseconds: 400);
+  }
+  return const Duration(milliseconds: 250);
+}
+
+class _FanBladeIcon extends StatelessWidget {
+  const _FanBladeIcon({required this.size, required this.color});
+
+  final double size;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: size,
+      height: size,
+      child: CustomPaint(painter: _FanBladePainter(color: color)),
+    );
+  }
+}
+
+class _FanBladePainter extends CustomPainter {
+  const _FanBladePainter({required this.color});
+
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.scale(size.width / 64, size.height / 64);
+    final Paint bladePaint = Paint()
+      ..color = color.withValues(alpha: 0.86)
+      ..style = PaintingStyle.fill;
+    final Paint hubPaint = Paint()
+      ..color = color
+      ..style = PaintingStyle.fill;
+
+    final Path blade1 = Path()
+      ..moveTo(31, 28)
+      ..cubicTo(20, 13, 27, 5, 38, 4)
+      ..cubicTo(50, 3, 55, 12, 49, 22)
+      ..cubicTo(45, 28, 38, 30, 33, 31)
+      ..close();
+    final Path blade2 = Path()
+      ..moveTo(36, 34)
+      ..cubicTo(54, 32, 59, 41, 54, 51)
+      ..cubicTo(49, 62, 37, 63, 31, 53)
+      ..cubicTo(27, 47, 29, 40, 32, 35)
+      ..close();
+    final Path blade3 = Path()
+      ..moveTo(27, 35)
+      ..cubicTo(20, 52, 9, 52, 3, 43)
+      ..cubicTo(-3, 33, 3, 23, 15, 24)
+      ..cubicTo(22, 24, 26, 30, 29, 33)
+      ..close();
+
+    canvas.drawPath(blade1, bladePaint);
+    canvas.drawPath(blade2, bladePaint);
+    canvas.drawPath(blade3, bladePaint);
+    canvas.drawCircle(const Offset(32, 32), 7, hubPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _FanBladePainter oldDelegate) {
+    return oldDelegate.color != color;
+  }
 }
 
 class FanIcon extends StatefulWidget {
@@ -7684,10 +8431,9 @@ class _FanIconState extends State<FanIcon> with SingleTickerProviderStateMixin {
     final Color color = running == null
         ? const Color(0xFF94A3B8)
         : (running ? const Color(0xFF22C55E) : const Color(0xFFEF4444));
-    final IconData iconData = running == null
-        ? Icons.remove_circle_outline
-        : Icons.cyclone_rounded;
-    final Widget icon = Icon(iconData, size: 16, color: color);
+    final Widget icon = running == null
+        ? Icon(Icons.remove_circle_outline, size: 16, color: color)
+        : _FanBladeIcon(size: 16, color: color);
 
     return AnimatedBuilder(
       animation: _controller,
@@ -7811,36 +8557,49 @@ class _EnvironmentHeaderHumidityIcon extends StatelessWidget {
     required this.visual,
     this.size = 16,
     this.colorOverride,
+    this.fullCycle = true,
   });
 
   final _HumidityHeaderVisual visual;
   final double size;
   final Color? colorOverride;
 
+  /// Humidity icons should visibly travel through the whole dry-to-humid range.
+  /// The measured band animation is still available for narrow contextual use.
+  final bool fullCycle;
+
+  double get _baseFill {
+    if (fullCycle) {
+      return 0.5;
+    }
+    return switch (visual) {
+      _HumidityHeaderVisual.high => 0.82,
+      _HumidityHeaderVisual.medium => 0.52,
+      _HumidityHeaderVisual.low => 0.2,
+      _HumidityHeaderVisual.empty => 0.08,
+    };
+  }
+
+  double get _amplitude {
+    if (fullCycle) {
+      return 0.42;
+    }
+    return switch (visual) {
+      _HumidityHeaderVisual.high => 0.12,
+      _HumidityHeaderVisual.medium => 0.16,
+      _HumidityHeaderVisual.low => 0.1,
+      _HumidityHeaderVisual.empty => 0.05,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
-    return switch (visual) {
-      _HumidityHeaderVisual.high => Icon(
-        Icons.water_drop,
-        color: colorOverride ?? const Color(0xFF38BDF8),
-        size: size,
-      ),
-      _HumidityHeaderVisual.medium => Icon(
-        Icons.opacity,
-        color: colorOverride ?? const Color(0xFF7DD3FC),
-        size: size,
-      ),
-      _HumidityHeaderVisual.low => _HumidityFillIcon(
-        fill: 0.18,
-        size: size,
-        colorOverride: colorOverride,
-      ),
-      _HumidityHeaderVisual.empty => Icon(
-        Icons.opacity,
-        color: colorOverride ?? const Color(0xFF64748B),
-        size: size,
-      ),
-    };
+    return AnimatedHumidityIcon(
+      baseFill: _baseFill,
+      amplitude: _amplitude,
+      size: size,
+      color: colorOverride,
+    );
   }
 }
 
@@ -7877,69 +8636,36 @@ class _EnvironmentHeaderExtra extends StatelessWidget {
   }
 }
 
-class _HumidityFillIcon extends StatelessWidget {
-  const _HumidityFillIcon({
-    required this.fill,
-    this.size = 22,
-    this.colorOverride,
+class _WaterConsumptionMarker extends StatelessWidget {
+  const _WaterConsumptionMarker({
+    required this.color,
+    required this.iconSize,
+    required this.scale,
   });
 
-  final double fill;
-  final double size;
-  final Color? colorOverride;
-
-  Color get _fillColor {
-    if (colorOverride != null) {
-      return colorOverride!;
-    }
-    if (fill >= 0.66) {
-      return const Color(0xFF38BDF8);
-    }
-    if (fill >= 0.33) {
-      return const Color(0xFF7DD3FC);
-    }
-    return const Color(0xFFD6C3A1);
-  }
-
-  Color get _outlineColor {
-    if (colorOverride != null) {
-      return colorOverride!;
-    }
-    if (fill >= 0.66) {
-      return const Color(0xFF38BDF8);
-    }
-    if (fill >= 0.33) {
-      return const Color(0xFF7DD3FC);
-    }
-    return const Color(0xFFD6C3A1);
-  }
+  final Color color;
+  final double iconSize;
+  final double scale;
 
   @override
   Widget build(BuildContext context) {
-    final double clampedFill = fill.clamp(0.0, 1.0);
-    return SizedBox(
-      width: size,
-      height: size,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          Icon(Icons.water_drop_outlined, color: _outlineColor, size: size),
-          Align(
-            alignment: Alignment.bottomCenter,
-            child: ClipRect(
-              child: SizedBox(
-                width: size,
-                height: size * clampedFill,
-                child: Align(
-                  alignment: Alignment.bottomCenter,
-                  heightFactor: 1,
-                  child: Icon(Icons.water_drop, color: _fillColor, size: size),
-                ),
-              ),
-            ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(
+          'Consumo',
+          maxLines: 1,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: const Color(0xFFCBD5E1),
+            fontSize: 8.5 * scale,
+            fontWeight: FontWeight.w700,
+            height: 1,
           ),
-        ],
-      ),
+        ),
+        SizedBox(height: 2 * scale),
+        Icon(Icons.water_drop_outlined, color: color, size: iconSize),
+      ],
     );
   }
 }

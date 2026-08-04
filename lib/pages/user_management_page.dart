@@ -426,11 +426,13 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
+              const _FieldLegend(),
+              const SizedBox(height: 12),
               const _SectionLabel('Tenant'),
               const SizedBox(height: 8),
               _DialogTextField(
                 controller: _tenantIdController,
-                label: 'Tenant ID',
+                label: 'Tenant ID * **',
                 hintText: 'the-gene-pig',
                 enabled: !_isSaving,
                 onChanged: (_) => setState(() {}),
@@ -439,7 +441,7 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
               const SizedBox(height: 10),
               _DialogTextField(
                 controller: _tenantNameController,
-                label: 'Nombre tenant',
+                label: 'Nombre tenant * **',
                 hintText: 'The Gene Pig',
                 enabled: !_isSaving,
               ),
@@ -448,7 +450,7 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
               const SizedBox(height: 8),
               _DialogTextField(
                 controller: _siteIdController,
-                label: 'Site ID',
+                label: 'Site ID * **',
                 hintText: 'genetica-1',
                 enabled: !_isSaving,
                 onChanged: (_) => setState(() {}),
@@ -457,7 +459,7 @@ class _CreateTenantDialogState extends State<_CreateTenantDialog> {
               const SizedBox(height: 10),
               _DialogTextField(
                 controller: _siteNameController,
-                label: 'Nombre site',
+                label: 'Nombre site *',
                 hintText: 'Genética 1',
                 enabled: !_isSaving,
               ),
@@ -633,7 +635,7 @@ class _SectorFields extends StatelessWidget {
             Expanded(
               child: _DialogTextField(
                 controller: row.idController,
-                label: 'Sector ID',
+                label: 'Sector ID * **',
                 hintText: 'sala-1',
                 enabled: enabled,
                 onChanged: (_) => onChanged(),
@@ -643,7 +645,7 @@ class _SectorFields extends StatelessWidget {
             Expanded(
               child: _DialogTextField(
                 controller: row.nameController,
-                label: 'Nombre',
+                label: 'Nombre *',
                 hintText: 'Sala 1',
                 enabled: enabled,
               ),
@@ -698,7 +700,7 @@ class _DeviceFields extends StatelessWidget {
             Expanded(
               child: _DialogTextField(
                 controller: row.idController,
-                label: 'Device ID',
+                label: 'Device ID * **',
                 hintText: 'plc-munters-1',
                 enabled: enabled,
                 onChanged: (_) => onChanged(),
@@ -708,7 +710,7 @@ class _DeviceFields extends StatelessWidget {
             Expanded(
               child: _DialogTextField(
                 controller: row.typeController,
-                label: 'Tipo',
+                label: 'Tipo *',
                 hintText: 'logo',
                 enabled: enabled,
               ),
@@ -719,7 +721,7 @@ class _DeviceFields extends StatelessWidget {
         const SizedBox(height: 8),
         _DialogTextField(
           controller: row.nameController,
-          label: 'Nombre',
+          label: 'Nombre *',
           hintText: 'PLC Munters 1',
           enabled: enabled,
         ),
@@ -1100,6 +1102,27 @@ class _UserAccessDialogState extends State<_UserAccessDialog> {
 }
 
 // ─── Small helpers ────────────────────────────────────────────────────────────
+
+/// Legend for the `*`/`**` markers appended to field labels in
+/// [_CreateTenantDialog]: `*` = required to create, `**` = cannot be
+/// changed once created (document IDs, and the tenant name which has no
+/// edit path at all today).
+class _FieldLegend extends StatelessWidget {
+  const _FieldLegend();
+
+  @override
+  Widget build(BuildContext context) {
+    const TextStyle style = TextStyle(color: Color(0xFF64748B), fontSize: 11);
+    return Wrap(
+      spacing: 14,
+      runSpacing: 4,
+      children: const <Widget>[
+        Text('* Obligatorio', style: style),
+        Text('** No se puede modificar una vez creado', style: style),
+      ],
+    );
+  }
+}
 
 class _SectionLabel extends StatelessWidget {
   const _SectionLabel(this.text);

@@ -40,11 +40,15 @@ void main() {
 
     // Column headers from the demo layout.
     for (final String header in <String>[
-      'Temperatura °C',
-      'Humedad %',
-      'Punto de rocío °C',
-      'Ventilador %',
-      'Panel evaporativo',
+      'Equipo',
+      'Temp. °C',
+      'Temp. ex °C',
+      'HR ex %',
+      'HR int %',
+      'PR °C',
+      'PD Pa',
+      'Fan %',
+      'Panel\nevaporativo',
       'Cerdos',
       'CO2 ppm',
       'Agua L/día',
@@ -52,6 +56,11 @@ void main() {
     ]) {
       expect(find.text(header), findsWidgets);
     }
+
+    expect(find.text('15°C - 32°C'), findsOneWidget);
+    expect(find.text('30% - 80%'), findsOneWidget);
+    expect(find.text('ΔPR: 1°C - 3°C'), findsOneWidget);
+    expect(find.text('Max 30 Pa'), findsOneWidget);
 
     // Color legend footer.
     expect(find.text('Verde: Óptimo'), findsOneWidget);
@@ -79,7 +88,10 @@ void main() {
     await tester.pump();
 
     expect(find.text('22.1'), findsOneWidget); // temperatureC
+    expect(find.text('18.0'), findsOneWidget); // exteriorTemperatureC
+    expect(find.text('70'), findsOneWidget); // exteriorHumidityPercent
     expect(find.text('60'), findsOneWidget); // humidityPercent
+    expect(find.text('Cerrada'), findsNothing); // closed doors are icon-only
     expect(find.text('ON'), findsOneWidget); // evaporativePanelOn
     // CO2 and Agua never have a real source today; NH3 has the field but
     // no PLC signal feeds it, so it also falls back to 'Sin datos'.

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'animated_humidity_icon.dart';
+
 class HumidityCard extends StatelessWidget {
   const HumidityCard({
     super.key,
@@ -27,7 +29,7 @@ class HumidityCard extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.water_drop_outlined, color: accent),
+                AnimatedHumidityIcon(color: accent, size: 24),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(

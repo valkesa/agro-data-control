@@ -40,6 +40,13 @@ class SiteDocument {
   bool get hasConfiguredBackend => backendUrl?.trim().isNotEmpty == true;
   bool get isLegacyOperationalSite =>
       provisioningStatus == null && active && hasConfiguredBackend;
+
+  /// Architecture switch: a Site created through the new structural flow
+  /// always has `provisioningStatus` set; a legacy Site never does. When
+  /// true, this Site's PLC cards must come exclusively from the tenant-level
+  /// `devices` collection (`AgroDevice`) — never from the legacy
+  /// `sites/{siteId}/plcs` subcollection, and vice versa for legacy Sites.
+  bool get usesDynamicDevices => provisioningStatus != null;
   bool get isOperational {
     if (!enabled) {
       return false;

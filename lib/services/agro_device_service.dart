@@ -5,6 +5,15 @@ import '../firebase/firestore_paths.dart';
 import '../models/agro_device.dart';
 import 'agro_site_service.dart';
 
+/// Display order for a site's Devices: ascending [AgroDevice.sortOrder],
+/// then [AgroDevice.name] as a stable tiebreaker for devices left at the
+/// same (e.g. default) sortOrder. Pulled out as a standalone function so it
+/// can be unit-tested without a live/faked Firestore.
+int compareAgroDevicesForDisplay(AgroDevice a, AgroDevice b) {
+  final int bySortOrder = a.sortOrder.compareTo(b.sortOrder);
+  return bySortOrder != 0 ? bySortOrder : a.name.compareTo(b.name);
+}
+
 /// Read/write access to [AgroDevice] documents at
 /// `tenants/{tenantId}/devices/{deviceId}` — a brand new collection,
 /// independent of the legacy `sites/{siteId}/plcs/{plcId}` schema.
@@ -49,8 +58,9 @@ class AgroDeviceService {
     }
   }
 
-  /// Lists Devices for a single Site with one grouped query — never reads
-  /// documents one by one.
+  /// Lists the *enabled* Devices for a single Site with one grouped query —
+  /// never reads documents one by one. Disabled Devices never reach the
+  /// caller; they don't exist for display purposes.
   Future<List<AgroDevice>> listBySite({
     required String tenantId,
     required String siteId,
@@ -68,6 +78,7 @@ class AgroDeviceService {
           .instance
           .collection(path)
           .where('siteId', isEqualTo: siteId)
+          .where('enabled', isEqualTo: true)
           .get();
       final List<AgroDevice> devices = _sortedFromSnapshot(snap, tenantId);
       _listCache[cacheKey] = _CacheEntry<List<AgroDevice>>(
@@ -219,7 +230,7 @@ class AgroDeviceService {
           ),
         )
         .toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+      ..sort(compareAgroDevicesForDisplay);
   }
 
   void _clearCache(String tenantId) {

@@ -31,6 +31,11 @@ import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
+import 'models/agro_device.dart';
+import 'models/agro_device_room.dart';
+import 'models/device_dashboard_entry.dart';
+import 'services/agro_device_room_service.dart';
+import 'services/agro_device_service.dart';
 import 'services/control_dashboard_config_service.dart';
 import 'services/alert_settings_cache_sync_service.dart';
 import 'services/door_openings_repository.dart';
@@ -369,15 +374,35 @@ class _AgroDataShellState extends State<AgroDataShell> {
   String? _activeTenantName;
   String? _activeBackendEndpoint;
   bool _activeSiteOperational = true;
+  // True for any Site created through the new structural flow
+  // (`provisioningStatus` set), false for legacy Sites. Drives which data
+  // source Tablero/Tabla read from — never both for the same Site.
+  bool _activeSiteUsesDynamicDevices = false;
   String? _activeSiteStatusLabel;
   String? _activeSiteNotOperationalMessage;
   String? _activeSiteNotOperationalDetail;
   List<SiteDocument> _availableSites = const <SiteDocument>[];
   List<TenantDocument> _availableTenants = const <TenantDocument>[];
   List<PlcDisplayConfig> _plcConfigs = const <PlcDisplayConfig>[];
+  // New-schema Devices for the active tenant/site — only populated when
+  // `SiteDocument.usesDynamicDevices` is true. Legacy sites (`_plcConfigs`
+  // above) never touch this. Not consumed by any view yet — Etapa 2 of the
+  // Devices dinámicos migration only loads and caches it; Etapas 4-5 wire it
+  // into Tablero/Tabla.
+  // ignore: unused_field
+  List<AgroDevice> _devices = const <AgroDevice>[];
+  // Logical Rooms per Device (see `AgroDeviceRoom`) for the active
+  // tenant/site — loaded alongside `_devices`, feeds `DeviceDashboardEntry`
+  // so one physical Device can render as N cards/rows (e.g. one PLC with
+  // several Salas).
+  Map<String, List<AgroDeviceRoom>> _roomsByDeviceId =
+      const <String, List<AgroDeviceRoom>>{};
   final SiteConfigService _siteConfigService = const SiteConfigService();
   final SitePlcConfigService _sitePlcConfigService =
       const SitePlcConfigService();
+  final AgroDeviceService _agroDeviceService = const AgroDeviceService();
+  final AgroDeviceRoomService _agroDeviceRoomService =
+      const AgroDeviceRoomService();
   final PressMagnifierController _magnifierController =
       PressMagnifierController();
   String _selectedTab = 'environmentOverview';
@@ -466,6 +491,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
   void _applySiteOperationalState(SiteDocument? site) {
     _activeSiteOperational = site?.isOperational ?? true;
+    _activeSiteUsesDynamicDevices = site?.usesDynamicDevices ?? false;
     _activeSiteStatusLabel = site?.operationalStatusLabel;
     _activeSiteNotOperationalMessage = site?.notOperationalMessage;
     _activeSiteNotOperationalDetail = site?.notOperationalDetail;
@@ -758,6 +784,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
         _availableSites = result.availableSites;
         _availableTenants = result.availableTenants;
         _plcConfigs = result.plcConfigs;
+        _devices = result.devices;
+        _roomsByDeviceId = result.roomsByDeviceId;
         _service = _buildPlcDashboardService(
           endpoint: result.siteDocument?.backendUrl,
           tenantId: result.effectiveTenantId,
@@ -891,6 +919,25 @@ class _AgroDataShellState extends State<AgroDataShell> {
           )
         : const <PlcDisplayConfig>[];
 
+    // New-schema Devices — mutually exclusive with the legacy plcConfigs
+    // above, never both for the same site.
+    final List<AgroDevice> devices = siteDoc.usesDynamicDevices
+        ? await _agroDeviceService.listBySite(
+            tenantId: tenantId,
+            siteId: resolvedSiteId,
+          )
+        : const <AgroDevice>[];
+
+    // Logical Rooms per Device — a physical Device (e.g. one PLC) may
+    // expose several Salas, each with its own snapshot unit key.
+    final Map<String, List<AgroDeviceRoom>> roomsByDeviceId =
+        siteDoc.usesDynamicDevices
+        ? await _agroDeviceRoomService.listForDevices(
+            tenantId: tenantId,
+            deviceIds: [for (final AgroDevice d in devices) d.id],
+          )
+        : const <String, List<AgroDeviceRoom>>{};
+
     // Tenant users need a membership record. Global Valke roles do not.
     if (!bypassesMembership) {
       final TenantMembershipLookupResult membership =
@@ -927,6 +974,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
         availableTenants: availableTenants,
         availableSites: availableSites,
         plcConfigs: plcConfigs,
+        devices: devices,
+        roomsByDeviceId: roomsByDeviceId,
       );
     }
 
@@ -945,6 +994,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
       availableTenants: availableTenants,
       availableSites: availableSites,
       plcConfigs: plcConfigs,
+      devices: devices,
+      roomsByDeviceId: roomsByDeviceId,
     );
   }
 
@@ -1925,6 +1976,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
     );
     final SiteDocument siteDoc =
         fetchedSiteDoc ?? _siteConfigService.fallbackSingleSite(siteId: siteId);
+    final List<AgroDevice> devices = siteDoc.usesDynamicDevices
+        ? await _agroDeviceService.listBySite(tenantId: tenantId, siteId: siteId)
+        : const <AgroDevice>[];
+    final Map<String, List<AgroDeviceRoom>> roomsByDeviceId =
+        siteDoc.usesDynamicDevices
+        ? await _agroDeviceRoomService.listForDevices(
+            tenantId: tenantId,
+            deviceIds: [for (final AgroDevice d in devices) d.id],
+          )
+        : const <String, List<AgroDeviceRoom>>{};
 
     if (!mounted) return;
     setState(() {
@@ -1936,6 +1997,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
+      _devices = devices;
+      _roomsByDeviceId = roomsByDeviceId;
       _service = _buildPlcDashboardService(
         endpoint: siteDoc.backendUrl,
         tenantId: tenantId,
@@ -1986,6 +2049,19 @@ class _AgroDataShellState extends State<AgroDataShell> {
             siteId: siteDoc.siteId,
           )
         : const <PlcDisplayConfig>[];
+    final List<AgroDevice> devices = siteDoc.usesDynamicDevices
+        ? await _agroDeviceService.listBySite(
+            tenantId: tenantId,
+            siteId: siteDoc.siteId,
+          )
+        : const <AgroDevice>[];
+    final Map<String, List<AgroDeviceRoom>> roomsByDeviceId =
+        siteDoc.usesDynamicDevices
+        ? await _agroDeviceRoomService.listForDevices(
+            tenantId: tenantId,
+            deviceIds: [for (final AgroDevice d in devices) d.id],
+          )
+        : const <String, List<AgroDeviceRoom>>{};
 
     try {
       await _userContextService.setActiveTenantAndSite(
@@ -2008,6 +2084,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _applySiteOperationalState(siteDoc);
       _availableSites = sites;
       _plcConfigs = plcConfigs;
+      _devices = devices;
+      _roomsByDeviceId = roomsByDeviceId;
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
@@ -2782,7 +2860,14 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final List<MuntersModel> units = _applyMaintenanceToUnits(
       _applyManualFanStatusToUnits(_snapshot.units),
     );
-    final MuntersModel munters1 = units.first;
+    // Guard against 0 units: always true for legacy Sites (the placeholder
+    // snapshot alone seeds 2), but a dynamic Site's real snapshot can now
+    // legitimately report 0 units (Etapa 3's parser no longer forces 2).
+    // Only crash-proofing — Detalle/ComparisonPage's own inputs are
+    // unchanged for every case that was already reachable before.
+    final MuntersModel munters1 = units.isNotEmpty
+        ? units.first
+        : const MuntersModel.placeholder(name: 'Munters 1');
     final MuntersModel munters2 = units.length > 1
         ? units[1]
         : const MuntersModel.placeholder(name: 'Munters 2');
@@ -2886,6 +2971,31 @@ class _AgroDataShellState extends State<AgroDataShell> {
                       }
 
                       if (_selectedTab == 'environmentOverview') {
+                        if (_activeSiteUsesDynamicDevices) {
+                          final List<DeviceDashboardEntry> entries =
+                              DeviceDashboardEntry.listFrom(
+                                devices: _devices,
+                                snapshot: _snapshot,
+                                roomsByDeviceId: _roomsByDeviceId,
+                              );
+                          return EnvironmentOverviewPage(
+                            units: [
+                              for (final e in entries) e.displayUnit,
+                            ],
+                            labels: [
+                              for (final e in entries) e.displayName,
+                            ],
+                            plcIds: [for (final _ in entries) null],
+                            deviceNames: [
+                              for (final e in entries) e.device.name,
+                            ],
+                            tenantId: _historyTenantId,
+                            siteId: _historySiteId,
+                            rangeSettings: _rangeSettings,
+                            showSnapshotPulse: _showSnapshotPulse,
+                            snapshotStale: _snapshotStale,
+                          );
+                        }
                         final List<MuntersModel> visibleUnits = <MuntersModel>[
                           if (_unitVisibilitySettings.showMunters1) munters1,
                           if (_unitVisibilitySettings.showMunters2) munters2,
@@ -2923,6 +3033,29 @@ class _AgroDataShellState extends State<AgroDataShell> {
                       }
 
                       if (_selectedTab == 'tableView') {
+                        if (_activeSiteUsesDynamicDevices) {
+                          final List<DeviceDashboardEntry> entries =
+                              DeviceDashboardEntry.listFrom(
+                                devices: _devices,
+                                snapshot: _snapshot,
+                                roomsByDeviceId: _roomsByDeviceId,
+                              );
+                          return EnvironmentTablePage(
+                            units: [
+                              for (final e in entries) e.displayUnit,
+                            ],
+                            labels: [
+                              for (final e in entries) e.displayName,
+                            ],
+                            plcIds: [for (final _ in entries) null],
+                            deviceNames: [
+                              for (final e in entries) e.device.name,
+                            ],
+                            tenantId: _historyTenantId,
+                            siteId: _historySiteId,
+                            rangeSettings: _rangeSettings,
+                          );
+                        }
                         final List<MuntersModel> visibleUnits = <MuntersModel>[
                           if (_unitVisibilitySettings.showMunters1) munters1,
                           if (_unitVisibilitySettings.showMunters2) munters2,
@@ -3557,6 +3690,8 @@ class _DashboardBootstrapResult {
     this.availableTenants = const <TenantDocument>[],
     this.availableSites = const <SiteDocument>[],
     this.plcConfigs = const <PlcDisplayConfig>[],
+    this.devices = const <AgroDevice>[],
+    this.roomsByDeviceId = const <String, List<AgroDeviceRoom>>{},
   });
 
   final UserContextResult userContext;
@@ -3571,6 +3706,14 @@ class _DashboardBootstrapResult {
   final List<TenantDocument> availableTenants;
   final List<SiteDocument> availableSites;
   final List<PlcDisplayConfig> plcConfigs;
+  // New-schema Devices for `siteId`, only populated when the site uses the
+  // dynamic-Devices architecture (`SiteDocument.usesDynamicDevices`).
+  final List<AgroDevice> devices;
+  // Logical Rooms per Device (`AgroDevice.id` -> its enabled Rooms), only
+  // populated alongside `devices`. Empty for a Device with no Room
+  // documents — `DeviceDashboardEntry.listFrom` treats that as "1 implicit
+  // Room = the Device itself".
+  final Map<String, List<AgroDeviceRoom>> roomsByDeviceId;
 
   String? get effectiveTenantId =>
       resolvedTenantId ?? userContext.activeTenantId;

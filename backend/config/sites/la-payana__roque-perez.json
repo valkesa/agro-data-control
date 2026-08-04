@@ -1,0 +1,31 @@
+{
+  "backendName": "la-payana-roque-perez",
+  "clientName": "La Payana",
+  "siteName": "Roque Perez",
+  "plcHost": "192.0.2.1",
+  "plcPort": 502,
+  "unitId": 1,
+  "pollingIntervalMs": 10000,
+  "timeoutMs": 1500,
+  "httpHost": "0.0.0.0",
+  "httpPort": 8082,
+  "_note": "plcHost/plcPort are placeholders (192.0.2.1 = RFC 5737 TEST-NET-1, never routable) — the physical PLC Maternidad is not wired yet. Update both before deploying this backend. httpPort 8082 is the next free port (8080 = prod the-gene-pig, 8081 = candidate.json, reserved).",
+  "temperatureHistories": [
+    {
+      "enabled": false,
+      "tenantId": "la-payana",
+      "siteId": "roque-perez",
+      "plcId": "plc-maternidad"
+    }
+  ],
+  "units": {
+    "plc-maternidad__sala-1": { "name": "Sala 1", "signals": {} },
+    "plc-maternidad__sala-2": { "name": "Sala 2", "signals": {} },
+    "plc-maternidad__sala-3": { "name": "Sala 3", "signals": {} },
+    "plc-maternidad__sala-4": { "name": "Sala 4", "signals": {} },
+    "plc-maternidad__sala-5": { "name": "Sala 5", "signals": {} },
+    "plc-maternidad__sala-6": { "name": "Sala 6", "signals": {} },
+    "plc-maternidad__sala-7": { "name": "Sala 7", "signals": {} },
+    "plc-maternidad__sala-8": { "name": "Sala 8", "signals": {} }
+  }
+}

@@ -18,6 +18,17 @@ class DashboardSnapshot {
   final DateTime? startedAt;
   final String? clientName;
 
+  /// [units] keyed by [MuntersModel.historyPlcId] (the backend snapshot's
+  /// unit key, e.g. `munters1`, or an `AgroDevice.snapshotUnitKey` for
+  /// dynamic-schema devices) — for O(1) lookup when joining against a
+  /// Device list (see `AgroDevice.effectiveSnapshotUnitKey`). Computed, not
+  /// stored, so it can never drift out of sync with [units]. Entries whose
+  /// `historyPlcId` is null (e.g. placeholder units) are skipped.
+  Map<String, MuntersModel> get unitsByKey => <String, MuntersModel>{
+    for (final MuntersModel unit in units)
+      if (unit.historyPlcId != null) unit.historyPlcId!: unit,
+  };
+
   String? get lastUpdateLabel {
     final DateTime? timestamp = lastUpdatedAt;
     if (timestamp == null) {

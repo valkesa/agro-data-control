@@ -1,35 +1,20 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
-/// Known device `type` values, kept as plain strings (NOT a closed enum) so
-/// new device types can be added later without a code change. These
-/// constants exist purely for typo-safety when writing code against this
-/// model — [AgroDevice.type] accepts any normalized string.
-abstract class AgroDeviceType {
-  static const String s7 = 's7';
-  static const String logo = 'logo';
-  static const String modbusGateway = 'modbus_gateway';
-  static const String iotSensor = 'iot_sensor';
-  static const String other = 'other';
-}
-
-/// Device: a physical automation/acquisition/control device (Siemens S7,
-/// PLC LOGO!, Modbus gateway, IoT sensor, etc). Always belongs to exactly
-/// one Site. A Device may handle variables from multiple Sectors, as long
-/// as every one of those Sectors belongs to the same Site as the Device
-/// (see `deviceAndSectorBelongToSameSite` in `agro_site_hierarchy_service.dart`).
+/// A logical Room exposed by a physical [AgroDevice] — e.g. one PLC wired to
+/// several Salas, each with its own Temperature/Humidity telemetry under a
+/// distinct snapshot unit key.
 ///
-/// Lives at `tenants/{tenantId}/devices/{deviceId}` — a brand new
-/// collection, sibling of `sites`/`sectors`, independent of the legacy
-/// `sites/{siteId}/plcs/{plcId}` schema used by PLC LOGO! installations.
-class AgroDevice {
-  const AgroDevice({
+/// Lives at `tenants/{tenantId}/devices/{deviceId}/rooms/{roomId}` — a
+/// subcollection of the owning Device. A Device with zero Room documents is
+/// still valid: it is treated as exposing exactly one implicit Room (itself),
+/// preserving the original 1 Device = 1 snapshot unit behavior.
+class AgroDeviceRoom {
+  const AgroDeviceRoom({
     required this.id,
     required this.tenantId,
+    required this.deviceId,
     required this.siteId,
     required this.name,
-    required this.type,
-    required this.model,
-    required this.description,
     required this.enabled,
     required this.createdAt,
     required this.updatedAt,
@@ -37,23 +22,18 @@ class AgroDevice {
     this.snapshotUnitKey,
   });
 
-  factory AgroDevice.fromFirestore(
+  factory AgroDeviceRoom.fromFirestore(
     String id, {
     required String tenantId,
+    required String deviceId,
     required Map<String, Object?> data,
   }) {
-    return AgroDevice(
+    return AgroDeviceRoom(
       id: id,
       tenantId: tenantId,
+      deviceId: deviceId,
       siteId: data['siteId'] is String ? data['siteId'] as String : '',
       name: data['name'] is String ? data['name'] as String : '',
-      type: data['type'] is String
-          ? data['type'] as String
-          : AgroDeviceType.other,
-      model: data['model'] is String ? data['model'] as String : '',
-      description: data['description'] is String
-          ? data['description'] as String
-          : '',
       enabled: data['enabled'] is bool ? data['enabled'] as bool : true,
       createdAt: _readDateTime(data['createdAt']),
       updatedAt: _readDateTime(data['updatedAt']),
@@ -66,47 +46,41 @@ class AgroDevice {
 
   final String id;
   final String tenantId;
+  final String deviceId;
   final String siteId;
   final String name;
-  final String type;
-  final String model;
-  final String description;
   final bool enabled;
   final DateTime? createdAt;
   final DateTime? updatedAt;
 
-  /// Display order among the devices of the same site — ascending. Mirrors
-  /// the naming already used by the legacy `PlcDisplayConfig.sortOrder`.
+  /// Display order among the rooms of the same device — ascending. Mirrors
+  /// [AgroDevice.sortOrder].
   final int sortOrder;
 
-  /// The key this device's telemetry is expected under in the backend
-  /// snapshot JSON (`DashboardSnapshot`'s per-unit map). Null until the
-  /// device is wired to a live backend; consumers should fall back to
-  /// [id] when null (see [effectiveSnapshotUnitKey]).
+  /// The key this room's telemetry is expected under in the backend
+  /// snapshot JSON. Null until wired to a live backend; consumers should
+  /// fall back to `'${deviceId}__$id'` when null (see
+  /// [effectiveSnapshotUnitKey]).
   final String? snapshotUnitKey;
 
   /// Convenience for joining against a live snapshot: use the explicit
-  /// [snapshotUnitKey] when set, otherwise assume it matches [id].
-  String get effectiveSnapshotUnitKey => snapshotUnitKey ?? id;
+  /// [snapshotUnitKey] when set, otherwise assume it matches
+  /// `'${deviceId}__$id'`.
+  String get effectiveSnapshotUnitKey => snapshotUnitKey ?? '${deviceId}__$id';
 
-  AgroDevice copyWith({
+  AgroDeviceRoom copyWith({
     String? name,
-    String? type,
-    String? model,
-    String? description,
     bool? enabled,
     DateTime? updatedAt,
     int? sortOrder,
     String? snapshotUnitKey,
   }) {
-    return AgroDevice(
+    return AgroDeviceRoom(
       id: id,
       tenantId: tenantId,
+      deviceId: deviceId,
       siteId: siteId,
       name: name ?? this.name,
-      type: type ?? this.type,
-      model: model ?? this.model,
-      description: description ?? this.description,
       enabled: enabled ?? this.enabled,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
@@ -119,9 +93,6 @@ class AgroDevice {
     return <String, Object?>{
       'siteId': siteId,
       'name': name,
-      'type': type,
-      'model': model,
-      'description': description,
       'enabled': enabled,
       'sortOrder': sortOrder,
       if (snapshotUnitKey != null) 'snapshotUnitKey': snapshotUnitKey,
@@ -133,9 +104,6 @@ class AgroDevice {
   Map<String, Object?> toUpdatePayload() {
     return <String, Object?>{
       'name': name,
-      'type': type,
-      'model': model,
-      'description': description,
       'enabled': enabled,
       'sortOrder': sortOrder,
       if (snapshotUnitKey != null) 'snapshotUnitKey': snapshotUnitKey,
@@ -145,14 +113,12 @@ class AgroDevice {
 
   @override
   bool operator ==(Object other) {
-    return other is AgroDevice &&
+    return other is AgroDeviceRoom &&
         other.id == id &&
         other.tenantId == tenantId &&
+        other.deviceId == deviceId &&
         other.siteId == siteId &&
         other.name == name &&
-        other.type == type &&
-        other.model == model &&
-        other.description == description &&
         other.enabled == enabled &&
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt &&
@@ -164,11 +130,9 @@ class AgroDevice {
   int get hashCode => Object.hash(
     id,
     tenantId,
+    deviceId,
     siteId,
     name,
-    type,
-    model,
-    description,
     enabled,
     createdAt,
     updatedAt,

@@ -730,7 +730,7 @@ service cloud.firestore {
 
         allow create: if isOwner()
           && request.resource.data.keys()
-              .hasOnly(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt'])
+              .hasOnly(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt', 'sortOrder', 'snapshotUnitKey'])
           && request.resource.data.keys()
               .hasAll(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt'])
           && request.resource.data.siteId is string
@@ -744,11 +744,22 @@ service cloud.firestore {
           && request.resource.data.description is string
           && request.resource.data.enabled is bool
           && request.resource.data.createdAt is timestamp
-          && request.resource.data.updatedAt is timestamp;
+          && request.resource.data.updatedAt is timestamp
+          && (
+            !('sortOrder' in request.resource.data)
+            || request.resource.data.sortOrder is int
+          )
+          && (
+            !('snapshotUnitKey' in request.resource.data)
+            || (
+              request.resource.data.snapshotUnitKey is string
+              && request.resource.data.snapshotUnitKey.size() > 0
+            )
+          );
 
         allow update: if isOwner()
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['name', 'type', 'model', 'description', 'enabled', 'updatedAt'])
+              .hasOnly(['name', 'type', 'model', 'description', 'enabled', 'updatedAt', 'sortOrder', 'snapshotUnitKey'])
           && request.resource.data.siteId == resource.data.siteId
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
@@ -771,9 +782,77 @@ service cloud.firestore {
           && (
             !('updatedAt' in request.resource.data)
             || request.resource.data.updatedAt is timestamp
+          )
+          && (
+            !('sortOrder' in request.resource.data)
+            || request.resource.data.sortOrder is int
+          )
+          && (
+            !('snapshotUnitKey' in request.resource.data)
+            || (
+              request.resource.data.snapshotUnitKey is string
+              && request.resource.data.snapshotUnitKey.size() > 0
+            )
           );
 
         allow delete: if false;
+
+        match /rooms/{roomId} {
+          allow read: if canReadTenant(tenantId);
+
+          allow create: if isOwner()
+            && request.resource.data.keys()
+                .hasOnly(['siteId', 'name', 'enabled', 'sortOrder', 'snapshotUnitKey', 'createdAt', 'updatedAt'])
+            && request.resource.data.keys()
+                .hasAll(['siteId', 'name', 'enabled', 'createdAt', 'updatedAt'])
+            && existsAfter(/databases/$(database)/documents/tenants/$(tenantId)/devices/$(deviceId))
+            && request.resource.data.siteId is string
+            && request.resource.data.siteId.size() > 0
+            && request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+            && request.resource.data.enabled is bool
+            && request.resource.data.createdAt is timestamp
+            && request.resource.data.updatedAt is timestamp
+            && (
+              !('sortOrder' in request.resource.data)
+              || request.resource.data.sortOrder is int
+            )
+            && (
+              !('snapshotUnitKey' in request.resource.data)
+              || (
+                request.resource.data.snapshotUnitKey is string
+                && request.resource.data.snapshotUnitKey.size() > 0
+              )
+            );
+
+          allow update: if isOwner()
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['name', 'enabled', 'sortOrder', 'snapshotUnitKey', 'updatedAt'])
+            && request.resource.data.siteId == resource.data.siteId
+            && request.resource.data.name is string
+            && request.resource.data.name.size() > 0
+            && (
+              !('enabled' in request.resource.data)
+              || request.resource.data.enabled is bool
+            )
+            && (
+              !('updatedAt' in request.resource.data)
+              || request.resource.data.updatedAt is timestamp
+            )
+            && (
+              !('sortOrder' in request.resource.data)
+              || request.resource.data.sortOrder is int
+            )
+            && (
+              !('snapshotUnitKey' in request.resource.data)
+              || (
+                request.resource.data.snapshotUnitKey is string
+                && request.resource.data.snapshotUnitKey.size() > 0
+              )
+            );
+
+          allow delete: if false;
+        }
       }
     }
 

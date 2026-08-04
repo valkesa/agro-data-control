@@ -178,6 +178,52 @@ class PlcDashboardService {
     return headers;
   }
 
+  /// Test-only entry point into [_parseSnapshot] — there's no injectable
+  /// HTTP client on this service (it calls the top-level `http.get`
+  /// directly), so this is the only way to exercise the parsing logic
+  /// without a real network round-trip.
+  @visibleForTesting
+  DashboardSnapshot parseSnapshotForTesting(Map<String, dynamic> decoded) =>
+      _parseSnapshot(decoded);
+
+  /// Top-level keys of a `/api/snapshot` response that are metadata, never
+  /// unit/device telemetry. Exhaustively enumerated by reading every
+  /// payload-construction site on the backend: `_buildSnapshotPayload` in
+  /// `backend/lib/src/snapshot_runtime.dart` (the single function every
+  /// snapshot state — success/notReady/failure — funnels through) supplies
+  /// `backendName`/`backendOnline`/`lastUpdatedAt`/`clientName`/`siteName`/
+  /// `refreshInProgress`/`status`/`doorEvents`; the HTTP handler in
+  /// `backend/bin/plc_snapshot_server.dart` additionally merges in
+  /// `presence` and (when there are any) `operationalEvents`. Every other
+  /// top-level key that holds a JSON object is a unit's telemetry — there
+  /// is no `units: {...}` wrapper in the real payload, units are spread
+  /// directly at the top level (`...unitsJson`).
+  static const Set<String> _snapshotMetadataKeys = <String>{
+    'backendName',
+    'backendOnline',
+    'lastUpdatedAt',
+    'clientName',
+    'siteName',
+    'refreshInProgress',
+    'status',
+    'doorEvents',
+    'presence',
+    'operationalEvents',
+  };
+
+  /// Display fallback when there's no Firestore-configured name for a unit
+  /// key (`_plcNames`, loaded from the legacy `plcs` config or — later —
+  /// Device metadata). Preserves the exact legacy strings for the 2 known
+  /// legacy keys so existing behavior is byte-for-byte unchanged; any other
+  /// key (new-schema Devices) falls back to the key itself.
+  String _defaultUnitName(String unitKey) {
+    return switch (unitKey) {
+      'munters1' => 'Munters 1',
+      'munters2' => 'Munters 2',
+      _ => unitKey,
+    };
+  }
+
   DashboardSnapshot _parseSnapshot(Map<String, dynamic> decoded) {
     _debugSnapshotPayload(decoded);
     final PlcRawPayload raw = PlcRawPayload(decoded);
@@ -195,6 +241,27 @@ class PlcDashboardService {
           ]),
         ) ??
         false;
+    final String? historyClientId = _sanitizeSegment(
+      _parseString(
+        raw.firstValue([
+          ['clientName'],
+          ['status', 'clientName'],
+        ]),
+      ),
+    );
+
+    // 0, 1 or N unit keys — whatever the backend actually sent. Order
+    // follows JSON insertion order (jsonDecode preserves it), which for the
+    // legacy backend is always [munters1, munters2] since that's the order
+    // `_buildSnapshotPayload` spreads `unitsJson` in.
+    final List<String> unitKeys = decoded.entries
+        .where(
+          (MapEntry<String, dynamic> entry) =>
+              !_snapshotMetadataKeys.contains(entry.key) &&
+              entry.value is Map<String, dynamic>,
+        )
+        .map((MapEntry<String, dynamic> entry) => entry.key)
+        .toList(growable: false);
 
     return DashboardSnapshot(
       backendOnline: backendOnline,
@@ -220,46 +287,19 @@ class PlcDashboardService {
       ),
       doorEvents: _parseDoorEvents(decoded),
       units: [
-        _parseUnit(
-          name: _plcNames['munters1'] ?? 'Munters 1',
-          unitKey: 'munters1',
-          historyClientId: _sanitizeSegment(
-            _parseString(
-              raw.firstValue([
-                ['clientName'],
-                ['status', 'clientName'],
-              ]),
-            ),
+        for (final String unitKey in unitKeys)
+          _parseUnit(
+            name: _plcNames[unitKey] ?? _defaultUnitName(unitKey),
+            unitKey: unitKey,
+            historyClientId: historyClientId,
+            backendOnline: backendOnline,
+            raw: raw,
+            unitCandidates: [
+              [unitKey],
+              ['units', unitKey],
+              ['data', unitKey],
+            ],
           ),
-          backendOnline: backendOnline,
-          raw: raw,
-          unitCandidates: const [
-            ['munters1'],
-            ['units', '0'],
-            ['units', 'munters1'],
-            ['data', 'munters1'],
-          ],
-        ),
-        _parseUnit(
-          name: _plcNames['munters2'] ?? 'Munters 2',
-          unitKey: 'munters2',
-          historyClientId: _sanitizeSegment(
-            _parseString(
-              raw.firstValue([
-                ['clientName'],
-                ['status', 'clientName'],
-              ]),
-            ),
-          ),
-          backendOnline: backendOnline,
-          raw: raw,
-          unitCandidates: const [
-            ['munters2'],
-            ['units', '1'],
-            ['units', 'munters2'],
-            ['data', 'munters2'],
-          ],
-        ),
       ],
     );
   }

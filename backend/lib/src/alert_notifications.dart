@@ -425,7 +425,7 @@ class WhatsAppTemplateBuilder {
     required String clientName,
     required String siteName,
   }) {
-    final String clientSitePlc = '$clientName | $siteName | ${batch.plcLabel}';
+    final String clientSitePlc = '$clientName | ${batch.plcLabel}';
     final List<String> alertTexts = batch.alerts
         .map(formatter.format)
         .toList(growable: false);
