@@ -22,30 +22,33 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('0 unidades', () {
-    test('un payload con solo metadata no produce ninguna unidad, sin excepcion', () {
-      const PlcDashboardService service = PlcDashboardService();
-      final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
-        <String, dynamic>{
-          'backendName': 'agrodata-vps',
-          'backendOnline': true,
-          'lastUpdatedAt': '2026-08-04T12:00:00Z',
-          'clientName': 'The Gene Pig',
-          'siteName': 'Genetica 1',
-          'refreshInProgress': false,
-          'status': <String, dynamic>{'backendOnline': true},
-          'doorEvents': <String, dynamic>{},
-          'presence': <String, dynamic>{'count': 1},
-          'operationalEvents': <dynamic>[
-            <String, dynamic>{'type': 'door_opened'},
-          ],
-        },
-      );
+    test(
+      'un payload con solo metadata no produce ninguna unidad, sin excepcion',
+      () {
+        const PlcDashboardService service = PlcDashboardService();
+        final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
+          <String, dynamic>{
+            'backendName': 'agrodata-vps',
+            'backendOnline': true,
+            'lastUpdatedAt': '2026-08-04T12:00:00Z',
+            'clientName': 'The Gene Pig',
+            'siteName': 'Genetica 1',
+            'refreshInProgress': false,
+            'status': <String, dynamic>{'backendOnline': true},
+            'doorEvents': <String, dynamic>{},
+            'presence': <String, dynamic>{'count': 1},
+            'operationalEvents': <dynamic>[
+              <String, dynamic>{'type': 'door_opened'},
+            ],
+          },
+        );
 
-      expect(snapshot.units, isEmpty);
-      expect(snapshot.unitsByKey, isEmpty);
-      expect(snapshot.backendOnline, isTrue);
-      expect(snapshot.clientName, 'The Gene Pig');
-    });
+        expect(snapshot.units, isEmpty);
+        expect(snapshot.unitsByKey, isEmpty);
+        expect(snapshot.backendOnline, isTrue);
+        expect(snapshot.clientName, 'The Gene Pig');
+      },
+    );
   });
 
   group('1 unidad', () {
@@ -84,9 +87,7 @@ void main() {
 
     test('plcNames sobreescribe el nombre por defecto', () {
       const PlcDashboardService service = PlcDashboardService(
-        plcNames: <String, String>{
-          'plc-maternidad-cerdos': 'PLC Maternidad',
-        },
+        plcNames: <String, String>{'plc-maternidad-cerdos': 'PLC Maternidad'},
       );
       final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
         <String, dynamic>{
@@ -114,10 +115,11 @@ void main() {
       );
 
       expect(snapshot.units, hasLength(3));
-      expect(
-        snapshot.units.map((u) => u.historyPlcId).toList(),
-        <String>['munters1', 'plc-maternidad-cerdos', 's7-gestacion'],
-      );
+      expect(snapshot.units.map((u) => u.historyPlcId).toList(), <String>[
+        'munters1',
+        'plc-maternidad-cerdos',
+        's7-gestacion',
+      ]);
       expect(snapshot.unitsByKey.keys.toSet(), <String>{
         'munters1',
         'plc-maternidad-cerdos',
@@ -181,18 +183,21 @@ void main() {
       };
     }
 
-    test('produce exactamente 2 unidades, munters1 y munters2, en ese orden', () {
-      const PlcDashboardService service = PlcDashboardService();
-      final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
-        realBackendShapedPayload(),
-      );
+    test(
+      'produce exactamente 2 unidades, munters1 y munters2, en ese orden',
+      () {
+        const PlcDashboardService service = PlcDashboardService();
+        final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
+          realBackendShapedPayload(),
+        );
 
-      expect(snapshot.units, hasLength(2));
-      expect(
-        snapshot.units.map((u) => u.historyPlcId).toList(),
-        <String>['munters1', 'munters2'],
-      );
-    });
+        expect(snapshot.units, hasLength(2));
+        expect(snapshot.units.map((u) => u.historyPlcId).toList(), <String>[
+          'munters1',
+          'munters2',
+        ]);
+      },
+    );
 
     test('nombres caen al fallback literal legacy cuando no hay plcNames', () {
       const PlcDashboardService service = PlcDashboardService();
@@ -240,32 +245,44 @@ void main() {
       expect(munters2.alarmaGeneral, isTrue);
     });
 
-    test('status/doorEvents/presence/operationalEvents nunca se confunden con unidades', () {
-      const PlcDashboardService service = PlcDashboardService();
-      final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
-        realBackendShapedPayload(),
-      );
+    test(
+      'status/doorEvents/presence/operationalEvents nunca se confunden con unidades',
+      () {
+        const PlcDashboardService service = PlcDashboardService();
+        final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
+          realBackendShapedPayload(),
+        );
 
-      final Set<String?> historyPlcIds = snapshot.units
-          .map((u) => u.historyPlcId)
-          .toSet();
-      expect(historyPlcIds, <String>{'munters1', 'munters2'});
-      expect(historyPlcIds, isNot(contains('status')));
-      expect(historyPlcIds, isNot(contains('doorEvents')));
-      expect(historyPlcIds, isNot(contains('presence')));
-      expect(historyPlcIds, isNot(contains('operationalEvents')));
-    });
+        final Set<String?> historyPlcIds = snapshot.units
+            .map((u) => u.historyPlcId)
+            .toSet();
+        expect(historyPlcIds, <String>{'munters1', 'munters2'});
+        expect(historyPlcIds, isNot(contains('status')));
+        expect(historyPlcIds, isNot(contains('doorEvents')));
+        expect(historyPlcIds, isNot(contains('presence')));
+        expect(historyPlcIds, isNot(contains('operationalEvents')));
+      },
+    );
 
-    test('metadata de nivel superior (clientName/backendOnline/startedAt) se parsea igual', () {
-      const PlcDashboardService service = PlcDashboardService();
-      final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
-        realBackendShapedPayload(),
-      );
+    test(
+      'metadata de nivel superior (clientName/backendOnline/startedAt) se parsea igual',
+      () {
+        const PlcDashboardService service = PlcDashboardService();
+        final DashboardSnapshot snapshot = service.parseSnapshotForTesting(
+          realBackendShapedPayload(),
+        );
 
-      expect(snapshot.clientName, 'The Gene Pig');
-      expect(snapshot.backendOnline, isTrue);
-      expect(snapshot.startedAt, DateTime.parse('2026-08-04T08:00:00Z').toLocal());
-      expect(snapshot.lastUpdatedAt, DateTime.parse('2026-08-04T12:00:00Z').toLocal());
-    });
+        expect(snapshot.clientName, 'The Gene Pig');
+        expect(snapshot.backendOnline, isTrue);
+        expect(
+          snapshot.startedAt,
+          DateTime.parse('2026-08-04T08:00:00Z').toLocal(),
+        );
+        expect(
+          snapshot.lastUpdatedAt,
+          DateTime.parse('2026-08-04T12:00:00Z').toLocal(),
+        );
+      },
+    );
   });
 }

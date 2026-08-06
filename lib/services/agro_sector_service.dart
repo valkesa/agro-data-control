@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import '../firebase/firestore_paths.dart';
 import '../models/agro_sector.dart';
 import 'agro_site_service.dart';
+import 'structural_id_helpers.dart';
 
 /// Read/write access to [AgroSector] documents at
 /// `tenants/{tenantId}/sectors/{sectorId}` — a brand new collection,
@@ -21,6 +22,9 @@ class AgroSectorService {
   static final Map<String, _CacheEntry<List<AgroSector>>> _listCache =
       <String, _CacheEntry<List<AgroSector>>>{};
 
+  /// Same rethrow-instead-of-swallow reasoning as
+  /// `AgroSiteService.listByTenant` — this method has exactly one caller
+  /// today (`TenantManagementPage`), never the live dashboard.
   Future<List<AgroSector>> listByTenant(String tenantId) async {
     final String cacheKey = 'tenant|$tenantId';
     final _CacheEntry<List<AgroSector>>? cached = _listCache[cacheKey];
@@ -43,9 +47,9 @@ class AgroSectorService {
       return sectors;
     } catch (error) {
       debugPrint(
-        '[AgroSector] listByTenant error path=$path error=$error — returning empty list',
+        '[AgroSector] listByTenant error path=$path error=$error — rethrowing for the admin UI to surface',
       );
-      return const <AgroSector>[];
+      rethrow;
     }
   }
 
@@ -110,10 +114,13 @@ class AgroSectorService {
     }
   }
 
-  /// Creates a new Sector. `siteId` must reference a Site in this SAME
+  /// Creates a new Sector — the "addSectorToSite" operation for future
+  /// provisioning flows. `siteId` must reference a Site in this SAME
   /// tenant. Firestore Rules validate that relation with `existsAfter()`,
   /// so atomic provisioning may create the Site in the same transaction.
-  /// `name` must be non-empty.
+  /// `name` must be non-empty. Rejects a duplicate `sectorId` with a
+  /// specific message (see `AgroSiteService.create`'s doc comment for why
+  /// this pre-check exists alongside the rules-level protection).
   Future<void> create({
     required String tenantId,
     required String sectorId,
@@ -122,13 +129,15 @@ class AgroSectorService {
     String description = '',
     bool enabled = true,
   }) async {
-    final String trimmedSiteId = siteId.trim();
-    final String trimmedName = name.trim();
-    if (trimmedSiteId.isEmpty) {
-      throw StateError('AgroSector.siteId is required');
-    }
-    if (trimmedName.isEmpty) {
-      throw StateError('AgroSector.name is required');
+    final String trimmedSiteId = requireNonEmptyField(
+      siteId,
+      'AgroSector.siteId',
+    );
+    final String trimmedName = requireNonEmptyField(name, 'AgroSector.name');
+    final bool alreadyExists =
+        await getById(tenantId: tenantId, sectorId: sectorId) != null;
+    if (alreadyExists) {
+      throw StateError('Ya existe un sector con ese ID.');
     }
     final bool siteExistsInTenant =
         await siteService.getById(tenantId: tenantId, siteId: trimmedSiteId) !=
@@ -140,18 +149,16 @@ class AgroSectorService {
     }
 
     final String path = FirestorePaths.sectorDoc(tenantId, sectorId);
-    final Map<String, Object?> payload = AgroSector(
-      id: sectorId,
+    final Map<String, Object?> payload = buildAgroSectorCreatePayload(
       tenantId: tenantId,
+      sectorId: sectorId,
       siteId: trimmedSiteId,
       name: trimmedName,
       description: description,
       enabled: enabled,
-      createdAt: null,
-      updatedAt: null,
-    ).toCreatePayload();
+    );
     await FirebaseFirestore.instance.doc(path).set(payload);
-    _clearCache(tenantId);
+    invalidateCache(tenantId: tenantId, siteId: trimmedSiteId);
     debugPrint('[AgroSector] created path=$path name=$trimmedName');
   }
 
@@ -164,25 +171,17 @@ class AgroSectorService {
     String description = '',
     bool enabled = true,
   }) async {
-    final String trimmedName = name.trim();
-    if (trimmedName.isEmpty) {
-      throw StateError('AgroSector.name is required');
-    }
+    final String trimmedName = requireNonEmptyField(name, 'AgroSector.name');
     final String path = FirestorePaths.sectorDoc(tenantId, sectorId);
-    final Map<String, Object?> payload = AgroSector(
-      id: sectorId,
-      tenantId: tenantId,
-      siteId: '',
+    final Map<String, Object?> payload = buildAgroSectorUpdatePayload(
       name: trimmedName,
       description: description,
       enabled: enabled,
-      createdAt: null,
-      updatedAt: null,
-    ).toUpdatePayload();
+    );
     await FirebaseFirestore.instance
         .doc(path)
         .set(payload, SetOptions(merge: true));
-    _clearCache(tenantId);
+    invalidateCache(tenantId: tenantId);
     debugPrint('[AgroSector] updated path=$path name=$trimmedName');
   }
 
@@ -202,10 +201,21 @@ class AgroSectorService {
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
-  void _clearCache(String tenantId) {
-    _listCache.removeWhere(
-      (key, _) => key.contains('|$tenantId|') || key.endsWith('|$tenantId'),
-    );
+  /// Explicitly invalidates cached Sector lists for [tenantId] — and, when
+  /// [siteId] is given, narrows to just that site's cache entry (still also
+  /// clearing the tenant-wide list, since it would otherwise go stale too).
+  /// Public so administrative writes going through a different code path
+  /// (or a different `AgroSectorService` instance) can still force a fresh
+  /// read on the next `listByTenant`/`listBySite` call.
+  void invalidateCache({required String tenantId, String? siteId}) {
+    if (siteId == null) {
+      _listCache.removeWhere(
+        (key, _) => key.contains('|$tenantId|') || key.endsWith('|$tenantId'),
+      );
+      return;
+    }
+    _listCache.remove('tenant|$tenantId');
+    _listCache.remove('site|$tenantId|$siteId');
   }
 }
 
@@ -216,4 +226,45 @@ class _CacheEntry<T> {
   final DateTime expiresAt;
 
   bool get isExpired => DateTime.now().isAfter(expiresAt);
+}
+
+/// Builds the Firestore payload for creating a new Sector.
+Map<String, Object?> buildAgroSectorCreatePayload({
+  required String tenantId,
+  required String sectorId,
+  required String siteId,
+  required String name,
+  String description = '',
+  bool enabled = true,
+}) {
+  return AgroSector(
+    id: sectorId,
+    tenantId: tenantId,
+    siteId: siteId,
+    name: name,
+    description: description,
+    enabled: enabled,
+    createdAt: null,
+    updatedAt: null,
+  ).toCreatePayload();
+}
+
+/// Builds the Firestore payload for updating an existing Sector. `siteId`
+/// is intentionally not a parameter here — it's immutable after creation
+/// (matches firestore.rules) and `toUpdatePayload()` never includes it.
+Map<String, Object?> buildAgroSectorUpdatePayload({
+  required String name,
+  String description = '',
+  bool enabled = true,
+}) {
+  return AgroSector(
+    id: '',
+    tenantId: '',
+    siteId: '',
+    name: name,
+    description: description,
+    enabled: enabled,
+    createdAt: null,
+    updatedAt: null,
+  ).toUpdatePayload();
 }

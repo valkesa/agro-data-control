@@ -513,6 +513,28 @@ service cloud.firestore {
         && request.resource.data.createdAt is timestamp
         && request.resource.data.updatedAt is timestamp;
 
+      // Owner-only, name/active/updatedAt only. tenant_admin does NOT get
+      // this permission (tenant metadata edits stay owner-scoped, same as
+      // sites/sectors/devices below). tenantId itself is the document path
+      // segment (immutable by construction); createdByUid/createdByEmail/
+      // createdAt are excluded from the allowlist so `diff().affectedKeys()`
+      // rejects any attempt to change them.
+      allow update: if isOwner()
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['name', 'active', 'updatedAt'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && (
+          !('active' in request.resource.data)
+          || request.resource.data.active is bool
+        )
+        && (
+          !('updatedAt' in request.resource.data)
+          || request.resource.data.updatedAt is timestamp
+        );
+
+      allow delete: if false;
+
       match /members/{uid} {
         // A tenant_admin can read all members in their own tenant.
         allow get: if (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId))
@@ -730,7 +752,7 @@ service cloud.firestore {
 
         allow create: if isOwner()
           && request.resource.data.keys()
-              .hasOnly(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt', 'sortOrder', 'snapshotUnitKey'])
+              .hasOnly(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt', 'sortOrder', 'snapshotUnitKey', 'sectorIds'])
           && request.resource.data.keys()
               .hasAll(['siteId', 'name', 'type', 'model', 'description', 'enabled', 'createdAt', 'updatedAt'])
           && request.resource.data.siteId is string
@@ -755,11 +777,15 @@ service cloud.firestore {
               request.resource.data.snapshotUnitKey is string
               && request.resource.data.snapshotUnitKey.size() > 0
             )
+          )
+          && (
+            !('sectorIds' in request.resource.data)
+            || request.resource.data.sectorIds is list
           );
 
         allow update: if isOwner()
           && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['name', 'type', 'model', 'description', 'enabled', 'updatedAt', 'sortOrder', 'snapshotUnitKey'])
+              .hasOnly(['name', 'type', 'model', 'description', 'enabled', 'updatedAt', 'sortOrder', 'snapshotUnitKey', 'sectorIds'])
           && request.resource.data.siteId == resource.data.siteId
           && request.resource.data.name is string
           && request.resource.data.name.size() > 0
@@ -786,6 +812,10 @@ service cloud.firestore {
           && (
             !('sortOrder' in request.resource.data)
             || request.resource.data.sortOrder is int
+          )
+          && (
+            !('sectorIds' in request.resource.data)
+            || request.resource.data.sectorIds is list
           )
           && (
             !('snapshotUnitKey' in request.resource.data)

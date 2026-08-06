@@ -3,10 +3,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 
 import '../firebase/firestore_paths.dart';
-import '../models/agro_device.dart';
-import '../models/agro_sector.dart';
-import '../models/agro_site.dart';
+import 'agro_device_service.dart';
+import 'agro_sector_service.dart';
+import 'agro_site_service.dart';
+import 'agro_tenant_service.dart';
 import 'custom_claims_sync_service.dart';
+import 'structural_id_helpers.dart';
 
 class UserAppRole {
   const UserAppRole._();
@@ -93,7 +95,7 @@ class SectorCreateInput {
 
   SectorCreateInput normalized() {
     return SectorCreateInput(
-      sectorId: _normalizeDocumentId(sectorId),
+      sectorId: normalizeStructuralId(sectorId),
       name: name.trim(),
       description: description.trim(),
       enabled: enabled,
@@ -120,9 +122,9 @@ class DeviceCreateInput {
 
   DeviceCreateInput normalized() {
     return DeviceCreateInput(
-      deviceId: _normalizeDocumentId(deviceId),
+      deviceId: normalizeStructuralId(deviceId),
       name: name.trim(),
-      type: _normalizeDocumentId(type),
+      type: normalizeStructuralId(type),
       model: model.trim(),
       description: description.trim(),
       enabled: enabled,
@@ -154,9 +156,27 @@ class UserManagementService {
   const UserManagementService({
     CustomClaimsSyncService customClaimsSyncService =
         const CustomClaimsSyncService(),
-  }) : _customClaimsSyncService = customClaimsSyncService;
+    AgroTenantService tenantService = const AgroTenantService(),
+    AgroSiteService siteService = const AgroSiteService(),
+    AgroSectorService sectorService = const AgroSectorService(),
+    AgroDeviceService deviceService = const AgroDeviceService(),
+  }) : _customClaimsSyncService = customClaimsSyncService,
+       _tenantService = tenantService,
+       _siteService = siteService,
+       _sectorService = sectorService,
+       _deviceService = deviceService;
 
   final CustomClaimsSyncService _customClaimsSyncService;
+  // Only used here to invalidate their caches after createTenant's
+  // transaction commits — the transaction itself writes via raw
+  // `transaction.set(...)` calls (a real Firestore transaction can't be
+  // composed from these services' own async create() methods), but the
+  // PAYLOADS are built by the same `build*CreatePayload` helpers these
+  // services use, so there is exactly one payload shape per entity, not two.
+  final AgroTenantService _tenantService;
+  final AgroSiteService _siteService;
+  final AgroSectorService _sectorService;
+  final AgroDeviceService _deviceService;
 
   Future<List<UserProfile>> listAllUsers() async {
     debugPrint('[UserManagement] listing all users');
@@ -245,10 +265,22 @@ class UserManagementService {
     required List<SectorCreateInput> sectors,
     required List<DeviceCreateInput> devices,
   }) async {
-    final String cleanTenantId = _normalizeDocumentId(tenantId);
-    final String cleanTenantName = tenantName.trim();
-    final String cleanSiteId = _normalizeDocumentId(siteId);
-    final String cleanSiteName = siteName.trim();
+    final String cleanTenantId = requireNonEmptyField(
+      normalizeStructuralId(tenantId),
+      'El tenantId',
+    );
+    final String cleanTenantName = requireNonEmptyField(
+      tenantName,
+      'El nombre del tenant',
+    );
+    final String cleanSiteId = requireNonEmptyField(
+      normalizeStructuralId(siteId),
+      'El siteId',
+    );
+    final String cleanSiteName = requireNonEmptyField(
+      siteName,
+      'El nombre del site',
+    );
     final String cleanSiteDescription = siteDescription.trim();
     final List<SectorCreateInput> cleanSectors = sectors
         .map((SectorCreateInput sector) => sector.normalized())
@@ -259,18 +291,6 @@ class UserManagementService {
         .where((DeviceCreateInput device) => device.deviceId.isNotEmpty)
         .toList(growable: false);
 
-    if (cleanTenantId.isEmpty) {
-      throw StateError('El tenantId es requerido.');
-    }
-    if (cleanTenantName.isEmpty) {
-      throw StateError('El nombre del tenant es requerido.');
-    }
-    if (cleanSiteId.isEmpty) {
-      throw StateError('El siteId es requerido.');
-    }
-    if (cleanSiteName.isEmpty) {
-      throw StateError('El nombre del site es requerido.');
-    }
     if (cleanSectors.isEmpty) {
       throw StateError('Configurá al menos un sector.');
     }
@@ -286,18 +306,14 @@ class UserManagementService {
     if (cleanDevices.any((DeviceCreateInput device) => device.type.isEmpty)) {
       throw StateError('Todos los devices deben tener tipo.');
     }
-    final Set<String> sectorIds = cleanSectors
-        .map((SectorCreateInput sector) => sector.sectorId)
-        .toSet();
-    if (sectorIds.length != cleanSectors.length) {
-      throw StateError('Los Sector ID no pueden repetirse.');
-    }
-    final Set<String> deviceIds = cleanDevices
-        .map((DeviceCreateInput device) => device.deviceId)
-        .toSet();
-    if (deviceIds.length != cleanDevices.length) {
-      throw StateError('Los Device ID no pueden repetirse.');
-    }
+    requireUniqueNormalizedIds(
+      cleanSectors.map((SectorCreateInput sector) => sector.sectorId).toList(),
+      'Los Sector ID',
+    );
+    requireUniqueNormalizedIds(
+      cleanDevices.map((DeviceCreateInput device) => device.deviceId).toList(),
+      'Los Device ID',
+    );
     final User? currentUser = FirebaseAuth.instance.currentUser;
     final String? createdByUid = currentUser?.uid.trim();
     if (createdByUid == null || createdByUid.isEmpty) {
@@ -359,63 +375,70 @@ class UserManagementService {
         }
       }
 
-      transaction.set(tenantRef, <String, Object?>{
-        'name': cleanTenantName,
-        'active': true,
-        'createdByUid': createdByUid,
-        if (createdByEmail != null && createdByEmail.isNotEmpty)
-          'createdByEmail': createdByEmail,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
+      transaction.set(
+        tenantRef,
+        buildAgroTenantCreatePayload(
+          name: cleanTenantName,
+          createdByUid: createdByUid,
+          createdByEmail: createdByEmail,
+        ),
+      );
       transaction.set(
         siteRef,
-        AgroSite(
-          id: cleanSiteId,
+        buildAgroSiteCreatePayload(
           tenantId: cleanTenantId,
+          siteId: cleanSiteId,
           name: cleanSiteName,
           description: cleanSiteDescription,
           enabled: true,
-          provisioningStatus: SiteProvisioningStatus.pendingBackend,
-          createdAt: null,
-          updatedAt: null,
-        ).toCreatePayload(),
+        ),
       );
 
       for (final SectorCreateInput sector in cleanSectors) {
         transaction.set(
           sectorRefs[sector.sectorId]!,
-          AgroSector(
-            id: sector.sectorId,
+          buildAgroSectorCreatePayload(
             tenantId: cleanTenantId,
+            sectorId: sector.sectorId,
             siteId: cleanSiteId,
             name: sector.name,
             description: sector.description,
             enabled: sector.enabled,
-            createdAt: null,
-            updatedAt: null,
-          ).toCreatePayload(),
+          ),
         );
       }
 
       for (final DeviceCreateInput device in cleanDevices) {
         transaction.set(
           deviceRefs[device.deviceId]!,
-          AgroDevice(
-            id: device.deviceId,
+          buildAgroDeviceCreatePayload(
             tenantId: cleanTenantId,
+            deviceId: device.deviceId,
             siteId: cleanSiteId,
             name: device.name,
             type: device.type,
             model: device.model,
             description: device.description,
             enabled: device.enabled,
-            createdAt: null,
-            updatedAt: null,
-          ).toCreatePayload(),
+          ),
         );
       }
     });
+
+    // The transaction bypasses each entity service's own create() method
+    // (a real Firestore transaction can't await inside a loop of separate
+    // service calls the way this needs to), so their TTL caches are never
+    // invalidated by the writes above on their own — do it explicitly here.
+    _tenantService.invalidateCache();
+    _siteService.invalidateCache(tenantId: cleanTenantId);
+    _sectorService.invalidateCache(
+      tenantId: cleanTenantId,
+      siteId: cleanSiteId,
+    );
+    _deviceService.invalidateCache(
+      tenantId: cleanTenantId,
+      siteId: cleanSiteId,
+    );
 
     return CreateTenantResult(
       tenantId: cleanTenantId,
@@ -673,15 +696,6 @@ class UserManagementService {
     }
     return const <String>[];
   }
-}
-
-String _normalizeDocumentId(String value) {
-  return value
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
-      .replaceAll(RegExp(r'-+'), '-')
-      .replaceAll(RegExp(r'^-|-$'), '');
 }
 
 class UserAccessUpdateResult {

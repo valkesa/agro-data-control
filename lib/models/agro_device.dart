@@ -35,6 +35,7 @@ class AgroDevice {
     required this.updatedAt,
     this.sortOrder = 0,
     this.snapshotUnitKey,
+    this.sectorIds = const <String>[],
   });
 
   factory AgroDevice.fromFirestore(
@@ -61,6 +62,9 @@ class AgroDevice {
       snapshotUnitKey: data['snapshotUnitKey'] is String
           ? data['snapshotUnitKey'] as String
           : null,
+      sectorIds: data['sectorIds'] is List
+          ? (data['sectorIds'] as List<Object?>).whereType<String>().toList()
+          : const <String>[],
     );
   }
 
@@ -89,6 +93,12 @@ class AgroDevice {
   /// [snapshotUnitKey] when set, otherwise assume it matches [id].
   String get effectiveSnapshotUnitKey => snapshotUnitKey ?? id;
 
+  /// Sectors (within the SAME Site) this Device handles variables from —
+  /// see `deviceAndSectorBelongToSameSite` in `agro_site_hierarchy_service.dart`.
+  /// Optional: a Device may legitimately have zero associated Sectors (it
+  /// covers the whole Site rather than one functional subdivision of it).
+  final List<String> sectorIds;
+
   AgroDevice copyWith({
     String? name,
     String? type,
@@ -98,6 +108,7 @@ class AgroDevice {
     DateTime? updatedAt,
     int? sortOrder,
     String? snapshotUnitKey,
+    List<String>? sectorIds,
   }) {
     return AgroDevice(
       id: id,
@@ -112,6 +123,7 @@ class AgroDevice {
       updatedAt: updatedAt ?? this.updatedAt,
       sortOrder: sortOrder ?? this.sortOrder,
       snapshotUnitKey: snapshotUnitKey ?? this.snapshotUnitKey,
+      sectorIds: sectorIds ?? this.sectorIds,
     );
   }
 
@@ -125,6 +137,7 @@ class AgroDevice {
       'enabled': enabled,
       'sortOrder': sortOrder,
       if (snapshotUnitKey != null) 'snapshotUnitKey': snapshotUnitKey,
+      'sectorIds': sectorIds,
       'createdAt': FieldValue.serverTimestamp(),
       'updatedAt': FieldValue.serverTimestamp(),
     };
@@ -139,6 +152,7 @@ class AgroDevice {
       'enabled': enabled,
       'sortOrder': sortOrder,
       if (snapshotUnitKey != null) 'snapshotUnitKey': snapshotUnitKey,
+      'sectorIds': sectorIds,
       'updatedAt': FieldValue.serverTimestamp(),
     };
   }
@@ -157,7 +171,8 @@ class AgroDevice {
         other.createdAt == createdAt &&
         other.updatedAt == updatedAt &&
         other.sortOrder == sortOrder &&
-        other.snapshotUnitKey == snapshotUnitKey;
+        other.snapshotUnitKey == snapshotUnitKey &&
+        _listEquals(other.sectorIds, sectorIds);
   }
 
   @override
@@ -174,7 +189,16 @@ class AgroDevice {
     updatedAt,
     sortOrder,
     snapshotUnitKey,
+    Object.hashAll(sectorIds),
   );
+}
+
+bool _listEquals(List<String> a, List<String> b) {
+  if (a.length != b.length) return false;
+  for (int i = 0; i < a.length; i++) {
+    if (a[i] != b[i]) return false;
+  }
+  return true;
 }
 
 DateTime? _readDateTime(Object? value) {

@@ -88,8 +88,7 @@ void _testTemplateBuilderSingleAndMultiple() {
   _expect(singleMessage.languageCode == 'es_AR', 'single language code');
   _expect(
     singleMessage.bodyParameters.length == 2 &&
-        singleMessage.bodyParameters[0] ==
-            'The Good Pig | Sala 1' &&
+        singleMessage.bodyParameters[0] == 'The Good Pig | Sala 1' &&
         singleMessage.bodyParameters[1] ==
             'Temperatura interior: 31 C (max: 30 C)',
     'single variables',
@@ -114,8 +113,7 @@ void _testTemplateBuilderSingleAndMultiple() {
   );
   _expect(multipleMessage.bodyParameters.length == 3, 'multiple variables');
   _expect(
-    multipleMessage.bodyParameters[0] ==
-        'The Good Pig | Sala 1',
+    multipleMessage.bodyParameters[0] == 'The Good Pig | Sala 1',
     'multiple context variable',
   );
   _expect(

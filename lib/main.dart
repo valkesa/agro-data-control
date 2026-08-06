@@ -29,6 +29,7 @@ import 'pages/comparison_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
+import 'pages/tenant_management_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
 import 'models/agro_device.dart';
@@ -1080,6 +1081,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
             ),
           );
           continue;
+        case _SettingsMenuAction.manageTenants:
+          // Real page navigation (Navigator.push), not another dialog —
+          // owner-only, gated the same way as the button that reaches it.
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (context) => const TenantManagementPage(),
+            ),
+          );
+          continue;
         case _SettingsMenuAction.doorOpeningsCleanup:
           await _openDoorOpeningsCleanup(bootstrap);
           continue;
@@ -1977,7 +1990,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final SiteDocument siteDoc =
         fetchedSiteDoc ?? _siteConfigService.fallbackSingleSite(siteId: siteId);
     final List<AgroDevice> devices = siteDoc.usesDynamicDevices
-        ? await _agroDeviceService.listBySite(tenantId: tenantId, siteId: siteId)
+        ? await _agroDeviceService.listBySite(
+            tenantId: tenantId,
+            siteId: siteId,
+          )
         : const <AgroDevice>[];
     final Map<String, List<AgroDeviceRoom>> roomsByDeviceId =
         siteDoc.usesDynamicDevices
@@ -2933,7 +2949,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
                         compact: true,
                       )
                     : null,
-                siteAlert: !_activeSiteOperational && _userRole == UserAppRole.owner
+                siteAlert:
+                    !_activeSiteOperational && _userRole == UserAppRole.owner
                     ? SiteAlert(
                         title:
                             _activeSiteNotOperationalMessage ??
@@ -2979,12 +2996,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           return EnvironmentOverviewPage(
-                            units: [
-                              for (final e in entries) e.displayUnit,
-                            ],
-                            labels: [
-                              for (final e in entries) e.displayName,
-                            ],
+                            units: [for (final e in entries) e.displayUnit],
+                            labels: [for (final e in entries) e.displayName],
                             plcIds: [for (final _ in entries) null],
                             deviceNames: [
                               for (final e in entries) e.device.name,
@@ -3041,12 +3054,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           return EnvironmentTablePage(
-                            units: [
-                              for (final e in entries) e.displayUnit,
-                            ],
-                            labels: [
-                              for (final e in entries) e.displayName,
-                            ],
+                            units: [for (final e in entries) e.displayUnit],
+                            labels: [for (final e in entries) e.displayName],
                             plcIds: [for (final _ in entries) null],
                             deviceNames: [
                               for (final e in entries) e.device.name,
@@ -4073,6 +4082,7 @@ enum _SettingsMenuAction {
   runtimeEventsBeta,
   whatsappTest,
   manageUsers,
+  manageTenants,
   doorOpeningsCleanup,
   rolesHelp,
   rolesCompare,
@@ -4236,9 +4246,7 @@ class _SettingsMenuDialog extends StatelessWidget {
                           ).pop(_SettingsMenuAction.runtimeEventsBeta),
                           style: FilledButton.styleFrom(
                             minimumSize: const Size(0, 42),
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
                           ),
                           child: const Text('beta Consumos Eléctricos'),
                         ),
@@ -4389,6 +4397,24 @@ class _SettingsMenuDialog extends StatelessWidget {
                           Icon(Icons.manage_accounts_rounded, size: 18),
                           SizedBox(width: 8),
                           Text('Gestión de usuarios'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.manageTenants),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.business_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Gestión de clientes'),
                         ],
                       ),
                     ),

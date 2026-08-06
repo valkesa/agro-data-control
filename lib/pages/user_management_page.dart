@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/structural_id_helpers.dart';
 import '../services/user_management_service.dart';
 
 class UserManagementPage extends StatefulWidget {
@@ -300,19 +301,19 @@ class _CreateTenantDialog extends StatefulWidget {
 class _CreateTenantDialogState extends State<_CreateTenantDialog> {
   final TextEditingController _tenantIdController = TextEditingController();
   final TextEditingController _tenantNameController = TextEditingController();
-  final TextEditingController _siteIdController = TextEditingController(
-    text: 'sitio-1',
-  );
+  final TextEditingController _siteIdController = TextEditingController();
   final TextEditingController _siteNameController = TextEditingController();
   final TextEditingController _siteDescriptionController =
       TextEditingController();
+  // Empty initial rows only — no pre-filled real values, so the form never
+  // silently creates example/placeholder entities if the admin doesn't
+  // touch these sections. Neutral ID/name hints are shown per-field
+  // instead (see _SectorFields/_DeviceFields below).
   final List<_SectorRowState> _sectors = <_SectorRowState>[
-    _SectorRowState(id: 'sala-1', name: 'Sala 1'),
-    _SectorRowState(id: 'sala-2', name: 'Sala 2'),
+    _SectorRowState(id: '', name: ''),
   ];
   final List<_DeviceRowState> _devices = <_DeviceRowState>[
-    _DeviceRowState(id: 'plc-munters-1', name: 'PLC Munters 1', type: 'logo'),
-    _DeviceRowState(id: 'plc-munters-2', name: 'PLC Munters 2', type: 'logo'),
+    _DeviceRowState(id: '', name: '', type: ''),
   ];
   bool _isSaving = false;
 
@@ -701,7 +702,7 @@ class _DeviceFields extends StatelessWidget {
               child: _DialogTextField(
                 controller: row.idController,
                 label: 'Device ID * **',
-                hintText: 'plc-munters-1',
+                hintText: 'plc-salas-1-8',
                 enabled: enabled,
                 onChanged: (_) => onChanged(),
               ),
@@ -711,7 +712,7 @@ class _DeviceFields extends StatelessWidget {
               child: _DialogTextField(
                 controller: row.typeController,
                 label: 'Tipo *',
-                hintText: 'logo',
+                hintText: 'ej: sensor_gateway',
                 enabled: enabled,
               ),
             ),
@@ -722,7 +723,7 @@ class _DeviceFields extends StatelessWidget {
         _DialogTextField(
           controller: row.nameController,
           label: 'Nombre *',
-          hintText: 'PLC Munters 1',
+          hintText: 'PLC Salas 1 a 8',
           enabled: enabled,
         ),
         const SizedBox(height: 8),
@@ -865,7 +866,7 @@ class _NormalizedIdPreview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String normalized = _normalizePreviewId(value);
+    final String normalized = normalizeStructuralId(value);
     if (value.trim().isEmpty || normalized == value.trim()) {
       return const SizedBox(height: 4);
     }
@@ -877,15 +878,6 @@ class _NormalizedIdPreview extends StatelessWidget {
       ),
     );
   }
-}
-
-String _normalizePreviewId(String raw) {
-  return raw
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[^a-z0-9_-]+'), '-')
-      .replaceAll(RegExp(r'-+'), '-')
-      .replaceAll(RegExp(r'^-|-$'), '');
 }
 
 // ─── Edit dialog ─────────────────────────────────────────────────────────────

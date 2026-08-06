@@ -53,9 +53,7 @@ void _testNoRoomHasRegistersConfiguredYet(PlcInstallationConfig config) {
   }
 }
 
-void _testTemperatureHistoriesExplicitlyDisabled(
-  PlcInstallationConfig config,
-) {
+void _testTemperatureHistoriesExplicitlyDisabled(PlcInstallationConfig config) {
   _expect(
     config.temperatureHistories.length == 1,
     'exactly one temperatureHistories entry',

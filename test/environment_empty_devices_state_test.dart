@@ -39,63 +39,65 @@ void main() {
       expect(find.text('Verde: Óptimo'), findsNothing);
     });
 
-    testWidgets('1 unidad sigue mostrando la tabla normalmente (no el estado vacio)', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: EnvironmentTablePage(
-              units: <MuntersModel>[
-                const MuntersModel.placeholder(name: 'PLC Maternidad'),
-              ],
-              labels: const <String>['PLC Maternidad'],
-              plcIds: const <String?>[null],
-              tenantId: 'la-payana',
-              siteId: 'roque-perez',
-              rangeSettings: const DashboardRangeSettings.defaults(),
+    testWidgets(
+      '1 unidad sigue mostrando la tabla normalmente (no el estado vacio)',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: EnvironmentTablePage(
+                units: <MuntersModel>[
+                  const MuntersModel.placeholder(name: 'PLC Maternidad'),
+                ],
+                labels: const <String>['PLC Maternidad'],
+                plcIds: const <String?>[null],
+                tenantId: 'la-payana',
+                siteId: 'roque-perez',
+                rangeSettings: const DashboardRangeSettings.defaults(),
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
+        );
+        await tester.pump();
 
-      expect(
-        find.text('No hay equipos configurados para este site.'),
-        findsNothing,
-      );
-      expect(find.text('PLC Maternidad'), findsOneWidget);
-      expect(find.text('Verde: Óptimo'), findsOneWidget);
-    });
+        expect(
+          find.text('No hay equipos configurados para este site.'),
+          findsNothing,
+        );
+        expect(find.text('PLC Maternidad'), findsOneWidget);
+        expect(find.text('Verde: Óptimo'), findsOneWidget);
+      },
+    );
   });
 
   group('EnvironmentOverviewPage', () {
-    testWidgets('0 unidades muestra el estado vacio, no una columna en blanco', (
-      WidgetTester tester,
-    ) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: EnvironmentOverviewPage(
-              units: <MuntersModel>[],
-              labels: <String>[],
-              plcIds: <String?>[],
-              tenantId: 'la-payana',
-              siteId: 'roque-perez',
-              rangeSettings: DashboardRangeSettings.defaults(),
-              showSnapshotPulse: false,
-              snapshotStale: false,
+    testWidgets(
+      '0 unidades muestra el estado vacio, no una columna en blanco',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          const MaterialApp(
+            home: Scaffold(
+              body: EnvironmentOverviewPage(
+                units: <MuntersModel>[],
+                labels: <String>[],
+                plcIds: <String?>[],
+                tenantId: 'la-payana',
+                siteId: 'roque-perez',
+                rangeSettings: DashboardRangeSettings.defaults(),
+                showSnapshotPulse: false,
+                snapshotStale: false,
+              ),
             ),
           ),
-        ),
-      );
-      await tester.pump();
+        );
+        await tester.pump();
 
-      expect(
-        find.text('No hay equipos configurados para este site.'),
-        findsOneWidget,
-      );
-    });
+        expect(
+          find.text('No hay equipos configurados para este site.'),
+          findsOneWidget,
+        );
+      },
+    );
 
     testWidgets('1 unidad muestra su card con el nombre real del Device', (
       WidgetTester tester,

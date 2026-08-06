@@ -6,7 +6,11 @@ import '../services/site_config_service.dart';
 /// to the header's email line, instead of a full banner in the page body —
 /// kept out of the way of an owner's normal workflow.
 class SiteAlert {
-  const SiteAlert({required this.title, required this.subtitle, this.statusLabel});
+  const SiteAlert({
+    required this.title,
+    required this.subtitle,
+    this.statusLabel,
+  });
 
   final String title;
   final String subtitle;
@@ -247,9 +251,7 @@ class _HeaderViewButton extends StatelessWidget {
           width: 28,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected
-                ? const Color(0xFF0EA5E9)
-                : const Color(0xFF162133),
+            color: selected ? const Color(0xFF0EA5E9) : const Color(0xFF162133),
             borderRadius: BorderRadius.circular(7),
             border: Border.all(
               color: selected

@@ -43,6 +43,7 @@ class AgroSite {
     required this.provisioningStatus,
     required this.createdAt,
     required this.updatedAt,
+    this.isLegacyStructure = false,
   });
 
   factory AgroSite.fromFirestore(
@@ -50,6 +51,17 @@ class AgroSite {
     required String tenantId,
     required Map<String, Object?> data,
   }) {
+    // `provisioningStatus` is only ever set on documents written through the
+    // new Sites/Sectors/Devices schema (see `buildAgroSiteCreatePayload`,
+    // always sets it). A site whose raw stored value is absent/invalid
+    // predates that schema — the legacy PLC LOGO! sites (`sites/{siteId}/plcs`
+    // subcollection), sharing this SAME `sites` collection. Read that BEFORE
+    // defaulting, so administration UIs can tell "legacy" apart from "new
+    // site, still pending_backend" — both would otherwise collapse to the
+    // same defaulted string.
+    final String? storedProvisioningStatus = SiteProvisioningStatus.normalize(
+      data['provisioningStatus'],
+    );
     return AgroSite(
       id: id,
       tenantId: tenantId,
@@ -59,10 +71,10 @@ class AgroSite {
           : '',
       enabled: data['enabled'] is bool ? data['enabled'] as bool : true,
       provisioningStatus:
-          SiteProvisioningStatus.normalize(data['provisioningStatus']) ??
-          SiteProvisioningStatus.pendingBackend,
+          storedProvisioningStatus ?? SiteProvisioningStatus.pendingBackend,
       createdAt: _readDateTime(data['createdAt']),
       updatedAt: _readDateTime(data['updatedAt']),
+      isLegacyStructure: storedProvisioningStatus == null,
     );
   }
 
@@ -74,6 +86,14 @@ class AgroSite {
   final String provisioningStatus;
   final DateTime? createdAt;
   final DateTime? updatedAt;
+
+  /// True when this Site document has no stored `provisioningStatus` at
+  /// all — i.e. it predates the Sites/Sectors/Devices schema and is only
+  /// reachable via the legacy `sites/{siteId}/plcs/{plcId}` subcollection.
+  /// Defaults to `false` for hand-built instances (every real caller that
+  /// constructs an `AgroSite` directly — `create`/`update` payload builders
+  /// — is always building a new-schema site).
+  final bool isLegacyStructure;
 
   AgroSite copyWith({
     String? name,
@@ -91,6 +111,7 @@ class AgroSite {
       provisioningStatus: provisioningStatus ?? this.provisioningStatus,
       createdAt: createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
+      isLegacyStructure: isLegacyStructure,
     );
   }
 
@@ -129,7 +150,8 @@ class AgroSite {
         other.enabled == enabled &&
         other.provisioningStatus == provisioningStatus &&
         other.createdAt == createdAt &&
-        other.updatedAt == updatedAt;
+        other.updatedAt == updatedAt &&
+        other.isLegacyStructure == isLegacyStructure;
   }
 
   @override
@@ -142,6 +164,7 @@ class AgroSite {
     provisioningStatus,
     createdAt,
     updatedAt,
+    isLegacyStructure,
   );
 }
 

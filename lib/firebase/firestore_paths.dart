@@ -81,6 +81,8 @@ class FirestorePaths {
 
   static String tenantsCollection() => 'tenants';
 
+  static String tenantDoc(String tenantId) => 'tenants/$tenantId';
+
   static String tenantSitesCollection(String tenantId) =>
       'tenants/$tenantId/sites';
 

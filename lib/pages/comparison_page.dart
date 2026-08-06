@@ -1090,7 +1090,10 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         if (units.isEmpty) {
-          final double emptyWidth = math.min(_maxCardWidth, constraints.maxWidth);
+          final double emptyWidth = math.min(
+            _maxCardWidth,
+            constraints.maxWidth,
+          );
           return SizedBox(
             width: emptyWidth,
             child: const _EnvironmentEmptyDevicesState(),

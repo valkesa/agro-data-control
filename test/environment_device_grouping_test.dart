@@ -34,7 +34,11 @@ void main() {
         MaterialApp(
           home: Scaffold(
             body: EnvironmentOverviewPage(
-              units: <MuntersModel>[_sala('Sala 1'), _sala('Sala 2'), _sala('Sala 3')],
+              units: <MuntersModel>[
+                _sala('Sala 1'),
+                _sala('Sala 2'),
+                _sala('Sala 3'),
+              ],
               labels: const <String>['Sala 1', 'Sala 2', 'Sala 3'],
               plcIds: const <String?>[null, null, null],
               deviceNames: const <String>['PLC A', 'PLC A', 'PLC A'],
@@ -53,8 +57,16 @@ void main() {
       final Offset p2 = tester.getTopLeft(find.text('Sala 2').first);
       final Offset p3 = tester.getTopLeft(find.text('Sala 3').first);
 
-      expect(p1.dx, p2.dx, reason: 'sala2 debe quedar debajo de sala1, misma columna');
-      expect(p2.dx, p3.dx, reason: 'sala3 debe quedar debajo de sala2, misma columna');
+      expect(
+        p1.dx,
+        p2.dx,
+        reason: 'sala2 debe quedar debajo de sala1, misma columna',
+      );
+      expect(
+        p2.dx,
+        p3.dx,
+        reason: 'sala3 debe quedar debajo de sala2, misma columna',
+      );
       expect(p2.dy, greaterThan(p1.dy));
       expect(p3.dy, greaterThan(p2.dy));
     });
@@ -74,12 +86,7 @@ void main() {
                 ],
                 labels: const <String>['Sala 1', 'Sala 2', 'Sala 3', 'Sala 4'],
                 plcIds: const <String?>[null, null, null, null],
-                deviceNames: const <String>[
-                  'PLC A',
-                  'PLC A',
-                  'PLC A',
-                  'PLC A',
-                ],
+                deviceNames: const <String>['PLC A', 'PLC A', 'PLC A', 'PLC A'],
                 tenantId: null,
                 siteId: null,
                 rangeSettings: const DashboardRangeSettings.defaults(),
