@@ -869,13 +869,42 @@ class _AgroDataShellState extends State<AgroDataShell> {
       );
     }
 
+    final List<TenantDocument> availableTenants = isOwner
+        ? await _siteConfigService.fetchActiveTenants()
+        : const <TenantDocument>[];
+
+    // A saved activeTenantId/defaultSiteId can go stale — e.g. an owner's
+    // last-selected tenant/site got disabled after they picked it (this is
+    // exactly what happened when an admin QA tenant used for testing was
+    // disabled while an owner still had it active: the dropdown's `value`
+    // no longer matched any of its `items` and Flutter's DropdownButton
+    // assertion crashed the whole dashboard boot, locking that owner out).
+    // For owners, re-validate against the just-fetched active list and
+    // fall back to the first available one — the same fallback already
+    // used above when nothing was saved at all — instead of trusting a
+    // stale id all the way into the dropdown widgets.
+    if (isOwner &&
+        !availableTenants.any((t) => t.tenantId == resolvedTenantId)) {
+      resolvedTenantId = availableTenants.isNotEmpty
+          ? availableTenants.first.tenantId
+          : null;
+    }
+
+    if (resolvedTenantId == null) {
+      return _DashboardBootstrapResult(
+        userContext: userContext,
+        membership: const TenantMembershipLookupResult.notFound(),
+        config: null,
+        siteId: resolvedSiteId ?? '',
+        resolvedTenantId: resolvedTenantId,
+        availableTenants: availableTenants,
+      );
+    }
+
     final String tenantId = resolvedTenantId;
     final TenantDocument? tenantDoc = await _siteConfigService.fetchTenant(
       tenantId: tenantId,
     );
-    final List<TenantDocument> availableTenants = isOwner
-        ? await _siteConfigService.fetchActiveTenants()
-        : const <TenantDocument>[];
 
     // Fetch site document and available sites list in parallel.
     // Owners with no allowedSiteIds see all sites for the tenant.
@@ -885,6 +914,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
           allowedSiteIds: userContext.allowedSiteIds,
           ownerBypass: isOwner,
         );
+
+    // Same staleness guard as above, for the site selector.
+    if (isOwner &&
+        resolvedSiteId != null &&
+        !availableSites.any((s) => s.siteId == resolvedSiteId)) {
+      resolvedSiteId = null;
+    }
 
     // For owners with no resolvedSiteId, default to the first available site.
     if (resolvedSiteId == null && isOwner && availableSites.isNotEmpty) {

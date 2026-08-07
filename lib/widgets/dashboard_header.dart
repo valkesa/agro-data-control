@@ -422,9 +422,22 @@ class _TenantDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // DropdownButton hard-asserts that `value` matches exactly one `item`
+    // (see the Flutter framework's own dropdown.dart) — a stale
+    // activeTenantId pointing at a tenant that isn't in availableTenants
+    // (e.g. it was disabled after being selected) would otherwise crash
+    // the whole dashboard boot. The caller already re-validates this in
+    // `_loadDashboardBootstrap`; this is a defense-in-depth backstop so a
+    // future call site can't reintroduce the same crash.
+    final bool activeTenantIsAvailable = availableTenants.any(
+      (TenantDocument t) => t.tenantId == activeTenantId,
+    );
+    final String safeValue = activeTenantIsAvailable
+        ? activeTenantId!
+        : availableTenants.first.tenantId;
     return DropdownButtonHideUnderline(
       child: DropdownButton<String>(
-        value: activeTenantId ?? availableTenants.first.tenantId,
+        value: safeValue,
         isDense: true,
         dropdownColor: const Color(0xFF1E293B),
         style: const TextStyle(
@@ -468,9 +481,16 @@ class _SiteDropdown extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Same staleness backstop as _TenantDropdown — see its doc comment.
+    final bool activeSiteIsAvailable = availableSites.any(
+      (SiteDocument s) => s.siteId == activeSiteId,
+    );
+    final String safeValue = activeSiteIsAvailable
+        ? activeSiteId!
+        : availableSites.first.siteId;
     return DropdownButtonHideUnderline(
       child: DropdownButton<String>(
-        value: activeSiteId ?? availableSites.first.siteId,
+        value: safeValue,
         isDense: true,
         dropdownColor: const Color(0xFF1E293B),
         style: const TextStyle(
