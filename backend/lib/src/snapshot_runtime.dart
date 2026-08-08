@@ -457,8 +457,26 @@ class SnapshotRuntime {
       'signalSources': _buildSignalSources(unit),
     };
     final List<String> readErrors = <String>[];
+    final List<MapEntry<String, SignalConfig>> signalEntries = unit
+        .signals
+        .entries
+        .toList(growable: false);
 
-    for (final MapEntry<String, SignalConfig> entry in unit.signals.entries) {
+    // Once a read tears down the socket (see ModbusTcpClient._runRead), every
+    // later read on this same client would fail immediately with "Socket not
+    // connected" — not a new failure, just an echo of the one that closed it.
+    // Stop instead of generating that artificial cascade; the remaining
+    // signals are reported as null, same outcome as if they had each failed.
+    bool socketUnusable = false;
+
+    for (int i = 0; i < signalEntries.length; i++) {
+      final MapEntry<String, SignalConfig> entry = signalEntries[i];
+
+      if (socketUnusable) {
+        result[entry.key] = null;
+        continue;
+      }
+
       final String blockLabel =
           '$unitKey.${entry.key}:${entry.value.area.name}@${entry.value.address}/${entry.value.wordCount}';
       result[entry.key] = await _tryReadSignal(
@@ -469,21 +487,41 @@ class SnapshotRuntime {
         blockLabel: blockLabel,
         readErrors: readErrors,
       );
+
+      if (!client.isConnected) {
+        socketUnusable = true;
+        final int remaining = signalEntries.length - i - 1;
+        if (remaining > 0) {
+          _logUnit(
+            unit.name,
+            'poll interrupted unit=$unitKey remaining=$remaining '
+            'reason=socket_unusable_after_previous_failure lastAttempted=${entry.key}',
+          );
+        }
+      }
     }
 
     Object? runStopValue;
 
     if (unit.runStopSignal != null) {
-      runStopValue = await _tryReadSignal(
-        client: client,
-        signal: unit.runStopSignal!,
-        unitName: unit.name,
-        signalName: 'runStopSignal',
-        blockLabel:
-            '$unitKey.runStopSignal:${unit.runStopSignal!.area.name}@${unit.runStopSignal!.address}/${unit.runStopSignal!.wordCount}',
-        readErrors: readErrors,
-      );
-      _logUnit(unit.name, 'runStopSignal read value=$runStopValue');
+      if (socketUnusable) {
+        _logUnit(
+          unit.name,
+          'runStopSignal skipped unit=$unitKey '
+          'reason=socket_unusable_after_previous_failure',
+        );
+      } else {
+        runStopValue = await _tryReadSignal(
+          client: client,
+          signal: unit.runStopSignal!,
+          unitName: unit.name,
+          signalName: 'runStopSignal',
+          blockLabel:
+              '$unitKey.runStopSignal:${unit.runStopSignal!.area.name}@${unit.runStopSignal!.address}/${unit.runStopSignal!.wordCount}',
+          readErrors: readErrors,
+        );
+        _logUnit(unit.name, 'runStopSignal read value=$runStopValue');
+      }
     }
 
     final _UnitDiagnostics diagnostics = _computeUnitDiagnostics(

@@ -29,6 +29,13 @@ class ModbusTcpClient {
   int _transactionId = 0;
   Uint8List _buffer = Uint8List(0);
 
+  /// False once the underlying socket has been closed (deliberately, or
+  /// because a previous read failed and tore the connection down). Callers
+  /// must not attempt further reads while this is false — the connection
+  /// would just fail immediately with "Socket not connected", which is not
+  /// a new failure, only an echo of the one that closed it.
+  bool get isConnected => _socket != null;
+
   Future<void> connect() async {
     final Stopwatch stopwatch = Stopwatch()..start();
     Socket? nextSocket;
