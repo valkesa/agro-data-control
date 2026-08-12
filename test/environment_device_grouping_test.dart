@@ -21,6 +21,7 @@
 // as before this feature existed (no group titles).
 import 'package:agro_data_control/models/dashboard_range_settings.dart';
 import 'package:agro_data_control/models/munters_model.dart';
+import 'package:agro_data_control/models/plc_unit_diagnostics.dart';
 import 'package:agro_data_control/pages/comparison_page.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -194,6 +195,31 @@ void main() {
 
       expect(find.byIcon(Icons.memory), findsNothing);
     });
+
+    testWidgets('muestra cartel con tipo de mantenimiento en la card', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[_maintenanceSala('Sala 1')],
+              labels: const <String>['Sala 1'],
+              plcIds: const <String?>[null],
+              deviceNames: const <String>['PLC A'],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Tareas de Mantenimiento: Sistemas'), findsOneWidget);
+    });
   });
 
   group('EnvironmentTablePage (Tabla)', () {
@@ -266,6 +292,29 @@ void main() {
 
       expect(find.byIcon(Icons.memory), findsNothing);
     });
+
+    testWidgets('muestra tipo de mantenimiento en la fila', (
+      WidgetTester tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentTablePage(
+              units: <MuntersModel>[_maintenanceSala('Sala 1')],
+              labels: const <String>['Sala 1'],
+              plcIds: const <String?>[null],
+              deviceNames: const <String>['PLC A'],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.text('Tareas de Mantenimiento: Sistemas'), findsOneWidget);
+    });
   });
 }
 
@@ -302,5 +351,75 @@ MuntersModel _sala(String name) {
     aperturasMunter: 0,
     cantidadApagadas: 0,
     estadoEquipo: 'RUN',
+  );
+}
+
+MuntersModel _maintenanceSala(String name) {
+  final MuntersModel sala = _sala(name);
+  return MuntersModel(
+    name: sala.name,
+    historyClientId: sala.historyClientId,
+    historyPlcId: sala.historyPlcId,
+    diagnostics: const PlcUnitDiagnostics(
+      backendAlive: true,
+      plcConnectOk: false,
+      validKeySignals: null,
+      invalidKeySignals: null,
+      totalKeySignals: null,
+      lastPollAt: null,
+      lastSuccessfulReadAt: null,
+      stateCode: PlcUnitDiagnostics.plcStateUnknown,
+      stateLabel: 'Mantenimiento Sistemas',
+      stateReason:
+          'Valores ocultos en frontend por mantenimiento seleccionado.',
+    ),
+    backendOnline: sala.backendOnline,
+    configured: sala.configured,
+    plcReachable: null,
+    plcRunning: null,
+    dataFresh: null,
+    plcOnline: null,
+    plcLatencyMs: null,
+    routerLatencyMs: null,
+    backendStartedAt: null,
+    lastUpdatedAt: null,
+    previousLastUpdatedAt: null,
+    updateDeltaSeconds: null,
+    lastHeartbeatValue: null,
+    lastHeartbeatChangeAt: null,
+    lastError: null,
+    recentRoomWashEvent: null,
+    tempInterior: null,
+    tempIngresoSala: null,
+    humInterior: null,
+    tempExterior: null,
+    humExterior: null,
+    nh3: null,
+    presionDiferencial: null,
+    tensionSalidaVentiladores: null,
+    fanQ5: null,
+    fanQ6: null,
+    fanQ7: null,
+    fanQ8: null,
+    fanQ9: null,
+    fanQ10: null,
+    bombaHumidificador: null,
+    resistencia1: null,
+    resistencia2: null,
+    alarmaGeneral: null,
+    fallaRed: null,
+    nivelAguaAlarma: null,
+    fallaTermicaBomba: null,
+    eventosSinAgua: null,
+    horasMunter: null,
+    horasFiltroF9: null,
+    horasFiltroG4: null,
+    horasPolifosfato: null,
+    salaAbierta: null,
+    aperturasSala: null,
+    munterAbierto: null,
+    aperturasMunter: null,
+    cantidadApagadas: null,
+    estadoEquipo: null,
   );
 }

@@ -372,6 +372,7 @@ class _EnvironmentTableRow {
   const _EnvironmentTableRow({
     required this.roomLabel,
     required this.plcId,
+    required this.maintenanceLabel,
     required this.statusColor,
     required this.salaDoorOpen,
     required this.muntersDoorOpen,
@@ -411,6 +412,7 @@ class _EnvironmentTableRow {
     return _EnvironmentTableRow(
       roomLabel: roomLabel,
       plcId: plcId,
+      maintenanceLabel: _maintenanceLabelForUnit(unit),
       statusColor: _resolveEnvironmentCardBorderColor(
         unit: unit,
         rangeSettings: rangeSettings,
@@ -447,6 +449,7 @@ class _EnvironmentTableRow {
 
   final String roomLabel;
   final String? plcId;
+  final String? maintenanceLabel;
   final Color statusColor;
   final bool? salaDoorOpen;
   final bool? muntersDoorOpen;
@@ -635,6 +638,16 @@ class _EnvironmentTableGrid extends StatelessWidget {
   }
 
   TableRow _dataRow(_EnvironmentTableRow row) {
+    final String? maintenanceLabel = row.maintenanceLabel;
+    if (maintenanceLabel != null) {
+      return TableRow(
+        children: <Widget>[
+          _roomCell(row, showMaintenanceChip: false),
+          _maintenanceDataOverlayCell(maintenanceLabel),
+          for (int i = 2; i < _headers.length; i++) _blankDataCell(),
+        ],
+      );
+    }
     return TableRow(
       children: <Widget>[
         _roomCell(row),
@@ -672,6 +685,32 @@ class _EnvironmentTableGrid extends StatelessWidget {
         _valueCell(row.nh3?.toStringAsFixed(0) ?? 'Sin datos'),
       ],
     );
+  }
+
+  Widget _maintenanceDataOverlayCell(String label) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: SizedBox(
+          width: 1,
+          height: 32,
+          child: OverflowBox(
+            alignment: Alignment.centerLeft,
+            minWidth: 0,
+            maxWidth: 620,
+            child: SizedBox(
+              width: 620,
+              child: _EnvironmentMaintenanceBanner(label: label, scale: 0.92),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _blankDataCell() {
+    return const SizedBox(height: 38);
   }
 
   String? _limitTextForColumn(int index) {
@@ -879,30 +918,44 @@ class _EnvironmentTableGrid extends StatelessWidget {
     );
   }
 
-  Widget _roomCell(_EnvironmentTableRow row) {
+  Widget _roomCell(
+    _EnvironmentTableRow row, {
+    bool showMaintenanceChip = true,
+  }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
       child: Center(
-        child: Row(
+        child: Column(
           mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            Container(
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: row.statusColor,
-              ),
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: row.statusColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  row.roomLabel,
+                  style: const TextStyle(
+                    color: Color(0xFFE5E7EB),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 8),
-            Text(
-              row.roomLabel,
-              style: const TextStyle(
-                color: Color(0xFFE5E7EB),
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
+            if (showMaintenanceChip &&
+                row.maintenanceLabel != null &&
+                row.maintenanceLabel!.isNotEmpty) ...[
+              const SizedBox(height: 5),
+              _EnvironmentMaintenanceChip(label: row.maintenanceLabel!),
+            ],
           ],
         ),
       ),
@@ -2818,6 +2871,7 @@ class _LargeEnvironmentUnitCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final String? maintenanceLabel = _maintenanceLabelForUnit(unit);
     return Container(
       padding: EdgeInsets.fromLTRB(
         12 * scale,
@@ -2844,62 +2898,80 @@ class _LargeEnvironmentUnitCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      child: Stack(
+        clipBehavior: Clip.none,
         children: [
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  flex: 7,
-                  child: _EnvironmentPrimaryPanel(
-                    unit: unit,
-                    rangeSettings: rangeSettings,
-                    blocked: blocked,
-                    scale: scale,
-                    showRoomHeader: true,
-                    roomLabel: label,
-                    showSnapshotPulse: showSnapshotPulse,
-                    snapshotStale: snapshotStale,
-                  ),
-                ),
-                SizedBox(width: 8 * scale),
-                Padding(
-                  padding: EdgeInsets.only(top: 58 * scale),
-                  child: Container(width: 1, color: const Color(0xFF5B6B82)),
-                ),
-                SizedBox(width: 8 * scale),
-                Expanded(
-                  flex: 3,
-                  child: Padding(
-                    padding: EdgeInsets.only(top: 58 * scale),
-                    child: _LargeEnvironmentExtraData(
-                      tenantId: tenantId,
-                      siteId: siteId,
-                      plcId: plcId,
-                      unit: unit,
-                      rangeSettings: rangeSettings,
-                      blocked: blocked,
-                      salaDoorOpen: blocked ? null : unit.salaAbierta,
-                      muntersDoorOpen: blocked ? null : unit.munterAbierto,
-                      muntersDoorLabel: unit.name,
-                      nh3: blocked ? null : unit.nh3,
-                      ventilationPower: blocked
-                          ? null
-                          : _normalizeVoltageToPercent(
-                              unit.tensionSalidaVentiladores,
-                            ),
-                      differentialPressure: blocked
-                          ? null
-                          : unit.presionDiferencial,
-                      scale: scale,
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 7,
+                      child: _EnvironmentPrimaryPanel(
+                        unit: unit,
+                        rangeSettings: rangeSettings,
+                        blocked: blocked,
+                        scale: scale,
+                        showRoomHeader: true,
+                        roomLabel: label,
+                        showSnapshotPulse: showSnapshotPulse,
+                        snapshotStale: snapshotStale,
+                      ),
                     ),
-                  ),
+                    SizedBox(width: 8 * scale),
+                    Padding(
+                      padding: EdgeInsets.only(top: 58 * scale),
+                      child: Container(
+                        width: 1,
+                        color: const Color(0xFF5B6B82),
+                      ),
+                    ),
+                    SizedBox(width: 8 * scale),
+                    Expanded(
+                      flex: 3,
+                      child: Padding(
+                        padding: EdgeInsets.only(top: 58 * scale),
+                        child: _LargeEnvironmentExtraData(
+                          tenantId: tenantId,
+                          siteId: siteId,
+                          plcId: plcId,
+                          unit: unit,
+                          rangeSettings: rangeSettings,
+                          blocked: blocked,
+                          salaDoorOpen: blocked ? null : unit.salaAbierta,
+                          muntersDoorOpen: blocked ? null : unit.munterAbierto,
+                          muntersDoorLabel: unit.name,
+                          nh3: blocked ? null : unit.nh3,
+                          ventilationPower: blocked
+                              ? null
+                              : _normalizeVoltageToPercent(
+                                  unit.tensionSalidaVentiladores,
+                                ),
+                          differentialPressure: blocked
+                              ? null
+                              : unit.presionDiferencial,
+                          scale: scale,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
+          if (maintenanceLabel != null)
+            Positioned(
+              left: 2 * scale,
+              right: 2 * scale,
+              top: 56 * scale,
+              child: _EnvironmentMaintenanceBanner(
+                label: maintenanceLabel,
+                scale: scale,
+              ),
+            ),
         ],
       ),
     );
@@ -2992,6 +3064,9 @@ Color _resolveEnvironmentCardBorderColor({
   required DashboardRangeSettings rangeSettings,
   required bool blocked,
 }) {
+  if (_maintenanceLabelForUnit(unit) != null) {
+    return const Color(0xFF38BDF8);
+  }
   final _EnvironmentAlarmLevels levels = _assessEnvironmentAlarmLevels(
     unit: unit,
     rangeSettings: rangeSettings,
@@ -3371,6 +3446,93 @@ class _EnvironmentRoomHeader extends StatelessWidget {
           ),
         ],
       ],
+    );
+  }
+}
+
+class _EnvironmentMaintenanceBanner extends StatelessWidget {
+  const _EnvironmentMaintenanceBanner({
+    required this.label,
+    required this.scale,
+  });
+
+  final String label;
+  final double scale;
+
+  @override
+  Widget build(BuildContext context) {
+    final double visualScale = math.max(scale, 0.9);
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(
+        horizontal: 10 * visualScale,
+        vertical: 7 * visualScale,
+      ),
+      decoration: BoxDecoration(
+        color: const Color(0xFF082F49),
+        borderRadius: BorderRadius.circular(8 * visualScale),
+        border: Border.all(color: const Color(0xFF38BDF8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.handyman_rounded,
+            size: 15 * visualScale,
+            color: const Color(0xFF7DD3FC),
+          ),
+          SizedBox(width: 7 * visualScale),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: const Color(0xFFE0F2FE),
+                fontSize: 12 * visualScale,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _EnvironmentMaintenanceChip extends StatelessWidget {
+  const _EnvironmentMaintenanceChip({required this.label});
+
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: const Color(0xFF082F49),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFF38BDF8)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.handyman_rounded,
+            size: 11,
+            color: Color(0xFF7DD3FC),
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: const TextStyle(
+              color: Color(0xFFE0F2FE),
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -5844,6 +6006,22 @@ bool _shouldBlockOperationalData(MuntersModel unit) {
     PlcUnitDiagnostics.plcReachableStateUnknown => true,
     _ => false,
   };
+}
+
+String? _maintenanceLabelForUnit(MuntersModel unit) {
+  final String? label = unit.diagnostics?.stateLabel;
+  if (label == null || label.isEmpty) {
+    return null;
+  }
+  if (!label.startsWith('Mantenimiento')) {
+    return null;
+  }
+  final String type = label
+      .replaceFirst('Mantenimiento', '')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  return 'Tareas de Mantenimiento: ${type.isEmpty ? label : type}';
 }
 
 _ModuleStatus _resolveFunctioningStatusForUnit(MuntersModel unit) {

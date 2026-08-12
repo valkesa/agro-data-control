@@ -146,7 +146,7 @@ service cloud.firestore {
         );
     }
 
-    function isValidMaintenanceSettings(settings) {
+    function isValidLegacyMaintenanceSettings(settings) {
       return settings is map
         && settings.keys().hasOnly(['munters1', 'munters2'])
         && (
@@ -156,6 +156,27 @@ service cloud.firestore {
         && (
           !settings.keys().hasAny(['munters2'])
           || isValidMaintenanceEntry(settings.munters2)
+        );
+    }
+
+    function isValidDeviceMaintenanceSettings(settings) {
+      return settings is map
+        && settings.keys().size() <= 100;
+    }
+
+    function isValidMaintenanceSettings(settings) {
+      return isValidLegacyMaintenanceSettings(settings)
+        || (
+          settings is map
+          && settings.keys().hasOnly(['legacy', 'devices'])
+          && (
+            !settings.keys().hasAny(['legacy'])
+            || isValidLegacyMaintenanceSettings(settings.legacy)
+          )
+          && (
+            !settings.keys().hasAny(['devices'])
+            || isValidDeviceMaintenanceSettings(settings.devices)
+          )
         );
     }
 

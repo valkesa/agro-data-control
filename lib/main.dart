@@ -1848,38 +1848,60 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final bool canEditMaintenance =
         bootstrap.userContext.role == UserAppRole.owner ||
         bootstrap.userContext.role == UserAppRole.valkeTechnician;
-    final String? tenantId = bootstrap.userContext.activeTenantId;
+    final String? tenantId = bootstrap.effectiveTenantId;
     final String siteId = bootstrap.siteId;
-    if (!canEditMaintenance ||
-        tenantId == null ||
-        tenantId.isEmpty ||
-        siteId.isEmpty) {
+    if (!canEditMaintenance || tenantId == null || tenantId.isEmpty) {
       return;
     }
 
-    final PlcMaintenanceSettings? updated =
-        await showDialog<PlcMaintenanceSettings>(
+    final _MaintenanceSettingsSaveRequest? updated =
+        await showDialog<_MaintenanceSettingsSaveRequest>(
           context: context,
           builder: (context) => _MaintenanceSettingsDialog(
+            initialTenantId: tenantId,
+            initialSiteId: siteId,
             initialSettings: _maintenanceSettings,
             plcConfigs: _effectivePlcConfigs(bootstrap.plcConfigs),
+            devices: bootstrap.devices,
+            availableTenants: bootstrap.userContext.role == UserAppRole.owner
+                ? bootstrap.availableTenants
+                : <TenantDocument>[
+                    bootstrap.tenantDocument ??
+                        TenantDocument(
+                          tenantId: tenantId,
+                          name: bootstrap.tenantDocument?.name ?? tenantId,
+                          active: true,
+                        ),
+                  ],
+            availableSites: bootstrap.availableSites,
+            canSelectTenant: bootstrap.userContext.role == UserAppRole.owner,
+            canSelectSite: bootstrap.userContext.role == UserAppRole.owner,
+            siteConfigService: _siteConfigService,
+            sitePlcConfigService: _sitePlcConfigService,
+            agroDeviceService: _agroDeviceService,
+            dashboardConfigService: _dashboardConfigService,
           ),
         );
     if (updated == null || !mounted) {
       return;
     }
 
-    setState(() {
-      _maintenanceSettings = updated.withoutExpired();
-    });
-    _scheduleMaintenanceExpiryTimer();
+    final bool updatesActiveSite =
+        updated.tenantId == _historyTenantId &&
+        updated.siteId == _historySiteId;
+    if (updatesActiveSite) {
+      setState(() {
+        _maintenanceSettings = updated.settings.withoutExpired();
+      });
+      _scheduleMaintenanceExpiryTimer();
+    }
 
     final ControlDashboardSaveResult result = await _dashboardConfigService
         .saveMaintenanceSettings(
-          tenantId: tenantId,
-          siteId: siteId,
+          tenantId: updated.tenantId,
+          siteId: updated.siteId,
           userUid: widget.user.uid,
-          settings: updated,
+          settings: updated.settings,
         );
 
     if (!mounted) {
@@ -3032,7 +3054,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           return EnvironmentOverviewPage(
-                            units: [for (final e in entries) e.displayUnit],
+                            units: [
+                              for (final e in entries)
+                                _applyMaintenanceToDeviceDisplayUnit(e),
+                            ],
                             labels: [for (final e in entries) e.displayName],
                             plcIds: [for (final _ in entries) null],
                             deviceNames: [
@@ -3090,7 +3115,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           return EnvironmentTablePage(
-                            units: [for (final e in entries) e.displayUnit],
+                            units: [
+                              for (final e in entries)
+                                _applyMaintenanceToDeviceDisplayUnit(e),
+                            ],
                             labels: [for (final e in entries) e.displayName],
                             plcIds: [for (final _ in entries) null],
                             deviceNames: [
@@ -3291,6 +3319,26 @@ class _AgroDataShellState extends State<AgroDataShell> {
     if (mode == null) {
       return source;
     }
+    return _maintenanceBlockedUnit(source: source, mode: mode);
+  }
+
+  MuntersModel _applyMaintenanceToDeviceDisplayUnit(
+    DeviceDashboardEntry entry,
+  ) {
+    final MuntersModel source = entry.displayUnit;
+    final PlcMaintenanceMode? mode = _maintenanceSettings.modeForDevice(
+      entry.device.id,
+    );
+    if (mode == null) {
+      return source;
+    }
+    return _maintenanceBlockedUnit(source: source, mode: mode);
+  }
+
+  MuntersModel _maintenanceBlockedUnit({
+    required MuntersModel source,
+    required PlcMaintenanceMode mode,
+  }) {
     return MuntersModel(
       name: source.name,
       historyClientId: source.historyClientId,
@@ -8033,14 +8081,48 @@ class _UnitVisibilitySettingsDialogState
   }
 }
 
-class _MaintenanceSettingsDialog extends StatefulWidget {
-  const _MaintenanceSettingsDialog({
-    required this.initialSettings,
-    required this.plcConfigs,
+class _MaintenanceSettingsSaveRequest {
+  const _MaintenanceSettingsSaveRequest({
+    required this.tenantId,
+    required this.siteId,
+    required this.settings,
   });
 
+  final String tenantId;
+  final String siteId;
+  final PlcMaintenanceSettings settings;
+}
+
+class _MaintenanceSettingsDialog extends StatefulWidget {
+  const _MaintenanceSettingsDialog({
+    required this.initialTenantId,
+    required this.initialSiteId,
+    required this.initialSettings,
+    required this.plcConfigs,
+    required this.devices,
+    required this.availableTenants,
+    required this.availableSites,
+    required this.canSelectTenant,
+    required this.canSelectSite,
+    required this.siteConfigService,
+    required this.sitePlcConfigService,
+    required this.agroDeviceService,
+    required this.dashboardConfigService,
+  });
+
+  final String initialTenantId;
+  final String initialSiteId;
   final PlcMaintenanceSettings initialSettings;
   final List<PlcDisplayConfig> plcConfigs;
+  final List<AgroDevice> devices;
+  final List<TenantDocument> availableTenants;
+  final List<SiteDocument> availableSites;
+  final bool canSelectTenant;
+  final bool canSelectSite;
+  final SiteConfigService siteConfigService;
+  final SitePlcConfigService sitePlcConfigService;
+  final AgroDeviceService agroDeviceService;
+  final ControlDashboardConfigService dashboardConfigService;
 
   @override
   State<_MaintenanceSettingsDialog> createState() =>
@@ -8058,19 +8140,63 @@ class _MaintenanceSettingsDialogState
   ];
 
   late Map<String, PlcMaintenanceEntry> _entriesByPlcId;
+  late Map<String, PlcMaintenanceEntry> _entriesByDeviceId;
   late Map<String, Duration> _durationsByPlcId;
+  late Map<String, Duration> _durationsByDeviceId;
+  late String _selectedTenantId;
+  String? _selectedSiteId;
+  List<TenantDocument> _tenants = const <TenantDocument>[];
+  List<SiteDocument> _sites = const <SiteDocument>[];
+  List<PlcDisplayConfig> _plcConfigs = const <PlcDisplayConfig>[];
+  List<AgroDevice> _devices = const <AgroDevice>[];
+  SiteDocument? _selectedSite;
+  bool _loadingSites = false;
+  bool _loadingTargets = false;
+  String? _errorText;
 
   @override
   void initState() {
     super.initState();
+    _selectedTenantId = widget.initialTenantId;
+    _selectedSiteId = widget.initialSiteId.isEmpty
+        ? null
+        : widget.initialSiteId;
+    _tenants = widget.availableTenants.isNotEmpty
+        ? widget.availableTenants
+        : <TenantDocument>[
+            TenantDocument(
+              tenantId: widget.initialTenantId,
+              name: widget.initialTenantId,
+              active: true,
+            ),
+          ];
+    _sites = widget.availableSites;
+    _plcConfigs = widget.plcConfigs;
+    _devices = widget.devices;
     _entriesByPlcId = Map<String, PlcMaintenanceEntry>.of(
       widget.initialSettings.activeEntriesByPlcId,
+    );
+    _entriesByDeviceId = Map<String, PlcMaintenanceEntry>.of(
+      widget.initialSettings.activeEntriesByDeviceId,
     );
     _durationsByPlcId = <String, Duration>{
       for (final MapEntry<String, PlcMaintenanceEntry> entry
           in _entriesByPlcId.entries)
         entry.key: _durationForEntry(entry.value),
     };
+    _durationsByDeviceId = <String, Duration>{
+      for (final MapEntry<String, PlcMaintenanceEntry> entry
+          in _entriesByDeviceId.entries)
+        entry.key: _durationForEntry(entry.value),
+    };
+    if (_sites.isEmpty ||
+        !_sites.any((site) => site.siteId == _selectedSiteId)) {
+      _loadSitesForTenant(_selectedTenantId, preferredSiteId: _selectedSiteId);
+    } else {
+      _selectedSite = _sites.firstWhere(
+        (site) => site.siteId == _selectedSiteId,
+      );
+    }
   }
 
   Duration _durationForEntry(PlcMaintenanceEntry entry) {
@@ -8121,6 +8247,22 @@ class _MaintenanceSettingsDialogState
     });
   }
 
+  void _setDeviceMode(String deviceId, PlcMaintenanceMode? mode) {
+    setState(() {
+      if (mode == null) {
+        _entriesByDeviceId.remove(deviceId);
+      } else {
+        final Duration duration =
+            _durationsByDeviceId[deviceId] ?? _durationOptions.first;
+        _durationsByDeviceId[deviceId] = duration;
+        _entriesByDeviceId[deviceId] = _entryFor(
+          mode: mode,
+          duration: duration,
+        );
+      }
+    });
+  }
+
   void _setDuration(String plcId, Duration duration) {
     final PlcMaintenanceEntry? currentEntry = _entriesByPlcId[plcId];
     if (currentEntry == null) {
@@ -8135,10 +8277,173 @@ class _MaintenanceSettingsDialogState
     });
   }
 
+  void _setDeviceDuration(String deviceId, Duration duration) {
+    final PlcMaintenanceEntry? currentEntry = _entriesByDeviceId[deviceId];
+    if (currentEntry == null) {
+      return;
+    }
+    setState(() {
+      _durationsByDeviceId[deviceId] = duration;
+      _entriesByDeviceId[deviceId] = _entryFor(
+        mode: currentEntry.mode,
+        duration: duration,
+      );
+    });
+  }
+
+  Future<void> _loadSitesForTenant(
+    String tenantId, {
+    String? preferredSiteId,
+  }) async {
+    setState(() {
+      _loadingSites = true;
+      _errorText = null;
+    });
+    try {
+      final List<SiteDocument> sites = await widget.siteConfigService
+          .fetchActiveSitesForUser(
+            tenantId: tenantId,
+            allowedSiteIds: const <String>[],
+            ownerBypass: true,
+          );
+      if (!mounted) {
+        return;
+      }
+      final String? nextSiteId =
+          preferredSiteId != null &&
+              sites.any((SiteDocument site) => site.siteId == preferredSiteId)
+          ? preferredSiteId
+          : sites.isNotEmpty
+          ? sites.first.siteId
+          : null;
+      setState(() {
+        _sites = sites;
+        _selectedSiteId = nextSiteId;
+        _selectedSite = nextSiteId == null
+            ? null
+            : sites.firstWhere(
+                (SiteDocument site) => site.siteId == nextSiteId,
+              );
+        _loadingSites = false;
+      });
+      if (nextSiteId != null) {
+        await _loadTargetsForSite(tenantId: tenantId, siteId: nextSiteId);
+      }
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadingSites = false;
+        _errorText = 'No se pudieron cargar los sites: $error';
+      });
+    }
+  }
+
+  Future<void> _loadTargetsForSite({
+    required String tenantId,
+    required String siteId,
+  }) async {
+    setState(() {
+      _loadingTargets = true;
+      _errorText = null;
+    });
+    SiteDocument? site;
+    for (final SiteDocument candidate in _sites) {
+      if (candidate.siteId == siteId) {
+        site = candidate;
+        break;
+      }
+    }
+    site ??= await widget.siteConfigService.fetchSite(
+      tenantId: tenantId,
+      siteId: siteId,
+    );
+    final ControlDashboardConfigResult config = await widget
+        .dashboardConfigService
+        .readConfig(tenantId: tenantId, siteId: siteId);
+    final PlcMaintenanceSettings settings =
+        (config.hasError
+                ? const PlcMaintenanceSettings.empty()
+                : config.maintenanceSettings)
+            .withoutExpired();
+    final List<PlcDisplayConfig> plcConfigs = site?.usesDynamicDevices == true
+        ? const <PlcDisplayConfig>[]
+        : await widget.sitePlcConfigService.fetchActivePlcs(
+            tenantId: tenantId,
+            siteId: siteId,
+          );
+    final List<AgroDevice> devices = site?.usesDynamicDevices == true
+        ? await widget.agroDeviceService.listBySite(
+            tenantId: tenantId,
+            siteId: siteId,
+            includeDisabled: true,
+          )
+        : const <AgroDevice>[];
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _selectedSite = site;
+      _plcConfigs = plcConfigs;
+      _devices = devices;
+      _entriesByPlcId = Map<String, PlcMaintenanceEntry>.of(
+        settings.activeEntriesByPlcId,
+      );
+      _entriesByDeviceId = Map<String, PlcMaintenanceEntry>.of(
+        settings.activeEntriesByDeviceId,
+      );
+      _durationsByPlcId = <String, Duration>{
+        for (final MapEntry<String, PlcMaintenanceEntry> entry
+            in _entriesByPlcId.entries)
+          entry.key: _durationForEntry(entry.value),
+      };
+      _durationsByDeviceId = <String, Duration>{
+        for (final MapEntry<String, PlcMaintenanceEntry> entry
+            in _entriesByDeviceId.entries)
+          entry.key: _durationForEntry(entry.value),
+      };
+      _loadingTargets = false;
+    });
+  }
+
+  Future<void> _selectTenant(String tenantId) async {
+    setState(() {
+      _selectedTenantId = tenantId;
+      _selectedSiteId = null;
+      _selectedSite = null;
+      _plcConfigs = const <PlcDisplayConfig>[];
+      _devices = const <AgroDevice>[];
+    });
+    await _loadSitesForTenant(tenantId);
+  }
+
+  Future<void> _selectSite(String siteId) async {
+    setState(() {
+      _selectedSiteId = siteId;
+      _selectedSite = _sites.firstWhere((site) => site.siteId == siteId);
+    });
+    await _loadTargetsForSite(tenantId: _selectedTenantId, siteId: siteId);
+  }
+
   void _submit() {
+    final String? siteId = _selectedSiteId;
+    if (siteId == null || siteId.isEmpty) {
+      setState(() {
+        _errorText = 'Selecciona un site.';
+      });
+      return;
+    }
     Navigator.of(context).pop(
-      PlcMaintenanceSettings(
-        entriesByPlcId: Map<String, PlcMaintenanceEntry>.of(_entriesByPlcId),
+      _MaintenanceSettingsSaveRequest(
+        tenantId: _selectedTenantId,
+        siteId: siteId,
+        settings: PlcMaintenanceSettings(
+          entriesByPlcId: Map<String, PlcMaintenanceEntry>.of(_entriesByPlcId),
+          entriesByDeviceId: Map<String, PlcMaintenanceEntry>.of(
+            _entriesByDeviceId,
+          ),
+        ),
       ),
     );
   }
@@ -8156,32 +8461,97 @@ class _MaintenanceSettingsDialogState
         ],
       ),
       content: SizedBox(
-        width: 540,
+        width: 620,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const Text(
-                'Los PLCs marcados siguen recibiendo datos, pero la UI los muestra en gris y oculta sus valores.',
+                'Los equipos marcados siguen recibiendo datos, pero la UI los muestra en gris y oculta sus valores.',
                 style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
               ),
               const SizedBox(height: 16),
-              for (final PlcDisplayConfig plc in widget.plcConfigs) ...[
-                _MaintenancePlcEditor(
-                  plc: plc,
-                  selectedEntry: _entriesByPlcId[plc.plcId],
-                  selectedDuration:
-                      _durationsByPlcId[plc.plcId] ?? _durationOptions.first,
-                  durationOptions: _durationOptions,
-                  durationLabel: _durationLabel,
-                  expirationLabel: _expirationLabel,
-                  onChanged: (PlcMaintenanceMode? mode) =>
-                      _setMode(plc.plcId, mode),
-                  onDurationChanged: (Duration duration) =>
-                      _setDuration(plc.plcId, duration),
+              _MaintenanceScopeSelectors(
+                tenants: _tenants,
+                sites: _sites,
+                selectedTenantId: _selectedTenantId,
+                selectedSiteId: _selectedSiteId,
+                canSelectTenant: widget.canSelectTenant,
+                canSelectSite: widget.canSelectSite,
+                loadingSites: _loadingSites,
+                onTenantChanged: _loadingSites || _loadingTargets
+                    ? null
+                    : _selectTenant,
+                onSiteChanged: _loadingSites || _loadingTargets
+                    ? null
+                    : _selectSite,
+              ),
+              const SizedBox(height: 16),
+              if (_loadingTargets)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_selectedSite?.usesDynamicDevices == true) ...[
+                if (_devices.isEmpty)
+                  const Text(
+                    'No hay devices para este site.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                  ),
+                for (final AgroDevice device in _devices) ...[
+                  _MaintenanceTargetEditor(
+                    title: device.name.isNotEmpty ? device.name : device.id,
+                    subtitle:
+                        '${device.type}${device.model.isNotEmpty ? ' · ${device.model}' : ''} · ${device.id}',
+                    selectedEntry: _entriesByDeviceId[device.id],
+                    selectedDuration:
+                        _durationsByDeviceId[device.id] ??
+                        _durationOptions.first,
+                    durationOptions: _durationOptions,
+                    durationLabel: _durationLabel,
+                    expirationLabel: _expirationLabel,
+                    onChanged: (PlcMaintenanceMode? mode) =>
+                        _setDeviceMode(device.id, mode),
+                    onDurationChanged: (Duration duration) =>
+                        _setDeviceDuration(device.id, duration),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+              ] else ...[
+                for (final PlcDisplayConfig plc in _plcConfigs) ...[
+                  _MaintenanceTargetEditor(
+                    title: '${plc.columnLabel} · ${plc.displayName}',
+                    subtitle: plc.plcId,
+                    selectedEntry: _entriesByPlcId[plc.plcId],
+                    selectedDuration:
+                        _durationsByPlcId[plc.plcId] ?? _durationOptions.first,
+                    durationOptions: _durationOptions,
+                    durationLabel: _durationLabel,
+                    expirationLabel: _expirationLabel,
+                    onChanged: (PlcMaintenanceMode? mode) =>
+                        _setMode(plc.plcId, mode),
+                    onDurationChanged: (Duration duration) =>
+                        _setDuration(plc.plcId, duration),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (_plcConfigs.isEmpty)
+                  const Text(
+                    'No hay PLCs activos para este site.',
+                    style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+                  ),
+              ],
+              if (_errorText != null) ...[
+                const SizedBox(height: 8),
+                Text(
+                  _errorText!,
+                  style: const TextStyle(
+                    color: Color(0xFFFCA5A5),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                const SizedBox(height: 12),
               ],
             ],
           ),
@@ -8192,15 +8562,104 @@ class _MaintenanceSettingsDialogState
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Cancelar'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('Guardar')),
+        FilledButton(
+          onPressed: _loadingSites || _loadingTargets ? null : _submit,
+          child: const Text('Guardar'),
+        ),
       ],
     );
   }
 }
 
-class _MaintenancePlcEditor extends StatelessWidget {
-  const _MaintenancePlcEditor({
-    required this.plc,
+class _MaintenanceScopeSelectors extends StatelessWidget {
+  const _MaintenanceScopeSelectors({
+    required this.tenants,
+    required this.sites,
+    required this.selectedTenantId,
+    required this.selectedSiteId,
+    required this.canSelectTenant,
+    required this.canSelectSite,
+    required this.loadingSites,
+    required this.onTenantChanged,
+    required this.onSiteChanged,
+  });
+
+  final List<TenantDocument> tenants;
+  final List<SiteDocument> sites;
+  final String selectedTenantId;
+  final String? selectedSiteId;
+  final bool canSelectTenant;
+  final bool canSelectSite;
+  final bool loadingSites;
+  final ValueChanged<String>? onTenantChanged;
+  final ValueChanged<String>? onSiteChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        DropdownButtonFormField<String>(
+          key: ValueKey<String>('tenant-$selectedTenantId'),
+          initialValue: selectedTenantId,
+          dropdownColor: const Color(0xFF111827),
+          decoration: const InputDecoration(labelText: 'Tenant'),
+          style: const TextStyle(color: Color(0xFFE5E7EB)),
+          items: [
+            for (final TenantDocument tenant in tenants)
+              DropdownMenuItem<String>(
+                value: tenant.tenantId,
+                child: Text(
+                  tenant.name.isNotEmpty ? tenant.name : tenant.tenantId,
+                ),
+              ),
+          ],
+          onChanged: canSelectTenant && onTenantChanged != null
+              ? (String? value) {
+                  if (value != null && value != selectedTenantId) {
+                    onTenantChanged!(value);
+                  }
+                }
+              : null,
+        ),
+        const SizedBox(height: 10),
+        DropdownButtonFormField<String>(
+          key: ValueKey<String?>('site-$selectedTenantId-$selectedSiteId'),
+          initialValue:
+              selectedSiteId != null &&
+                  sites.any(
+                    (SiteDocument site) => site.siteId == selectedSiteId,
+                  )
+              ? selectedSiteId
+              : null,
+          dropdownColor: const Color(0xFF111827),
+          decoration: InputDecoration(
+            labelText: loadingSites ? 'Cargando sites...' : 'Site',
+          ),
+          style: const TextStyle(color: Color(0xFFE5E7EB)),
+          items: [
+            for (final SiteDocument site in sites)
+              DropdownMenuItem<String>(
+                value: site.siteId,
+                child: Text(site.name.isNotEmpty ? site.name : site.siteId),
+              ),
+          ],
+          onChanged: canSelectSite && onSiteChanged != null
+              ? (String? value) {
+                  if (value != null && value != selectedSiteId) {
+                    onSiteChanged!(value);
+                  }
+                }
+              : null,
+        ),
+      ],
+    );
+  }
+}
+
+class _MaintenanceTargetEditor extends StatelessWidget {
+  const _MaintenanceTargetEditor({
+    required this.title,
+    required this.subtitle,
     required this.selectedEntry,
     required this.selectedDuration,
     required this.durationOptions,
@@ -8210,7 +8669,8 @@ class _MaintenancePlcEditor extends StatelessWidget {
     required this.onDurationChanged,
   });
 
-  final PlcDisplayConfig plc;
+  final String title;
+  final String subtitle;
   final PlcMaintenanceEntry? selectedEntry;
   final Duration selectedDuration;
   final List<Duration> durationOptions;
@@ -8235,13 +8695,20 @@ class _MaintenancePlcEditor extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '${plc.columnLabel} · ${plc.displayName}',
+            title,
             style: const TextStyle(
               color: Color(0xFFE5E7EB),
               fontSize: 14,
               fontWeight: FontWeight.w700,
             ),
           ),
+          if (subtitle.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              subtitle,
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+            ),
+          ],
           const SizedBox(height: 10),
           Wrap(
             spacing: 8,

@@ -607,6 +607,31 @@ class ControlDashboardConfigResult {
     if (maintenance is! Map<String, dynamic>) {
       return const PlcMaintenanceSettings.empty();
     }
+    final Object? legacyMaintenance = maintenance['legacy'];
+    final Object? devicesMaintenance = maintenance['devices'];
+    if (legacyMaintenance is Map<String, dynamic> ||
+        devicesMaintenance is Map<String, dynamic>) {
+      final Map<String, dynamic> legacyMap =
+          legacyMaintenance is Map<String, dynamic>
+          ? legacyMaintenance
+          : const <String, dynamic>{};
+      final Map<String, dynamic> devicesMap =
+          devicesMaintenance is Map<String, dynamic>
+          ? devicesMaintenance
+          : const <String, dynamic>{};
+      return PlcMaintenanceSettings(
+        entriesByPlcId: <String, PlcMaintenanceEntry>{
+          for (final MapEntry<String, dynamic> entry in legacyMap.entries)
+            if (_maintenanceEntryFromRaw(entry.value) != null)
+              entry.key: _maintenanceEntryFromRaw(entry.value)!,
+        },
+        entriesByDeviceId: <String, PlcMaintenanceEntry>{
+          for (final MapEntry<String, dynamic> entry in devicesMap.entries)
+            if (_maintenanceEntryFromRaw(entry.value) != null)
+              entry.key: _maintenanceEntryFromRaw(entry.value)!,
+        },
+      ).withoutExpired();
+    }
     return PlcMaintenanceSettings(
       entriesByPlcId: <String, PlcMaintenanceEntry>{
         for (final MapEntry<String, dynamic> entry in maintenance.entries)
