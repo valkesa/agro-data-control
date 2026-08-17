@@ -380,7 +380,7 @@ class _EnvironmentTableRow {
     required this.exteriorTemperatureC,
     required this.exteriorHumidityPercent,
     required this.humidityPercent,
-    required this.dewPointC,
+    required this.dewPointDeltaC,
     required this.temperatureAlarm,
     required this.humidityAlarm,
     required this.dewPointAlarm,
@@ -404,6 +404,12 @@ class _EnvironmentTableRow {
     final bool blocked = _shouldBlockOperationalData(unit);
     final double? temperature = blocked ? null : unit.tempInterior;
     final double? humidity = blocked ? null : unit.displayHumInterior;
+    final double? dewPoint = blocked
+        ? null
+        : _calculateDewPointC(
+            temperatureC: unit.tempInterior,
+            relativeHumidityPercent: unit.humInterior,
+          );
     final _EnvironmentAlarmLevels alarmLevels = _assessEnvironmentAlarmLevels(
       unit: unit,
       rangeSettings: rangeSettings,
@@ -424,12 +430,9 @@ class _EnvironmentTableRow {
       exteriorTemperatureC: blocked ? null : unit.tempExterior,
       exteriorHumidityPercent: blocked ? null : unit.displayHumExterior,
       humidityPercent: humidity,
-      dewPointC: blocked
+      dewPointDeltaC: temperature == null || dewPoint == null
           ? null
-          : _calculateDewPointC(
-              temperatureC: unit.tempInterior,
-              relativeHumidityPercent: unit.humInterior,
-            ),
+          : temperature - dewPoint,
       temperatureAlarm: alarmLevels.temperature,
       humidityAlarm: alarmLevels.humidity,
       dewPointAlarm: alarmLevels.dewPoint,
@@ -457,7 +460,7 @@ class _EnvironmentTableRow {
   final double? exteriorTemperatureC;
   final double? exteriorHumidityPercent;
   final double? humidityPercent;
-  final double? dewPointC;
+  final double? dewPointDeltaC;
   final _EnvironmentAlarmLevel temperatureAlarm;
   final _EnvironmentAlarmLevel humidityAlarm;
   final _EnvironmentAlarmLevel dewPointAlarm;
@@ -518,14 +521,20 @@ class _EnvironmentTableGrid extends StatelessWidget {
       tooltip: 'Puerta Equipo M',
     ),
     _EnvironmentTableHeaderData(
+      icon: Icons.thermostat_outlined,
+      label: 'Temp. ex °C',
+      tooltip: 'Temperatura exterior',
+    ),
+    _EnvironmentTableHeaderData(
       icon: Icons.thermostat,
       label: 'Temp. °C',
       tooltip: 'Temperatura Interior',
     ),
     _EnvironmentTableHeaderData(
-      icon: Icons.thermostat_outlined,
-      label: 'Temp. ex °C',
-      tooltip: 'Temperatura exterior',
+      iconWidget: _AnimatedDewPointIcon(color: Color(0xFF6FD8C4), size: 18),
+      label: 'ΔPR °C',
+      tooltip:
+          'Margen del Punto de Rocío: diferencia entre temperatura interior y punto de rocío',
     ),
     _EnvironmentTableHeaderData(
       iconWidget: _EnvironmentHeaderHumidityIcon(
@@ -546,12 +555,6 @@ class _EnvironmentTableGrid extends StatelessWidget {
       ),
       label: 'HR int %',
       tooltip: 'Humedad Relativa interior',
-    ),
-    _EnvironmentTableHeaderData(
-      iconWidget: _AnimatedDewPointIcon(color: Color(0xFF6FD8C4), size: 18),
-      label: 'PR °C',
-      tooltip:
-          'Punto de Rocío\nΔPR = Margen del Punto de Rocío: diferencia entre temperatura interior y punto de rocío',
     ),
     _EnvironmentTableHeaderData(
       icon: Icons.grid_on_rounded,
@@ -653,19 +656,19 @@ class _EnvironmentTableGrid extends StatelessWidget {
         _roomCell(row),
         _doorCell(row.salaDoorOpen),
         _doorCell(row.muntersDoorOpen),
+        _valueCell(row.exteriorTemperatureC?.toStringAsFixed(1) ?? '-'),
         _valueCell(
           row.temperatureC?.toStringAsFixed(1) ?? '-',
           alarmLevel: row.temperatureAlarm,
         ),
-        _valueCell(row.exteriorTemperatureC?.toStringAsFixed(1) ?? '-'),
+        _valueCell(
+          row.dewPointDeltaC?.toStringAsFixed(1) ?? '-',
+          alarmLevel: row.dewPointAlarm,
+        ),
         _valueCell(row.exteriorHumidityPercent?.toStringAsFixed(0) ?? '-'),
         _valueCell(
           row.humidityPercent?.toStringAsFixed(0) ?? '-',
           alarmLevel: row.humidityAlarm,
-        ),
-        _valueCell(
-          row.dewPointC?.toStringAsFixed(1) ?? '-',
-          alarmLevel: row.dewPointAlarm,
         ),
         _valueCell(
           row.differentialPressurePa?.toStringAsFixed(0) ?? '-',
@@ -715,13 +718,13 @@ class _EnvironmentTableGrid extends StatelessWidget {
 
   String? _limitTextForColumn(int index) {
     return switch (index) {
-      3 =>
+      4 =>
         '${_formatTableLimit(rangeSettings.temperatureMin)}°C - '
             '${_formatTableLimit(rangeSettings.temperatureMax)}°C',
-      6 =>
+      7 =>
         '${_formatTableLimit(rangeSettings.humidityMin)}% - '
             '${_formatTableLimit(rangeSettings.humidityMax)}%',
-      7 =>
+      5 =>
         'ΔPR: ${_formatTableLimit(rangeSettings.dewPointMarginAlarmRedMax)}°C - '
             '${_formatTableLimit(rangeSettings.dewPointMarginAlarmYellowMaxExclusive)}°C',
       8 => 'Max ${_formatTableLimit(rangeSettings.filterPressureMax)} Pa',
@@ -1301,6 +1304,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
   Timer? _sectionsAutoCollapseTimer;
   bool _technicalDataExpanded = false;
   final Set<String> _expandedTemperatureHistoryKeys = <String>{};
+  final Set<String> _expandedDifferentialPressureHistoryKeys = <String>{};
   final bool _munters1Collapsed = false;
   final bool _munters2Collapsed = false;
   bool _alarmasAutoExpandQueued = false;
@@ -1341,6 +1345,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
         _sectionsCollapseGeneration += 1;
         _expandedSectionIds.clear();
         _expandedTemperatureHistoryKeys.clear();
+        _expandedDifferentialPressureHistoryKeys.clear();
       });
     }
   }
@@ -1376,6 +1381,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
         _sectionsCollapseGeneration += 1;
         _expandedSectionIds.clear();
         _expandedTemperatureHistoryKeys.clear();
+        _expandedDifferentialPressureHistoryKeys.clear();
       });
     });
   }
@@ -1411,6 +1417,24 @@ class _ComparisonPageState extends State<ComparisonPage> {
         _expandedTemperatureHistoryKeys.remove(key);
       } else {
         _expandedTemperatureHistoryKeys.add(key);
+      }
+    });
+  }
+
+  String _differentialPressureHistoryKey(MuntersModel unit, String fallback) {
+    final String? plcId = unit.historyPlcId;
+    if (plcId != null && plcId.isNotEmpty) {
+      return plcId;
+    }
+    return fallback;
+  }
+
+  void _toggleDifferentialPressureHistoryExpanded(String key) {
+    setState(() {
+      if (_expandedDifferentialPressureHistoryKeys.contains(key)) {
+        _expandedDifferentialPressureHistoryKeys.remove(key);
+      } else {
+        _expandedDifferentialPressureHistoryKeys.add(key);
       }
     });
   }
@@ -2052,23 +2076,51 @@ class _ComparisonPageState extends State<ComparisonPage> {
                 : _formatValueWithUnit(munters2.presionDiferencial, 'Pa'),
           ),
         ),
-        _ComparisonRow(
-          label: '',
-          alignToTop: true,
-          munters1: _DifferentialPressureHistoryValue(
-            unitName: munters1.name,
-            tenantId: widget.tenantId,
-            siteId: widget.siteId,
-            plcId: munters1.historyPlcId,
-            blocked: munters1DataBlocked,
-          ),
-          munters2: _DifferentialPressureHistoryValue(
-            unitName: munters2.name,
-            tenantId: widget.tenantId,
-            siteId: widget.siteId,
-            plcId: munters2.historyPlcId,
-            blocked: munters2DataBlocked,
-          ),
+        Builder(
+          builder: (BuildContext context) {
+            final String munters1HistoryKey = _differentialPressureHistoryKey(
+              munters1,
+              'munters1',
+            );
+            final String munters2HistoryKey = _differentialPressureHistoryKey(
+              munters2,
+              'munters2',
+            );
+            final bool munters1HistoryExpanded =
+                _expandedDifferentialPressureHistoryKeys.contains(
+                  munters1HistoryKey,
+                );
+            final bool munters2HistoryExpanded =
+                _expandedDifferentialPressureHistoryKeys.contains(
+                  munters2HistoryKey,
+                );
+            return _ComparisonRow(
+              label: 'Gráfico',
+              alignToTop: munters1HistoryExpanded || munters2HistoryExpanded,
+              munters1: _DifferentialPressureHistoryValue(
+                unitName: munters1.name,
+                tenantId: widget.tenantId,
+                siteId: widget.siteId,
+                plcId: munters1.historyPlcId,
+                expanded: munters1HistoryExpanded,
+                onToggle: () => _toggleDifferentialPressureHistoryExpanded(
+                  munters1HistoryKey,
+                ),
+                blocked: munters1DataBlocked,
+              ),
+              munters2: _DifferentialPressureHistoryValue(
+                unitName: munters2.name,
+                tenantId: widget.tenantId,
+                siteId: widget.siteId,
+                plcId: munters2.historyPlcId,
+                expanded: munters2HistoryExpanded,
+                onToggle: () => _toggleDifferentialPressureHistoryExpanded(
+                  munters2HistoryKey,
+                ),
+                blocked: munters2DataBlocked,
+              ),
+            );
+          },
         ),
         _ComparisonRow(
           label: 'Seteo alarma',
@@ -8154,6 +8206,8 @@ class _DifferentialPressureHistoryValue extends StatelessWidget {
     required this.tenantId,
     required this.siteId,
     required this.plcId,
+    required this.expanded,
+    required this.onToggle,
     this.blocked = false,
   });
 
@@ -8161,6 +8215,8 @@ class _DifferentialPressureHistoryValue extends StatelessWidget {
   final String? tenantId;
   final String? siteId;
   final String? plcId;
+  final bool expanded;
+  final VoidCallback onToggle;
   final bool blocked;
 
   @override
@@ -8168,12 +8224,25 @@ class _DifferentialPressureHistoryValue extends StatelessWidget {
     if (blocked) {
       return const _TextValue('-', fontWeight: FontWeight.w400);
     }
-    return DifferentialPressureHistoryCard(
-      unitName: unitName,
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
-      horizontalMargin: 8,
+    if (!expanded) {
+      return _CollapsedComparisonHistoryButton(onTap: onToggle);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: _ExpandedComparisonHistoryButton(onTap: onToggle),
+        ),
+        const SizedBox(height: 6),
+        DifferentialPressureHistoryCard(
+          unitName: unitName,
+          tenantId: tenantId,
+          siteId: siteId,
+          plcId: plcId,
+          horizontalMargin: 8,
+        ),
+      ],
     );
   }
 }

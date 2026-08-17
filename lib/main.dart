@@ -6055,6 +6055,10 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
               label: 'Cooldown general',
               value: '${runtimeControl.cooldownMinutes} minutos',
             ),
+            _RuntimeControlRow(
+              label: 'Cooldown aperturas de puertas',
+              value: '${runtimeControl.doorOpeningCooldownMinutes} minutos',
+            ),
             const SizedBox(height: 10),
             const Text(
               'Histéresis',

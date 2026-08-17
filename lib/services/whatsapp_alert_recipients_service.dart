@@ -155,6 +155,7 @@ class WhatsAppAlertRecipientsResult {
 class AlertRuntimeControl {
   const AlertRuntimeControl({
     required this.cooldownMinutes,
+    required this.doorOpeningCooldownMinutes,
     required this.dewPointRiskC,
     required this.temperatureC,
     required this.humidityPercent,
@@ -167,6 +168,10 @@ class AlertRuntimeControl {
         : const <String, Object?>{};
     return AlertRuntimeControl(
       cooldownMinutes: _readInt(json, 'cooldownMinutes') ?? 0,
+      doorOpeningCooldownMinutes:
+          _readInt(json, 'doorOpeningCooldownMinutes') ??
+          _readInt(json, 'cooldownMinutes') ??
+          0,
       dewPointRiskC: _readDouble(hysteresis, 'dewPointRiskC') ?? 0,
       temperatureC: _readDouble(hysteresis, 'temperatureC') ?? 0,
       humidityPercent: _readDouble(hysteresis, 'humidityPercent') ?? 0,
@@ -174,6 +179,7 @@ class AlertRuntimeControl {
   }
 
   final int cooldownMinutes;
+  final int doorOpeningCooldownMinutes;
   final double dewPointRiskC;
   final double temperatureC;
   final double humidityPercent;

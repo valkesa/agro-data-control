@@ -1,15 +1,28 @@
+import 'alert_priority.dart';
+
 class AlertRuntimeConfig {
   const AlertRuntimeConfig({
     this.cooldown = const Duration(minutes: 10),
+    this.doorOpeningCooldown = const Duration(minutes: 60),
     this.hysteresis = const AlertHysteresisConfig(),
   });
 
   final Duration cooldown;
+  final Duration doorOpeningCooldown;
   final AlertHysteresisConfig hysteresis;
+
+  Duration cooldownFor(AlertType type) {
+    return switch (type) {
+      AlertType.muntersDoorOpen ||
+      AlertType.roomDoorOpen => doorOpeningCooldown,
+      _ => cooldown,
+    };
+  }
 
   Map<String, Object?> toJson() {
     return <String, Object?>{
       'cooldownMinutes': cooldown.inMinutes,
+      'doorOpeningCooldownMinutes': doorOpeningCooldown.inMinutes,
       'hysteresis': hysteresis.toJson(),
     };
   }

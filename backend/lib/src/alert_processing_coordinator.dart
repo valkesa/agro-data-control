@@ -172,15 +172,16 @@ class AlertProcessingCoordinator {
           );
     final List<EvaluatedAlert> whatsAppCandidates = <EvaluatedAlert>[];
     for (final EvaluatedAlert alert in orderedActivated) {
+      final Duration cooldown = runtime.config.cooldownFor(alert.type);
       if (!runtime.notificationCooldownRegistry.canSend(
         key: alert.key,
         now: evaluatedAt,
-        cooldown: runtime.config.cooldown,
+        cooldown: cooldown,
       )) {
         final DateTime? lastSentAt = runtime.notificationCooldownRegistry
             .lastSentAt(alert.key);
         stdout.writeln(
-          '[alerts] event=notification_cooldown_suppressed tenantId=${alert.key.tenantId} siteId=${alert.key.siteId} roomId=${alert.key.roomId} alertType=${alert.type.id} lastSentAt=${lastSentAt?.toIso8601String() ?? ''} evaluatedAt=${evaluatedAt.toIso8601String()} cooldownMinutes=${runtime.config.cooldown.inMinutes}',
+          '[alerts] event=notification_cooldown_suppressed tenantId=${alert.key.tenantId} siteId=${alert.key.siteId} roomId=${alert.key.roomId} alertType=${alert.type.id} lastSentAt=${lastSentAt?.toIso8601String() ?? ''} evaluatedAt=${evaluatedAt.toIso8601String()} cooldownMinutes=${cooldown.inMinutes}',
         );
         continue;
       }

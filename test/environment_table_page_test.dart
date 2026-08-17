@@ -45,7 +45,7 @@ void main() {
       'Temp. ex °C',
       'HR ex %',
       'HR int %',
-      'PR °C',
+      'ΔPR °C',
       'PD Pa',
       'Fan %',
       'Panel\nevaporativo',
@@ -61,6 +61,12 @@ void main() {
     expect(find.text('30% - 80%'), findsOneWidget);
     expect(find.text('ΔPR: 1°C - 3°C'), findsOneWidget);
     expect(find.text('Max 30 Pa'), findsOneWidget);
+
+    final double tempExtX = tester.getTopLeft(find.text('Temp. ex °C')).dx;
+    final double tempIntX = tester.getTopLeft(find.text('Temp. °C')).dx;
+    final double dewPointMarginX = tester.getTopLeft(find.text('ΔPR °C')).dx;
+    expect(tempExtX, lessThan(tempIntX));
+    expect(dewPointMarginX, greaterThan(tempIntX));
 
     // Color legend footer.
     expect(find.text('Verde: Óptimo'), findsOneWidget);
@@ -89,6 +95,7 @@ void main() {
 
     expect(find.text('22.1'), findsOneWidget); // temperatureC
     expect(find.text('18.0'), findsOneWidget); // exteriorTemperatureC
+    expect(find.text('8.1'), findsOneWidget); // dew point delta, not absolute
     expect(find.text('70'), findsOneWidget); // exteriorHumidityPercent
     expect(find.text('60'), findsOneWidget); // humidityPercent
     expect(find.text('Cerrada'), findsNothing); // closed doors are icon-only

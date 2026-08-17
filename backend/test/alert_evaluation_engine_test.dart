@@ -3,6 +3,7 @@ import 'package:agro_data_control_backend/src/alert_models.dart';
 import 'package:agro_data_control_backend/src/alert_priority.dart';
 import 'package:agro_data_control_backend/src/alert_processing_coordinator.dart';
 import 'package:agro_data_control_backend/src/alert_runtime.dart';
+import 'package:agro_data_control_backend/src/alert_runtime_config.dart';
 import 'package:agro_data_control_backend/src/alert_settings_cache.dart';
 import 'package:agro_data_control_backend/src/room_wash_registry.dart';
 
@@ -19,6 +20,7 @@ Future<void> main() async {
   await _testDifferentialPressureHysteresisPreventsFlapping();
   await _testTransientNullReadingDoesNotFalselyRecover();
   await _testCooldownSuppressesFastResend();
+  await _testDoorOpeningsUseDoorCooldown();
   await _testThresholdChangeCreatesActivation();
   await _testActiveAlertConfigChangeRespectsCooldown();
   await _testSendWhatsappEnableReevaluatesActiveAlert();
@@ -405,6 +407,66 @@ Future<void> _testCooldownSuppressesFastResend() async {
   _expect(
     result.whatsAppCandidates.length == 2,
     'reactivation after cooldown sends again',
+  );
+}
+
+Future<void> _testDoorOpeningsUseDoorCooldown() async {
+  final AlertRuntime runtime = _runtimeWithSettings(
+    _settings(),
+    config: const AlertRuntimeConfig(
+      cooldown: Duration(minutes: 10),
+      doorOpeningCooldown: Duration(minutes: 60),
+    ),
+  );
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0,
+  );
+  _expect(
+    result.whatsAppCandidates.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'first door opening sends',
+  );
+  await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: false)),
+    evaluatedAt: t0.add(const Duration(minutes: 1)),
+  );
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 11)),
+  );
+  _expect(
+    result.rooms.first.transitionBatch!.activated.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'door reactivation before door cooldown is detected',
+  );
+  _expect(
+    !result.whatsAppCandidates.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'door reactivation before 60 minutes does not send',
+  );
+  await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: false)),
+    evaluatedAt: t0.add(const Duration(minutes: 12)),
+  );
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 61)),
+  );
+  _expect(
+    result.whatsAppCandidates.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'door reactivation after 60 minutes sends again',
   );
 }
 
@@ -960,7 +1022,10 @@ List<EvaluatedAlert> _engineAlerts({
   );
 }
 
-AlertRuntime _runtimeWithSettings(CachedAlertSettings settings) {
+AlertRuntime _runtimeWithSettings(
+  CachedAlertSettings settings, {
+  AlertRuntimeConfig config = const AlertRuntimeConfig(),
+}) {
   final AlertSettingsCache cache = AlertSettingsCache();
   cache.updateFromPayload(
     tenantId: settings.tenantId,
@@ -970,6 +1035,7 @@ AlertRuntime _runtimeWithSettings(CachedAlertSettings settings) {
   return AlertRuntime(
     settingsCache: cache,
     roomWashRegistry: RoomWashRegistry(),
+    config: config,
   );
 }
 
