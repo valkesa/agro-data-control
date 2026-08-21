@@ -387,7 +387,7 @@ class _EnvironmentTableRow {
     required this.differentialPressurePa,
     required this.differentialPressureAlarm,
     required this.fanPercent,
-    required this.heatingOn,
+    required this.heatingStageCount,
     required this.evaporativePanelOn,
     required this.nh3,
   });
@@ -444,7 +444,7 @@ class _EnvironmentTableRow {
       fanPercent: blocked
           ? null
           : _normalizeVoltageToPercent(unit.tensionSalidaVentiladores),
-      heatingOn: blocked ? null : _hasAnyHeatingOn(unit),
+      heatingStageCount: blocked ? null : _activeHeatingStageCount(unit),
       evaporativePanelOn: blocked ? null : unit.bombaHumidificador,
       nh3: blocked ? null : unit.nh3,
     );
@@ -467,7 +467,7 @@ class _EnvironmentTableRow {
   final double? differentialPressurePa;
   final _EnvironmentAlarmLevel differentialPressureAlarm;
   final double? fanPercent;
-  final bool? heatingOn;
+  final int? heatingStageCount;
   final bool? evaporativePanelOn;
   final double? nh3;
 }
@@ -675,7 +675,7 @@ class _EnvironmentTableGrid extends StatelessWidget {
           alarmLevel: row.differentialPressureAlarm,
         ),
         _fanCell(row.fanPercent),
-        _heatingCell(row.heatingOn),
+        _heatingCell(row.heatingStageCount),
         _panelCell(row.evaporativePanelOn),
         _EnvironmentTablePigCell(
           tenantId: tenantId,
@@ -808,14 +808,21 @@ class _EnvironmentTableGrid extends StatelessWidget {
     );
   }
 
-  Widget _heatingCell(bool? heatingOn) {
-    if (heatingOn == true) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-        child: Center(child: _AnimatedHeatingFlameIcon(active: true, size: 18)),
+  Widget _heatingCell(int? heatingStageCount) {
+    if (heatingStageCount != null && heatingStageCount > 0) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+        child: Center(
+          child: _HeatingFlameStageIcons(
+            activeStageCount: heatingStageCount,
+            size: 18,
+            gap: 1,
+            keyPrefix: 'environment-table-heating-stage',
+          ),
+        ),
       );
     }
-    return _panelCell(heatingOn);
+    return _panelCell(heatingStageCount == null ? null : heatingStageCount > 0);
   }
 
   Widget _doorCell(bool? open) {
@@ -3245,7 +3252,9 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                       Align(
                         alignment: Alignment.centerLeft,
                         child: _LargeEnvironmentStatusIcons(
-                          heatingActive: !blocked && _hasAnyHeatingOn(unit),
+                          heatingStageCount: blocked
+                              ? 0
+                              : _activeHeatingStageCount(unit) ?? 0,
                           coolingActive:
                               !blocked && unit.bombaHumidificador == true,
                           scale: scale,
@@ -3270,7 +3279,9 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     _LargeEnvironmentStatusIcons(
-                      heatingActive: !blocked && _hasAnyHeatingOn(unit),
+                      heatingStageCount: blocked
+                          ? 0
+                          : _activeHeatingStageCount(unit) ?? 0,
                       coolingActive:
                           !blocked && unit.bombaHumidificador == true,
                       scale: scale,
@@ -4048,13 +4059,13 @@ class _EnvironmentScaledValue extends StatelessWidget {
 
 class _LargeEnvironmentStatusIcons extends StatelessWidget {
   const _LargeEnvironmentStatusIcons({
-    required this.heatingActive,
+    required this.heatingStageCount,
     required this.coolingActive,
     required this.scale,
     this.compactWidget = false,
   });
 
-  final bool heatingActive;
+  final int heatingStageCount;
   final bool coolingActive;
   final double scale;
   final bool compactWidget;
@@ -4064,12 +4075,20 @@ class _LargeEnvironmentStatusIcons extends StatelessWidget {
     final double iconSize = compactWidget
         ? 14
         : _LargeEnvironmentUnitCard._widgetIconBaseSize * scale;
+    final int displayStageCount = heatingStageCount.clamp(1, 3).toInt();
+    final double flameGap = compactWidget ? 1 : 2 * scale;
+    final double flameWidth =
+        (iconSize * displayStageCount) + (flameGap * (displayStageCount - 1));
     return SizedBox(
-      width: compactWidget ? 18 : iconSize,
+      width: flameWidth,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          _AnimatedHeatingFlameIcon(active: heatingActive, size: iconSize),
+          _HeatingFlameStageIcons(
+            activeStageCount: heatingStageCount,
+            size: iconSize,
+            gap: flameGap,
+          ),
           SizedBox(height: compactWidget ? 6 : 7 * scale),
           Icon(
             Icons.ac_unit,
@@ -4084,8 +4103,51 @@ class _LargeEnvironmentStatusIcons extends StatelessWidget {
   }
 }
 
+class _HeatingFlameStageIcons extends StatelessWidget {
+  const _HeatingFlameStageIcons({
+    required this.activeStageCount,
+    required this.size,
+    this.gap = 2,
+    this.keyPrefix,
+  });
+
+  final int activeStageCount;
+  final double size;
+  final double gap;
+  final String? keyPrefix;
+
+  @override
+  Widget build(BuildContext context) {
+    final int displayStageCount = activeStageCount.clamp(0, 3).toInt();
+    if (displayStageCount <= 0) {
+      return _AnimatedHeatingFlameIcon(
+        key: keyPrefix == null ? null : ValueKey<String>('$keyPrefix-0'),
+        active: false,
+        size: size,
+      );
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        for (int i = 0; i < displayStageCount; i++) ...[
+          _AnimatedHeatingFlameIcon(
+            key: keyPrefix == null ? null : ValueKey<String>('$keyPrefix-$i'),
+            active: true,
+            size: size,
+          ),
+          if (i < displayStageCount - 1) SizedBox(width: gap),
+        ],
+      ],
+    );
+  }
+}
+
 class _AnimatedHeatingFlameIcon extends StatefulWidget {
-  const _AnimatedHeatingFlameIcon({required this.active, required this.size});
+  const _AnimatedHeatingFlameIcon({
+    super.key,
+    required this.active,
+    required this.size,
+  });
 
   final bool active;
   final double size;
@@ -6653,7 +6715,15 @@ _ModuleStatus _resolveAperturasStatusForUnit(MuntersModel unit) {
 }
 
 bool _hasAnyHeatingOn(MuntersModel unit) {
-  return unit.resistencia1 == true || unit.resistencia2 == true;
+  return (_activeHeatingStageCount(unit) ?? 0) > 0;
+}
+
+int? _activeHeatingStageCount(MuntersModel unit) {
+  final List<bool?> stages = <bool?>[unit.resistencia1, unit.resistencia2];
+  if (stages.every((bool? active) => active == null)) {
+    return null;
+  }
+  return stages.where((bool? active) => active == true).length;
 }
 
 bool _areBothHeatingStagesOff(MuntersModel unit) {

@@ -126,6 +126,35 @@ void main() {
 
     expect(find.text('-'), findsWidgets);
   });
+
+  testWidgets('shows one flame per active heating stage', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EnvironmentTablePage(
+            units: <MuntersModel>[_salaTwoHeatingStages()],
+            labels: const <String>['Sala 1'],
+            plcIds: const <String?>['munters1'],
+            tenantId: null,
+            siteId: null,
+            rangeSettings: const DashboardRangeSettings.defaults(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(
+      find.byWidgetPredicate((Widget widget) {
+        final Key? key = widget.key;
+        return key is ValueKey<String> &&
+            key.value.startsWith('environment-table-heating-stage-');
+      }),
+      findsNWidgets(2),
+    );
+  });
 }
 
 MuntersModel _sala1Healthy() {
@@ -183,6 +212,42 @@ MuntersModel _sala2Alarm() {
     resistencia1: false,
     resistencia2: false,
     alarmaGeneral: true,
+    fallaRed: false,
+    nivelAguaAlarma: false,
+    fallaTermicaBomba: false,
+    eventosSinAgua: 0,
+    horasMunter: 0,
+    horasFiltroF9: 0,
+    horasFiltroG4: 0,
+    horasPolifosfato: 0,
+    salaAbierta: false,
+    aperturasSala: 0,
+    munterAbierto: false,
+    aperturasMunter: 0,
+    cantidadApagadas: 0,
+    estadoEquipo: 'RUN',
+  );
+}
+
+MuntersModel _salaTwoHeatingStages() {
+  return const MuntersModel(
+    name: 'Sala 1',
+    tempInterior: 22.1,
+    tempIngresoSala: null,
+    humInterior: 60,
+    tempExterior: 18,
+    humExterior: 70,
+    tensionSalidaVentiladores: 400,
+    bombaHumidificador: false,
+    fanQ5: false,
+    fanQ6: false,
+    fanQ7: false,
+    fanQ8: false,
+    fanQ9: false,
+    fanQ10: false,
+    resistencia1: true,
+    resistencia2: true,
+    alarmaGeneral: false,
     fallaRed: false,
     nivelAguaAlarma: false,
     fallaTermicaBomba: false,
