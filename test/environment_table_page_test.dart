@@ -155,6 +155,59 @@ void main() {
       findsNWidgets(2),
     );
   });
+
+  testWidgets('shows inactive configured heating stages dimmed', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EnvironmentTablePage(
+            units: <MuntersModel>[_salaOneOfTwoHeatingStages()],
+            labels: const <String>['Sala 1'],
+            plcIds: const <String?>['munters1'],
+            tenantId: null,
+            siteId: null,
+            rangeSettings: const DashboardRangeSettings.defaults(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final Iterable<Icon> stageIcons = tester
+        .widgetList<Icon>(find.byIcon(Icons.local_fire_department))
+        .where((Icon icon) => icon.size == 18);
+    expect(stageIcons, hasLength(2));
+    expect(
+      stageIcons.map((Icon icon) => icon.color).toList(),
+      containsAll(<Color>[const Color(0xFFF97316), const Color(0xFF64748B)]),
+    );
+  });
+
+  testWidgets('shows sensor failure icon instead of invalid temperature', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: EnvironmentTablePage(
+            units: <MuntersModel>[_salaSensorFailure()],
+            labels: const <String>['Sala 1'],
+            plcIds: const <String?>['munters1'],
+            tenantId: null,
+            siteId: null,
+            rangeSettings: const DashboardRangeSettings.defaults(),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('-51.0'), findsNothing);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byTooltip('Falla sensor (cod. -51)'), findsOneWidget);
+  });
 }
 
 MuntersModel _sala1Healthy() {
@@ -247,6 +300,78 @@ MuntersModel _salaTwoHeatingStages() {
     fanQ10: false,
     resistencia1: true,
     resistencia2: true,
+    alarmaGeneral: false,
+    fallaRed: false,
+    nivelAguaAlarma: false,
+    fallaTermicaBomba: false,
+    eventosSinAgua: 0,
+    horasMunter: 0,
+    horasFiltroF9: 0,
+    horasFiltroG4: 0,
+    horasPolifosfato: 0,
+    salaAbierta: false,
+    aperturasSala: 0,
+    munterAbierto: false,
+    aperturasMunter: 0,
+    cantidadApagadas: 0,
+    estadoEquipo: 'RUN',
+  );
+}
+
+MuntersModel _salaOneOfTwoHeatingStages() {
+  return const MuntersModel(
+    name: 'Sala 1',
+    tempInterior: 22.1,
+    tempIngresoSala: null,
+    humInterior: 60,
+    tempExterior: 18,
+    humExterior: 70,
+    tensionSalidaVentiladores: 400,
+    bombaHumidificador: false,
+    fanQ5: false,
+    fanQ6: false,
+    fanQ7: false,
+    fanQ8: false,
+    fanQ9: false,
+    fanQ10: false,
+    resistencia1: true,
+    resistencia2: false,
+    alarmaGeneral: false,
+    fallaRed: false,
+    nivelAguaAlarma: false,
+    fallaTermicaBomba: false,
+    eventosSinAgua: 0,
+    horasMunter: 0,
+    horasFiltroF9: 0,
+    horasFiltroG4: 0,
+    horasPolifosfato: 0,
+    salaAbierta: false,
+    aperturasSala: 0,
+    munterAbierto: false,
+    aperturasMunter: 0,
+    cantidadApagadas: 0,
+    estadoEquipo: 'RUN',
+  );
+}
+
+MuntersModel _salaSensorFailure() {
+  return const MuntersModel(
+    name: 'Sala 1',
+    tempInterior: -51,
+    tempIngresoSala: null,
+    humInterior: 60,
+    tempExterior: 18,
+    humExterior: 70,
+    tensionSalidaVentiladores: 400,
+    bombaHumidificador: false,
+    fanQ5: false,
+    fanQ6: false,
+    fanQ7: false,
+    fanQ8: false,
+    fanQ9: false,
+    fanQ10: false,
+    resistencia1: false,
+    resistencia2: false,
     alarmaGeneral: false,
     fallaRed: false,
     nivelAguaAlarma: false,

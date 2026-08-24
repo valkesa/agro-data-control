@@ -266,6 +266,8 @@ class AlertNotificationFormatter {
     return switch (alert.type) {
       AlertType.muntersDoorOpen => 'Puerta Munters abierta',
       AlertType.roomDoorOpen => 'Puerta de sala abierta',
+      AlertType.sensorFailure =>
+        'Falla sensor (cod. ${_value(alert.measuredValue)})',
       AlertType.temperatureInterior =>
         alert.thresholdKind == AlertThresholdKind.minimum
             ? 'Temperatura interior: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)'

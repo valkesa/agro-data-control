@@ -15,6 +15,7 @@ List<AlertEvaluator> buildDefaultAlertEvaluators() {
   return List<AlertEvaluator>.unmodifiable(<AlertEvaluator>[
     const MuntersDoorOpenEvaluator(),
     const RoomDoorOpenEvaluator(),
+    const SensorFailureEvaluator(),
     const TemperatureInteriorEvaluator(),
     const HighTemperatureHeatingEvaluator(),
     const LowTemperatureHumidifierEvaluator(),
@@ -175,6 +176,35 @@ class RoomDoorOpenEvaluator extends AlertEvaluator {
   }
 }
 
+class SensorFailureEvaluator extends AlertEvaluator {
+  const SensorFailureEvaluator();
+
+  @override
+  AlertType get type => AlertType.sensorFailure;
+
+  @override
+  EvaluatedAlert? evaluate(AlertEvaluationContext context) {
+    if (!_hasInteriorTemperatureSensorFailure(context)) {
+      return null;
+    }
+    final CachedAlertToggle toggle = context.settings.alerts.sensorFailure;
+    final double temperature = _finiteDouble(context.snapshot['tempInterior'])!;
+    final double minimum = context.thresholds.temperatureSensorFailureMin ?? 0;
+    return EvaluatedAlert(
+      key: context.identity.key(type),
+      type: type,
+      isActive: true,
+      sendWhatsapp: toggle.sendWhatsapp,
+      measuredValue: temperature,
+      thresholdValue: minimum,
+      thresholdKind: AlertThresholdKind.minimum,
+      unit: '°C',
+      evaluatedAt: context.evaluatedAt,
+      configVersion: context.settings.configVersion,
+    );
+  }
+}
+
 class TemperatureInteriorEvaluator extends AlertEvaluator {
   const TemperatureInteriorEvaluator();
 
@@ -189,6 +219,7 @@ class TemperatureInteriorEvaluator extends AlertEvaluator {
     final double? minimum = context.thresholds.temperatureMin;
     final double? maximum = context.thresholds.temperatureMax;
     if (!toggle.enabled ||
+        _hasInteriorTemperatureSensorFailure(context) ||
         temperature == null ||
         minimum == null ||
         maximum == null ||
@@ -244,6 +275,7 @@ class HighTemperatureHeatingEvaluator extends AlertEvaluator {
         context.snapshot['resistencia1'] == true ||
         context.snapshot['resistencia2'] == true;
     if (!toggle.enabled ||
+        _hasInteriorTemperatureSensorFailure(context) ||
         temperature == null ||
         maximum == null ||
         !maximum.isFinite ||
@@ -280,6 +312,7 @@ class LowTemperatureHumidifierEvaluator extends AlertEvaluator {
     final double? minimum = context.thresholds.temperatureMin;
     final bool pumpActive = context.snapshot['bombaHumidificador'] == true;
     if (!toggle.enabled ||
+        _hasInteriorTemperatureSensorFailure(context) ||
         temperature == null ||
         minimum == null ||
         !minimum.isFinite ||
@@ -389,6 +422,7 @@ class DewPointRiskEvaluator extends AlertEvaluator {
     final double? redMaxInclusive =
         context.thresholds.dewPointMarginRedMaxInclusive;
     if (!toggle.enabled ||
+        _hasInteriorTemperatureSensorFailure(context) ||
         temperature == null ||
         humidity == null ||
         redMaxInclusive == null ||
@@ -415,6 +449,16 @@ class DewPointRiskEvaluator extends AlertEvaluator {
       configVersion: context.settings.configVersion,
     );
   }
+}
+
+bool _hasInteriorTemperatureSensorFailure(AlertEvaluationContext context) {
+  final CachedAlertToggle toggle = context.settings.alerts.sensorFailure;
+  final double? temperature = _finiteDouble(context.snapshot['tempInterior']);
+  final double minimum = context.thresholds.temperatureSensorFailureMin ?? 0;
+  return toggle.enabled &&
+      temperature != null &&
+      minimum.isFinite &&
+      temperature < minimum;
 }
 
 double? _finiteDouble(Object? value) {

@@ -79,6 +79,9 @@ Map<String, Object?> _sharedMuntersSettings(DashboardRangeSettings ranges) {
       'min': ranges.temperatureMin,
       'opt': (ranges.temperatureMin + ranges.temperatureMax) / 2,
       'max': ranges.temperatureMax,
+      'sensorFailure': <String, Object?>{
+        'min': ranges.temperatureSensorFailureMin,
+      },
     },
     'humidityInterior': <String, Object?>{
       'min': ranges.humidityMin,

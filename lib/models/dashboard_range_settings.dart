@@ -2,6 +2,7 @@ class DashboardRangeSettings {
   const DashboardRangeSettings({
     required this.temperatureMin,
     required this.temperatureMax,
+    required this.temperatureSensorFailureMin,
     required this.humidityMin,
     required this.humidityMax,
     required this.filterPressureMax,
@@ -16,6 +17,7 @@ class DashboardRangeSettings {
   const DashboardRangeSettings.defaults()
     : temperatureMin = 15,
       temperatureMax = 32,
+      temperatureSensorFailureMin = 0,
       humidityMin = 30,
       humidityMax = 80,
       filterPressureMax = 30,
@@ -28,6 +30,7 @@ class DashboardRangeSettings {
 
   final double temperatureMin;
   final double temperatureMax;
+  final double temperatureSensorFailureMin;
   final double humidityMin;
   final double humidityMax;
   final double filterPressureMax;
@@ -41,6 +44,7 @@ class DashboardRangeSettings {
   DashboardRangeSettings copyWith({
     double? temperatureMin,
     double? temperatureMax,
+    double? temperatureSensorFailureMin,
     double? humidityMin,
     double? humidityMax,
     double? filterPressureMax,
@@ -54,6 +58,8 @@ class DashboardRangeSettings {
     return DashboardRangeSettings(
       temperatureMin: temperatureMin ?? this.temperatureMin,
       temperatureMax: temperatureMax ?? this.temperatureMax,
+      temperatureSensorFailureMin:
+          temperatureSensorFailureMin ?? this.temperatureSensorFailureMin,
       humidityMin: humidityMin ?? this.humidityMin,
       humidityMax: humidityMax ?? this.humidityMax,
       filterPressureMax: filterPressureMax ?? this.filterPressureMax,

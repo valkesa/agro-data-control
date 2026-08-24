@@ -376,6 +376,7 @@ class CachedAlertToggles {
   const CachedAlertToggles({
     required this.muntersDoorOpen,
     required this.roomDoorOpen,
+    required this.sensorFailure,
     required this.temperatureInterior,
     required this.highTemperatureHeatingActive,
     required this.lowTemperatureHumidifierActive,
@@ -399,6 +400,11 @@ class CachedAlertToggles {
         source['roomDoorOpen'],
         defaultOrder:
             AlertMetadataRegistry.priorityIndex(AlertType.roomDoorOpen) + 1,
+      ),
+      AlertType.sensorFailure: CachedAlertToggle.fromRaw(
+        source['sensorFailure'],
+        defaultOrder:
+            AlertMetadataRegistry.priorityIndex(AlertType.sensorFailure) + 1,
       ),
       AlertType.temperatureInterior: CachedAlertToggle.fromRaw(
         source['temperatureInterior'],
@@ -446,6 +452,7 @@ class CachedAlertToggles {
     return CachedAlertToggles(
       muntersDoorOpen: normalized[AlertType.muntersDoorOpen]!,
       roomDoorOpen: normalized[AlertType.roomDoorOpen]!,
+      sensorFailure: normalized[AlertType.sensorFailure]!,
       temperatureInterior: normalized[AlertType.temperatureInterior]!,
       highTemperatureHeatingActive:
           normalized[AlertType.highTemperatureHeatingActive]!,
@@ -459,6 +466,7 @@ class CachedAlertToggles {
 
   final CachedAlertToggle muntersDoorOpen;
   final CachedAlertToggle roomDoorOpen;
+  final CachedAlertToggle sensorFailure;
   final CachedAlertToggle temperatureInterior;
   final CachedAlertToggle highTemperatureHeatingActive;
   final CachedAlertToggle lowTemperatureHumidifierActive;
@@ -470,6 +478,7 @@ class CachedAlertToggles {
     return switch (type) {
       AlertType.muntersDoorOpen => muntersDoorOpen,
       AlertType.roomDoorOpen => roomDoorOpen,
+      AlertType.sensorFailure => sensorFailure,
       AlertType.temperatureInterior => temperatureInterior,
       AlertType.highTemperatureHeatingActive => highTemperatureHeatingActive,
       AlertType.lowTemperatureHumidifierActive =>
@@ -575,6 +584,7 @@ class CachedAlertThresholds {
   const CachedAlertThresholds({
     required this.temperatureMin,
     required this.temperatureMax,
+    required this.temperatureSensorFailureMin,
     required this.humidityRedMinExclusive,
     required this.dewPointMarginRedMaxInclusive,
     required this.filterPressureMax,
@@ -596,6 +606,16 @@ class CachedAlertThresholds {
       temperatureMax: _readDouble(raw, <List<String>>[
         <String>['munters', muntersId, 'tempInterior', 'max'],
         const <String>['munters', 'munters1', 'tempInterior', 'max'],
+      ]),
+      temperatureSensorFailureMin: _readDouble(raw, <List<String>>[
+        <String>['munters', muntersId, 'tempInterior', 'sensorFailure', 'min'],
+        const <String>[
+          'munters',
+          'munters1',
+          'tempInterior',
+          'sensorFailure',
+          'min',
+        ],
       ]),
       humidityRedMinExclusive: _readDouble(raw, <List<String>>[
         <String>[
@@ -638,6 +658,7 @@ class CachedAlertThresholds {
 
   final double? temperatureMin;
   final double? temperatureMax;
+  final double? temperatureSensorFailureMin;
   final double? humidityRedMinExclusive;
   final double? dewPointMarginRedMaxInclusive;
   final double? filterPressureMax;

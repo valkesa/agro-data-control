@@ -388,6 +388,7 @@ class _EnvironmentTableRow {
     required this.differentialPressureAlarm,
     required this.fanPercent,
     required this.heatingStageCount,
+    required this.heatingStageTotal,
     required this.evaporativePanelOn,
     required this.nh3,
   });
@@ -445,6 +446,7 @@ class _EnvironmentTableRow {
           ? null
           : _normalizeVoltageToPercent(unit.tensionSalidaVentiladores),
       heatingStageCount: blocked ? null : _activeHeatingStageCount(unit),
+      heatingStageTotal: blocked ? null : _configuredHeatingStageCount(unit),
       evaporativePanelOn: blocked ? null : unit.bombaHumidificador,
       nh3: blocked ? null : unit.nh3,
     );
@@ -468,6 +470,7 @@ class _EnvironmentTableRow {
   final _EnvironmentAlarmLevel differentialPressureAlarm;
   final double? fanPercent;
   final int? heatingStageCount;
+  final int? heatingStageTotal;
   final bool? evaporativePanelOn;
   final double? nh3;
 }
@@ -660,6 +663,7 @@ class _EnvironmentTableGrid extends StatelessWidget {
         _valueCell(
           row.temperatureC?.toStringAsFixed(1) ?? '-',
           alarmLevel: row.temperatureAlarm,
+          sensorFailureCode: row.temperatureC,
         ),
         _valueCell(
           row.dewPointDeltaC?.toStringAsFixed(1) ?? '-',
@@ -675,7 +679,7 @@ class _EnvironmentTableGrid extends StatelessWidget {
           alarmLevel: row.differentialPressureAlarm,
         ),
         _fanCell(row.fanPercent),
-        _heatingCell(row.heatingStageCount),
+        _heatingCell(row.heatingStageCount, row.heatingStageTotal),
         _panelCell(row.evaporativePanelOn),
         _EnvironmentTablePigCell(
           tenantId: tenantId,
@@ -808,13 +812,14 @@ class _EnvironmentTableGrid extends StatelessWidget {
     );
   }
 
-  Widget _heatingCell(int? heatingStageCount) {
-    if (heatingStageCount != null && heatingStageCount > 0) {
+  Widget _heatingCell(int? heatingStageCount, int? heatingStageTotal) {
+    if (heatingStageCount != null && heatingStageTotal != null) {
       return Padding(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
         child: Center(
           child: _HeatingFlameStageIcons(
             activeStageCount: heatingStageCount,
+            totalStageCount: heatingStageTotal,
             size: 18,
             gap: 1,
             keyPrefix: 'environment-table-heating-stage',
@@ -888,10 +893,25 @@ class _EnvironmentTableGrid extends StatelessWidget {
     );
   }
 
-  Widget _valueCell(String text, {_EnvironmentAlarmLevel? alarmLevel}) {
+  Widget _valueCell(
+    String text, {
+    _EnvironmentAlarmLevel? alarmLevel,
+    double? sensorFailureCode,
+  }) {
     final bool missingData = text == 'Sin datos';
     final _EnvironmentAlarmLevel effectiveAlarm =
         alarmLevel ?? _EnvironmentAlarmLevel.pending;
+    if (effectiveAlarm == _EnvironmentAlarmLevel.sensorFailure) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 9),
+        child: Center(
+          child: _SensorFailureIcon(
+            size: 18,
+            tooltip: _sensorFailureTooltip(sensorFailureCode),
+          ),
+        ),
+      );
+    }
     final bool alert =
         effectiveAlarm == _EnvironmentAlarmLevel.yellow ||
         effectiveAlarm == _EnvironmentAlarmLevel.red;
@@ -3056,6 +3076,7 @@ class _EnvironmentAlarmLevels {
 
   bool get hasRed =>
       temperature == _EnvironmentAlarmLevel.red ||
+      temperature == _EnvironmentAlarmLevel.sensorFailure ||
       humidity == _EnvironmentAlarmLevel.red ||
       dewPoint == _EnvironmentAlarmLevel.red;
 
@@ -3082,12 +3103,18 @@ _EnvironmentAlarmLevels _assessEnvironmentAlarmLevels({
           relativeHumidityPercent: unit.humInterior,
         );
 
+  final bool sensorFailure = _hasInteriorTemperatureSensorFailure(
+    unit,
+    rangeSettings,
+  );
   final bool tempInRange =
       temp != null &&
       temp >= rangeSettings.temperatureMin &&
       temp <= rangeSettings.temperatureMax;
   final _EnvironmentAlarmLevel temperatureLevel = temp == null
       ? _EnvironmentAlarmLevel.pending
+      : sensorFailure
+      ? _EnvironmentAlarmLevel.sensorFailure
       : tempInRange
       ? _EnvironmentAlarmLevel.green
       : _EnvironmentAlarmLevel.red;
@@ -3104,11 +3131,13 @@ _EnvironmentAlarmLevels _assessEnvironmentAlarmLevels({
       ? _EnvironmentAlarmLevel.yellow
       : rawHumidityLevel;
 
-  final _EnvironmentAlarmLevel dewPointLevel = _assessDewPointMarginAlarm(
-    temperatureC: temp,
-    dewPointC: dewPoint,
-    rangeSettings: rangeSettings,
-  );
+  final _EnvironmentAlarmLevel dewPointLevel = sensorFailure
+      ? _EnvironmentAlarmLevel.pending
+      : _assessDewPointMarginAlarm(
+          temperatureC: temp,
+          dewPointC: dewPoint,
+          rangeSettings: rangeSettings,
+        );
 
   return _EnvironmentAlarmLevels(
     temperature: temperatureLevel,
@@ -3187,13 +3216,18 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
       blocked: blocked,
     );
     final bool tempInRange =
-        alarmLevels.temperature != _EnvironmentAlarmLevel.red;
+        alarmLevels.temperature != _EnvironmentAlarmLevel.red &&
+        alarmLevels.temperature != _EnvironmentAlarmLevel.sensorFailure;
     final bool humidityHighWithRecentWash =
         alarmLevels.humidityHighWithRecentWash;
     final _EnvironmentAlarmLevel humidityAlarmLevel = alarmLevels.humidity;
     final _EnvironmentAlarmLevel dewPointAlarmLevel = alarmLevels.dewPoint;
+    final bool temperatureSensorFailure =
+        alarmLevels.temperature == _EnvironmentAlarmLevel.sensorFailure;
     final Color tempColor = temp == null
         ? const Color(0xFF94A3B8)
+        : temperatureSensorFailure
+        ? const Color(0xFFEF4444)
         : tempInRange
         ? const Color(0xFF22C55E)
         : const Color(0xFFEF4444);
@@ -3255,6 +3289,9 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                           heatingStageCount: blocked
                               ? 0
                               : _activeHeatingStageCount(unit) ?? 0,
+                          heatingStageTotal: blocked
+                              ? 1
+                              : _configuredHeatingStageCount(unit) ?? 1,
                           coolingActive:
                               !blocked && unit.bombaHumidificador == true,
                           scale: scale,
@@ -3262,15 +3299,20 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                         ),
                       ),
                       Center(
-                        child: _EnvironmentScaledValue(
-                          value: temp?.toStringAsFixed(1),
-                          unit: '°C',
-                          color: tempColor,
-                          fontSize: 22,
-                          unitFontSize: 6,
-                          scaleDown: false,
-                          overflowScaleDown: true,
-                        ),
+                        child: temperatureSensorFailure
+                            ? _SensorFailureIcon(
+                                size: 24,
+                                tooltip: _sensorFailureTooltip(temp),
+                              )
+                            : _EnvironmentScaledValue(
+                                value: temp?.toStringAsFixed(1),
+                                unit: '°C',
+                                color: tempColor,
+                                fontSize: 22,
+                                unitFontSize: 6,
+                                scaleDown: false,
+                                overflowScaleDown: true,
+                              ),
                       ),
                     ],
                   ),
@@ -3282,19 +3324,27 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
                       heatingStageCount: blocked
                           ? 0
                           : _activeHeatingStageCount(unit) ?? 0,
+                      heatingStageTotal: blocked
+                          ? 1
+                          : _configuredHeatingStageCount(unit) ?? 1,
                       coolingActive:
                           !blocked && unit.bombaHumidificador == true,
                       scale: scale,
                     ),
                     SizedBox(width: 8 * scale),
                     Flexible(
-                      child: _EnvironmentScaledValue(
-                        value: temp?.toStringAsFixed(1),
-                        unit: '°C',
-                        color: tempColor,
-                        fontSize: 86 * scale,
-                        unitFontSize: 24 * scale,
-                      ),
+                      child: temperatureSensorFailure
+                          ? _SensorFailureIcon(
+                              size: 54 * scale,
+                              tooltip: _sensorFailureTooltip(temp),
+                            )
+                          : _EnvironmentScaledValue(
+                              value: temp?.toStringAsFixed(1),
+                              unit: '°C',
+                              color: tempColor,
+                              fontSize: 86 * scale,
+                              unitFontSize: 24 * scale,
+                            ),
                     ),
                   ],
                 ),
@@ -4060,12 +4110,14 @@ class _EnvironmentScaledValue extends StatelessWidget {
 class _LargeEnvironmentStatusIcons extends StatelessWidget {
   const _LargeEnvironmentStatusIcons({
     required this.heatingStageCount,
+    required this.heatingStageTotal,
     required this.coolingActive,
     required this.scale,
     this.compactWidget = false,
   });
 
   final int heatingStageCount;
+  final int heatingStageTotal;
   final bool coolingActive;
   final double scale;
   final bool compactWidget;
@@ -4075,7 +4127,7 @@ class _LargeEnvironmentStatusIcons extends StatelessWidget {
     final double iconSize = compactWidget
         ? 14
         : _LargeEnvironmentUnitCard._widgetIconBaseSize * scale;
-    final int displayStageCount = heatingStageCount.clamp(1, 3).toInt();
+    final int displayStageCount = heatingStageTotal.clamp(1, 3).toInt();
     final double flameGap = compactWidget ? 1 : 2 * scale;
     final double flameWidth =
         (iconSize * displayStageCount) + (flameGap * (displayStageCount - 1));
@@ -4086,6 +4138,7 @@ class _LargeEnvironmentStatusIcons extends StatelessWidget {
         children: [
           _HeatingFlameStageIcons(
             activeStageCount: heatingStageCount,
+            totalStageCount: heatingStageTotal,
             size: iconSize,
             gap: flameGap,
           ),
@@ -4106,38 +4159,53 @@ class _LargeEnvironmentStatusIcons extends StatelessWidget {
 class _HeatingFlameStageIcons extends StatelessWidget {
   const _HeatingFlameStageIcons({
     required this.activeStageCount,
+    required this.totalStageCount,
     required this.size,
     this.gap = 2,
     this.keyPrefix,
   });
 
   final int activeStageCount;
+  final int totalStageCount;
   final double size;
   final double gap;
   final String? keyPrefix;
 
   @override
   Widget build(BuildContext context) {
-    final int displayStageCount = activeStageCount.clamp(0, 3).toInt();
-    if (displayStageCount <= 0) {
-      return _AnimatedHeatingFlameIcon(
-        key: keyPrefix == null ? null : ValueKey<String>('$keyPrefix-0'),
-        active: false,
-        size: size,
-      );
-    }
+    final int displayStageCount = totalStageCount.clamp(1, 3).toInt();
+    final int activeDisplayCount = activeStageCount.clamp(0, 3).toInt();
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: <Widget>[
         for (int i = 0; i < displayStageCount; i++) ...[
           _AnimatedHeatingFlameIcon(
             key: keyPrefix == null ? null : ValueKey<String>('$keyPrefix-$i'),
-            active: true,
+            active: i < activeDisplayCount,
             size: size,
           ),
           if (i < displayStageCount - 1) SizedBox(width: gap),
         ],
       ],
+    );
+  }
+}
+
+class _SensorFailureIcon extends StatelessWidget {
+  const _SensorFailureIcon({required this.size, required this.tooltip});
+
+  final double size;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: Icon(
+        Icons.error_outline,
+        size: size,
+        color: const Color(0xFFEF4444),
+      ),
     );
   }
 }
@@ -6726,6 +6794,14 @@ int? _activeHeatingStageCount(MuntersModel unit) {
   return stages.where((bool? active) => active == true).length;
 }
 
+int? _configuredHeatingStageCount(MuntersModel unit) {
+  final int count = <bool?>[
+    unit.resistencia1,
+    unit.resistencia2,
+  ].where((bool? active) => active != null).length;
+  return count == 0 ? null : count;
+}
+
 bool _areBothHeatingStagesOff(MuntersModel unit) {
   return unit.resistencia1 == false && unit.resistencia2 == false;
 }
@@ -6742,6 +6818,9 @@ bool _isTempBelowMinimumAndHeatingOff(
   DashboardRangeSettings rangeSettings,
 ) {
   if (_shouldBlockOperationalData(unit)) {
+    return false;
+  }
+  if (_hasInteriorTemperatureSensorFailure(unit, rangeSettings)) {
     return false;
   }
   final double? temp = unit.tempInterior;
@@ -6820,6 +6899,9 @@ String? _temperatureAlarmTooltipForUnit(
   MuntersModel unit,
   DashboardRangeSettings rangeSettings,
 ) {
+  if (_hasInteriorTemperatureSensorFailure(unit, rangeSettings)) {
+    return _sensorFailureTooltip(unit.tempInterior);
+  }
   final List<String> notices = <String>{
     ..._humidificationNoticesForUnit(unit, rangeSettings),
     ..._calefaccionNoticesForUnit(unit, rangeSettings),
@@ -6830,7 +6912,7 @@ String? _temperatureAlarmTooltipForUnit(
   return 'Alarma: ${notices.join(' / ')}';
 }
 
-enum _EnvironmentAlarmLevel { pending, green, yellow, red }
+enum _EnvironmentAlarmLevel { pending, green, yellow, red, sensorFailure }
 
 const double _environmentRedAlertBorderWidthFactor = 3.6;
 
@@ -6874,6 +6956,7 @@ Color _alarmLevelValueColor(_EnvironmentAlarmLevel level) {
     _EnvironmentAlarmLevel.green => const Color(0xFF22C55E),
     _EnvironmentAlarmLevel.yellow => const Color(0xFFFACC15),
     _EnvironmentAlarmLevel.red => const Color(0xFFEF4444),
+    _EnvironmentAlarmLevel.sensorFailure => const Color(0xFFEF4444),
   };
 }
 
@@ -6881,6 +6964,7 @@ Color? _alarmLevelBorderColor(_EnvironmentAlarmLevel level) {
   return switch (level) {
     _EnvironmentAlarmLevel.yellow => const Color(0xFFFACC15),
     _EnvironmentAlarmLevel.red => const Color(0xFFEF4444),
+    _EnvironmentAlarmLevel.sensorFailure => const Color(0xFFEF4444),
     _ => null,
   };
 }
@@ -6889,8 +6973,32 @@ double? _alarmLevelBorderWidth(_EnvironmentAlarmLevel level, double scale) {
   return switch (level) {
     _EnvironmentAlarmLevel.red => _environmentRedAlertBorderWidthFactor * scale,
     _EnvironmentAlarmLevel.yellow => 1.8 * scale,
+    _EnvironmentAlarmLevel.sensorFailure =>
+      _environmentRedAlertBorderWidthFactor * scale,
     _ => null,
   };
+}
+
+bool _hasInteriorTemperatureSensorFailure(
+  MuntersModel unit,
+  DashboardRangeSettings rangeSettings,
+) {
+  final double? temp = unit.tempInterior;
+  return temp != null && temp < rangeSettings.temperatureSensorFailureMin;
+}
+
+String _sensorFailureTooltip(double? measuredValue) {
+  return 'Falla sensor (cod. ${_formatSensorFailureCode(measuredValue)})';
+}
+
+String _formatSensorFailureCode(double? value) {
+  if (value == null || !value.isFinite) {
+    return '-';
+  }
+  if (value == value.roundToDouble()) {
+    return value.round().toString();
+  }
+  return value.toStringAsFixed(1);
 }
 
 enum _HumidityHeaderVisual { empty, low, medium, high }

@@ -256,6 +256,11 @@ class AlertProcessingCoordinator {
   }) {
     final CachedAlertThresholds thresholds = settings.thresholdsFor(muntersId);
     return switch (alert.type) {
+      AlertType.sensorFailure => _recoverMinimum(
+        measured: _finiteDouble(unitJson['tempInterior']),
+        threshold: thresholds.temperatureSensorFailureMin ?? 0,
+        hysteresis: runtime.config.hysteresis.temperatureC,
+      ),
       AlertType.temperatureInterior => _recoverTemperatureInterior(
         measured: _finiteDouble(unitJson['tempInterior']),
         minimum: thresholds.temperatureMin,

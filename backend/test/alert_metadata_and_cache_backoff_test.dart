@@ -24,6 +24,7 @@ void _testAlertOrderParsing() {
       'alerts': <String, Object?>{
         'muntersDoorOpen': <String, Object?>{'order': 7},
         'roomDoorOpen': <String, Object?>{'order': -1},
+        'sensorFailure': <String, Object?>{'order': null},
         'temperatureInterior': <String, Object?>{'order': null},
         'highTemperatureHeatingActive': <String, Object?>{'order': 1},
         'lowTemperatureHumidifierActive': <String, Object?>{'order': 1},
@@ -40,13 +41,14 @@ void _testAlertOrderParsing() {
     AlertType.highTemperatureHeatingActive,
     AlertType.lowTemperatureHumidifierActive,
     AlertType.roomDoorOpen,
-    AlertType.temperatureInterior,
+    AlertType.sensorFailure,
     AlertType.highHumidity,
+    AlertType.temperatureInterior,
     AlertType.highDifferentialPressure,
     AlertType.muntersDoorOpen,
     AlertType.dewPointRisk,
   ].map(settings.alerts.effectiveOrder).toList(growable: false);
-  _expect(orders.join(',') == '1,2,3,4,5,6,7,8', 'normalizes alert order');
+  _expect(orders.join(',') == '1,2,3,4,5,6,7,8,9', 'normalizes alert order');
   _expect(
     settings.alerts.compareAlertTypes(
           AlertType.highHumidity,
@@ -134,6 +136,7 @@ void _testMetadataRegistry() {
         <AlertType>[
           AlertType.muntersDoorOpen,
           AlertType.roomDoorOpen,
+          AlertType.sensorFailure,
           AlertType.temperatureInterior,
           AlertType.highTemperatureHeatingActive,
           AlertType.lowTemperatureHumidifierActive,

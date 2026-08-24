@@ -521,8 +521,8 @@ Future<void> _testWhatsAppCandidatesUseConfiguredOrder() async {
             .join(',') ==
         <AlertType>[
           AlertType.highHumidity,
-          AlertType.temperatureInterior,
           AlertType.highTemperatureHeatingActive,
+          AlertType.temperatureInterior,
           AlertType.muntersDoorOpen,
         ].join(','),
     'whatsapp candidates use configured order',
@@ -656,6 +656,19 @@ void _testTemperatureEvaluators() {
       ),
     ),
     'interior temperature equal threshold does not activate',
+  );
+  final List<EvaluatedAlert> sensorFailureAlerts = _engineAlerts(
+    settings: _settings(tempMin: 18.5),
+    unitJson: _unit(tempInterior: -51),
+  );
+  final EvaluatedAlert sensorFailure = sensorFailureAlerts.firstWhere(
+    (EvaluatedAlert alert) => alert.type == AlertType.sensorFailure,
+  );
+  _expect(
+    sensorFailure.measuredValue == -51 &&
+        sensorFailure.thresholdValue == 0 &&
+        !_hasAlert(AlertType.temperatureInterior, sensorFailureAlerts),
+    'sensor failure suppresses regular temperature alert',
   );
   _expect(
     _hasAlert(
@@ -1117,6 +1130,7 @@ String _settingsKey(AlertType type) {
   return switch (type) {
     AlertType.muntersDoorOpen => 'muntersDoorOpen',
     AlertType.roomDoorOpen => 'roomDoorOpen',
+    AlertType.sensorFailure => 'sensorFailure',
     AlertType.temperatureInterior => 'temperatureInterior',
     AlertType.highTemperatureHeatingActive => 'highTemperatureHeatingActive',
     AlertType.lowTemperatureHumidifierActive =>

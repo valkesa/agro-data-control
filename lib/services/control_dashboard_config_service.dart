@@ -372,6 +372,9 @@ Map<String, Object?> _sharedMuntersSettings(
       'min': thresholds.tempInteriorMin,
       'opt': thresholds.tempInteriorOpt,
       'max': thresholds.tempInteriorMax,
+      'sensorFailure': <String, Object?>{
+        'min': thresholds.tempInteriorSensorFailureMin,
+      },
     },
     'humidityInterior': <String, Object?>{
       'min': thresholds.humidityInteriorMin,
@@ -688,6 +691,7 @@ class ControlDashboardThresholds {
     required this.tempInteriorMin,
     required this.tempInteriorOpt,
     required this.tempInteriorMax,
+    required this.tempInteriorSensorFailureMin,
     required this.humidityInteriorMin,
     required this.humidityInteriorOpt,
     required this.humidityInteriorMax,
@@ -704,6 +708,7 @@ class ControlDashboardThresholds {
     : tempInteriorMin = null,
       tempInteriorOpt = null,
       tempInteriorMax = null,
+      tempInteriorSensorFailureMin = null,
       humidityInteriorMin = null,
       humidityInteriorOpt = null,
       humidityInteriorMax = null,
@@ -734,6 +739,13 @@ class ControlDashboardThresholds {
         'munters1',
         'tempInterior',
         'max',
+      ]),
+      tempInteriorSensorFailureMin: _readDouble(rawData, const [
+        'munters',
+        'munters1',
+        'tempInterior',
+        'sensorFailure',
+        'min',
       ]),
       humidityInteriorMin: _readDouble(rawData, const [
         'munters',
@@ -803,6 +815,7 @@ class ControlDashboardThresholds {
   final double? tempInteriorMin;
   final double? tempInteriorOpt;
   final double? tempInteriorMax;
+  final double? tempInteriorSensorFailureMin;
   final double? humidityInteriorMin;
   final double? humidityInteriorOpt;
   final double? humidityInteriorMax;

@@ -559,6 +559,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
               _rangeSettings = DashboardRangeSettings(
                 temperatureMin: t.tempInteriorMin!,
                 temperatureMax: t.tempInteriorMax!,
+                temperatureSensorFailureMin:
+                    t.tempInteriorSensorFailureMin ??
+                    const DashboardRangeSettings.defaults()
+                        .temperatureSensorFailureMin,
                 humidityMin: t.humidityInteriorMin!,
                 humidityMax: t.humidityInteriorMax!,
                 filterPressureMax: t.filterPressureMax!,
@@ -740,7 +744,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
         result.rangeSettingsOrNull;
     if (configuredRangeSettings != null) {
       debugPrint(
-        '[Firebase settings] temperatureMin=${configuredRangeSettings.temperatureMin} temperatureMax=${configuredRangeSettings.temperatureMax} humidityMin=${configuredRangeSettings.humidityMin} humidityMax=${configuredRangeSettings.humidityMax} filterPressureMax=${configuredRangeSettings.filterPressureMax} thermalFlowThresholdC=${configuredRangeSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${configuredRangeSettings.thermalFlowMarkedDeltaC}',
+        '[Firebase settings] temperatureMin=${configuredRangeSettings.temperatureMin} temperatureMax=${configuredRangeSettings.temperatureMax} temperatureSensorFailureMin=${configuredRangeSettings.temperatureSensorFailureMin} humidityMin=${configuredRangeSettings.humidityMin} humidityMax=${configuredRangeSettings.humidityMax} filterPressureMax=${configuredRangeSettings.filterPressureMax} thermalFlowThresholdC=${configuredRangeSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${configuredRangeSettings.thermalFlowMarkedDeltaC}',
       );
     }
     if (mounted && configuredRangeSettings != null) {
@@ -1275,6 +1279,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       tempInteriorMin: updated.temperatureMin,
       tempInteriorOpt: (updated.temperatureMin + updated.temperatureMax) / 2,
       tempInteriorMax: updated.temperatureMax,
+      tempInteriorSensorFailureMin: updated.temperatureSensorFailureMin,
       humidityInteriorMin: updated.humidityMin,
       humidityInteriorOpt: (updated.humidityMin + updated.humidityMax) / 2,
       humidityInteriorMax: updated.humidityMax,
@@ -1330,6 +1335,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
         ? DashboardRangeSettings(
             temperatureMin: refreshedConfig.thresholds.tempInteriorMin!,
             temperatureMax: refreshedConfig.thresholds.tempInteriorMax!,
+            temperatureSensorFailureMin:
+                refreshedConfig.thresholds.tempInteriorSensorFailureMin ??
+                const DashboardRangeSettings.defaults()
+                    .temperatureSensorFailureMin,
             humidityMin: refreshedConfig.thresholds.humidityInteriorMin!,
             humidityMax: refreshedConfig.thresholds.humidityInteriorMax!,
             filterPressureMax: refreshedConfig.thresholds.filterPressureMax!,
@@ -1357,7 +1366,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
         : updated;
 
     debugPrint(
-      '[Firebase settings] temperatureMin=${effectiveSettings.temperatureMin} temperatureMax=${effectiveSettings.temperatureMax} humidityMin=${effectiveSettings.humidityMin} humidityMax=${effectiveSettings.humidityMax} filterPressureMax=${effectiveSettings.filterPressureMax} thermalFlowThresholdC=${effectiveSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${effectiveSettings.thermalFlowMarkedDeltaC}',
+      '[Firebase settings] temperatureMin=${effectiveSettings.temperatureMin} temperatureMax=${effectiveSettings.temperatureMax} temperatureSensorFailureMin=${effectiveSettings.temperatureSensorFailureMin} humidityMin=${effectiveSettings.humidityMin} humidityMax=${effectiveSettings.humidityMax} filterPressureMax=${effectiveSettings.filterPressureMax} thermalFlowThresholdC=${effectiveSettings.thermalFlowThresholdC} thermalFlowMarkedDeltaC=${effectiveSettings.thermalFlowMarkedDeltaC}',
     );
 
     final bool cacheSynced =
@@ -1422,6 +1431,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       tempInteriorMin: ranges.temperatureMin,
       tempInteriorOpt: (ranges.temperatureMin + ranges.temperatureMax) / 2,
       tempInteriorMax: ranges.temperatureMax,
+      tempInteriorSensorFailureMin: ranges.temperatureSensorFailureMin,
       humidityInteriorMin: ranges.humidityMin,
       humidityInteriorOpt: (ranges.humidityMin + ranges.humidityMax) / 2,
       humidityInteriorMax: ranges.humidityMax,
@@ -3878,6 +3888,9 @@ class _DashboardBootstrapResult {
     return DashboardRangeSettings(
       temperatureMin: thresholds.tempInteriorMin!,
       temperatureMax: thresholds.tempInteriorMax!,
+      temperatureSensorFailureMin:
+          thresholds.tempInteriorSensorFailureMin ??
+          const DashboardRangeSettings.defaults().temperatureSensorFailureMin,
       humidityMin: thresholds.humidityInteriorMin!,
       humidityMax: thresholds.humidityInteriorMax!,
       filterPressureMax: thresholds.filterPressureMax!,
@@ -5348,6 +5361,7 @@ class _DashboardSettingsDialog extends StatefulWidget {
 class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   late final TextEditingController _temperatureMinController;
   late final TextEditingController _temperatureMaxController;
+  late final TextEditingController _temperatureSensorFailureMinController;
   late final TextEditingController _humidityMinController;
   late final TextEditingController _humidityMaxController;
   late final TextEditingController _thermalFlowThresholdController;
@@ -5366,6 +5380,9 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     );
     _temperatureMaxController = TextEditingController(
       text: widget.initialSettings.temperatureMax.toString(),
+    );
+    _temperatureSensorFailureMinController = TextEditingController(
+      text: widget.initialSettings.temperatureSensorFailureMin.toString(),
     );
     _humidityMinController = TextEditingController(
       text: widget.initialSettings.humidityMin.toString(),
@@ -5398,6 +5415,7 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   void dispose() {
     _temperatureMinController.dispose();
     _temperatureMaxController.dispose();
+    _temperatureSensorFailureMinController.dispose();
     _humidityMinController.dispose();
     _humidityMaxController.dispose();
     _thermalFlowThresholdController.dispose();
@@ -5412,6 +5430,9 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
   void _submit() {
     final double? temperatureMin = _parseInput(_temperatureMinController.text);
     final double? temperatureMax = _parseInput(_temperatureMaxController.text);
+    final double? temperatureSensorFailureMin = _parseInput(
+      _temperatureSensorFailureMinController.text,
+    );
     final double? humidityMin = _parseInput(_humidityMinController.text);
     final double? humidityMax = _parseInput(_humidityMaxController.text);
     final double? thermalFlowThreshold = _parseInput(
@@ -5435,6 +5456,7 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
 
     if (temperatureMin == null ||
         temperatureMax == null ||
+        temperatureSensorFailureMin == null ||
         humidityMin == null ||
         humidityMax == null ||
         thermalFlowThreshold == null ||
@@ -5452,6 +5474,14 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
     if (temperatureMin >= temperatureMax || humidityMin >= humidityMax) {
       setState(() {
         _errorText = 'Cada minimo debe ser menor que su maximo.';
+      });
+      return;
+    }
+
+    if (temperatureSensorFailureMin >= temperatureMin) {
+      setState(() {
+        _errorText =
+            'La falla de sensor debe quedar por debajo de la temperatura minima.';
       });
       return;
     }
@@ -5491,6 +5521,7 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
       DashboardRangeSettings(
         temperatureMin: temperatureMin,
         temperatureMax: temperatureMax,
+        temperatureSensorFailureMin: temperatureSensorFailureMin,
         humidityMin: humidityMin,
         humidityMax: humidityMax,
         filterPressureMax: widget.initialSettings.filterPressureMax,
@@ -5538,6 +5569,12 @@ class _DashboardSettingsDialogState extends State<_DashboardSettingsDialog> {
               _RangeField(
                 controller: _temperatureMaxController,
                 label: 'Temp. interior maxima',
+                suffix: 'C',
+              ),
+              const SizedBox(height: 10),
+              _RangeField(
+                controller: _temperatureSensorFailureMinController,
+                label: 'Falla sensor si temp. interior <',
                 suffix: 'C',
               ),
               const SizedBox(height: 14),
@@ -5671,6 +5708,7 @@ class _AlertSettingsDialog extends StatefulWidget {
 class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   late final TextEditingController _temperatureMinController;
   late final TextEditingController _temperatureMaxController;
+  late final TextEditingController _temperatureSensorFailureMinController;
   late final TextEditingController _humidityAlarmYellowMinController;
   late final TextEditingController _humidityAlarmRedMinController;
   late final TextEditingController _dewPointMarginAlarmRedMaxController;
@@ -5693,6 +5731,9 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     );
     _temperatureMaxController = TextEditingController(
       text: ranges.temperatureMax.toString(),
+    );
+    _temperatureSensorFailureMinController = TextEditingController(
+      text: ranges.temperatureSensorFailureMin.toString(),
     );
     _humidityAlarmYellowMinController = TextEditingController(
       text: ranges.humidityAlarmYellowMin.toString(),
@@ -5722,6 +5763,7 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   void dispose() {
     _temperatureMinController.dispose();
     _temperatureMaxController.dispose();
+    _temperatureSensorFailureMinController.dispose();
     _humidityAlarmYellowMinController.dispose();
     _humidityAlarmRedMinController.dispose();
     _dewPointMarginAlarmRedMaxController.dispose();
@@ -5751,6 +5793,9 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   void _submit() {
     final double? temperatureMin = _parseInput(_temperatureMinController);
     final double? temperatureMax = _parseInput(_temperatureMaxController);
+    final double? temperatureSensorFailureMin = _parseInput(
+      _temperatureSensorFailureMinController,
+    );
     final double? humidityYellow = _parseInput(
       _humidityAlarmYellowMinController,
     );
@@ -5771,6 +5816,7 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
 
     if (temperatureMin == null ||
         temperatureMax == null ||
+        temperatureSensorFailureMin == null ||
         humidityYellow == null ||
         humidityRed == null ||
         dewPointRed == null ||
@@ -5786,6 +5832,13 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     if (temperatureMin >= temperatureMax) {
       setState(() {
         _errorText = 'La temperatura minima debe ser menor que la maxima.';
+      });
+      return;
+    }
+    if (temperatureSensorFailureMin >= temperatureMin) {
+      setState(() {
+        _errorText =
+            'La falla de sensor debe quedar por debajo de la temperatura minima.';
       });
       return;
     }
@@ -5834,6 +5887,7 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
         rangeSettings: current.copyWith(
           temperatureMin: temperatureMin,
           temperatureMax: temperatureMax,
+          temperatureSensorFailureMin: temperatureSensorFailureMin,
           filterPressureMax: filterPressureMax,
           thermalFlowThresholdC: thermalFlowThreshold,
           thermalFlowMarkedDeltaC: thermalFlowMarkedDelta,
@@ -5940,6 +5994,18 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
           _AlertTableValueSpec(
             label: 'Máxima',
             controller: _temperatureMaxController,
+            suffix: '°C',
+          ),
+        ],
+      ),
+      AlertSettingKey.sensorFailure => _AlertSettingsTableRow(
+        keyType: key,
+        title: 'Falla sensor',
+        settings: settings,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Temp. int. <',
+            controller: _temperatureSensorFailureMinController,
             suffix: '°C',
           ),
         ],
