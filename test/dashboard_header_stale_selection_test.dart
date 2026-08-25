@@ -66,7 +66,7 @@ void main() {
             onLogoTap: () {},
             activeTenantId: 'qa-structural-test', // ya no esta en la lista
             availableTenants: activeTenants,
-            canSelectSite: true,
+            canSelectTenant: true,
           ),
         ),
       );
@@ -92,7 +92,7 @@ void main() {
           availableTenants: activeTenants,
           activeSiteId: 'qa-site', // ya no esta en la lista
           availableSites: activeSites,
-          canSelectSite: true,
+          canSelectTenant: true,
         ),
       ),
     );
@@ -119,7 +119,7 @@ void main() {
             availableTenants: activeTenants,
             activeSiteId: 'otro-site',
             availableSites: activeSites,
-            canSelectSite: true,
+            canSelectTenant: true,
           ),
         ),
       );

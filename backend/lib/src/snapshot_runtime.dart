@@ -1121,7 +1121,7 @@ class SnapshotRuntimeState {
         'hasFreshSnapshot': hasFreshSnapshot,
       },
       'doorEvents': doorEventsJson,
-      ...unitsJson,
+      ...applyUnitAliases(unitsJson, config.unitAliases),
     });
   }
 
@@ -1356,6 +1356,41 @@ void _logValidationBooleanSignals(
     'puertaSala=${payload['puertaSala']} '
     'puertaMunter=${payload['puertaMunter']}',
   );
+}
+
+/// Projects each configured source unit's payload in [unitsJson] onto its
+/// additional alias keys from [unitAliases] — e.g. `{"munters1":
+/// ["plc-genetica-sala1"]}` copies `unitsJson['munters1']` verbatim into
+/// `result['plc-genetica-sala1']`, so a modern Device's `snapshotUnitKey`
+/// resolves to the exact same physical reading a legacy unit key already
+/// produced, without a second PLC read. Pure and side-effect free — safe to
+/// call only when building the final HTTP payload, never on the `unitsJson`
+/// passed to door-openings/runtime-events/history subsystems (see
+/// `PlcInstallationConfig.unitAliases`'s doc comment for why).
+///
+/// A source key absent from [unitsJson] (e.g. temporarily missing during a
+/// malformed state) is silently skipped rather than fabricating a unit.
+/// [unitsJson] itself is returned unchanged (no copy) when [unitAliases] is
+/// empty, so every site without this feature configured stays byte-for-byte
+/// identical to before it existed.
+Map<String, Object?> applyUnitAliases(
+  Map<String, Object?> unitsJson,
+  Map<String, List<String>> unitAliases,
+) {
+  if (unitAliases.isEmpty) {
+    return unitsJson;
+  }
+  final Map<String, Object?> result = Map<String, Object?>.of(unitsJson);
+  for (final MapEntry<String, List<String>> entry in unitAliases.entries) {
+    final Object? source = unitsJson[entry.key];
+    if (source is! Map<String, Object?>) {
+      continue;
+    }
+    for (final String alias in entry.value) {
+      result[alias] = Map<String, Object?>.of(source);
+    }
+  }
+  return result;
 }
 
 Map<String, Object?> _extractDoorEvents(Map<String, Object?> snapshotJson) {

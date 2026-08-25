@@ -220,6 +220,34 @@ void main() {
 
       expect(find.text('Tareas de Mantenimiento: Sistemas'), findsOneWidget);
     });
+
+    testWidgets(
+      'un device de una sola sala cuyo nombre coincide con el de la sala '
+      '(sin Rooms) no repite el titulo del grupo',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: EnvironmentOverviewPage(
+                units: <MuntersModel>[_sala('Sala1')],
+                labels: const <String>['Sala1'],
+                plcIds: const <String?>[null],
+                deviceNames: const <String>['Sala1'],
+                tenantId: null,
+                siteId: null,
+                rangeSettings: const DashboardRangeSettings.defaults(),
+                showSnapshotPulse: false,
+                snapshotStale: false,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byIcon(Icons.memory), findsNothing);
+        expect(find.text('Sala1'), findsWidgets);
+      },
+    );
   });
 
   group('EnvironmentTablePage (Tabla)', () {
@@ -315,6 +343,69 @@ void main() {
 
       expect(find.text('Tareas de Mantenimiento: Sistemas'), findsOneWidget);
     });
+
+    testWidgets(
+      'un device de una sola sala cuyo nombre coincide con el de la sala '
+      '(sin Rooms) no repite el titulo del grupo',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: EnvironmentTablePage(
+                units: <MuntersModel>[_sala('Sala1')],
+                labels: const <String>['Sala1'],
+                plcIds: const <String?>[null],
+                deviceNames: const <String>['Sala1'],
+                tenantId: null,
+                siteId: null,
+                rangeSettings: const DashboardRangeSettings.defaults(),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(find.byIcon(Icons.memory), findsNothing);
+        expect(find.text('Sala1'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'en una mezcla, solo se omite el titulo del grupo redundante — el '
+      'grupo multi-sala sigue mostrando el suyo',
+      (WidgetTester tester) async {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: EnvironmentTablePage(
+                units: <MuntersModel>[
+                  _sala('Sala1'),
+                  _sala('Sala 1'),
+                  _sala('Sala 2'),
+                ],
+                labels: const <String>['Sala1', 'Sala 1', 'Sala 2'],
+                plcIds: const <String?>[null, null, null],
+                deviceNames: const <String>[
+                  'Sala1',
+                  'PLC Maternidad',
+                  'PLC Maternidad',
+                ],
+                tenantId: null,
+                siteId: null,
+                rangeSettings: const DashboardRangeSettings.defaults(),
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        // Solo 1 icono de grupo: el de "PLC Maternidad". El grupo "Sala1"
+        // (una sola sala, mismo nombre) no dibuja su propio titulo.
+        expect(find.byIcon(Icons.memory), findsOneWidget);
+        expect(find.text('PLC Maternidad'), findsOneWidget);
+        expect(find.text('Sala1'), findsOneWidget);
+      },
+    );
   });
 }
 

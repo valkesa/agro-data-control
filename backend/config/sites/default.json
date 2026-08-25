@@ -120,6 +120,10 @@
       }
     ]
   },
+  "unitAliases": {
+    "munters1": ["plc-genetica-sala1"],
+    "munters2": ["plc-genetica-sala2"]
+  },
   "units": {
     "munters1": {
       "name": "Sala 1",

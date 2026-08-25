@@ -602,7 +602,17 @@ class _EnvironmentTableGrid extends StatelessWidget {
           ],
         ),
         for (final _EnvLabelGroup group in groups) ...[
-          if (group.title != null) _groupTitleRow(group.title!),
+          // A single-room Device (no explicit Rooms) has its one Sala's
+          // `roomLabel` fall back to the Device's own name — see
+          // `DeviceDashboardEntry.listFrom`'s no-Rooms branch — so the
+          // group title and that lone row would show the exact same text
+          // twice (e.g. "Sala1" / "Sala1"). Skip the title row in that
+          // case; it only carries information for multi-room Devices
+          // (e.g. "PLC Maternidad" grouping 8 differently-named Salas).
+          if (group.title != null &&
+              !(group.indices.length == 1 &&
+                  rows[group.indices.single].roomLabel == group.title))
+            _groupTitleRow(group.title!),
           for (final int index in group.indices) _dataRow(rows[index]),
         ],
       ],
@@ -1255,7 +1265,15 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             for (int g = 0; g < groups.length; g++) ...[
-              if (groups[g].title != null) ...[
+              // Same rationale as the Tabla view's group-title skip: a
+              // single-room Device's lone Sala label already equals the
+              // Device name (no Rooms => label falls back to the Device's
+              // own name), so the header above it would just repeat the
+              // card's own title.
+              if (groups[g].title != null &&
+                  !(groups[g].indices.length == 1 &&
+                      labels[groups[g].indices.single] ==
+                          groups[g].title)) ...[
                 _EnvironmentDeviceGroupHeader(
                   title: groups[g].title!,
                   width: groupWidth,

@@ -16,6 +16,7 @@ class PlcInstallationConfig {
     required this.doorOpenings,
     required this.runtimeEvents,
     this.routerHost,
+    this.unitAliases = const <String, List<String>>{},
   });
 
   factory PlcInstallationConfig.fromJson(Map<String, dynamic> json) {
@@ -24,6 +25,9 @@ class PlcInstallationConfig {
     final Map<String, UnitConfig> units = unitsJson.map(
       (key, value) =>
           MapEntry(key, UnitConfig.fromJson(value as Map<String, dynamic>)),
+    );
+    final Map<String, List<String>> unitAliases = _parseUnitAliases(
+      json['unitAliases'],
     );
     final String clientName =
         json['clientName'] as String? ?? 'Cliente no configurado';
@@ -79,6 +83,7 @@ class PlcInstallationConfig {
             (json['pollingIntervalMs'] as num?)?.toInt() ?? 5000,
       ),
       routerHost: json['routerHost'] as String?,
+      unitAliases: unitAliases,
     );
   }
 
@@ -98,6 +103,41 @@ class PlcInstallationConfig {
   final DoorOpeningsConfig doorOpenings;
   final RuntimeEventsConfig runtimeEvents;
   final String? routerHost;
+
+  /// Migration-compatibility mechanism: projects an already-read physical
+  /// unit's exact snapshot payload under one or more additional top-level
+  /// keys, e.g. `{"munters1": ["plc-genetica-sala1"]}` so a modern
+  /// `AgroDevice.snapshotUnitKey` can resolve to the same physical PLC
+  /// reading a legacy `units` entry already produces — with NO second
+  /// Modbus read. Applied only to the final snapshot/health HTTP payload
+  /// (see `applyUnitAliases`, called from `_buildSnapshotPayload`) — never
+  /// to the `unitsJson` map fed to door-openings/runtime-events/alerts/
+  /// history subsystems, so none of them see the alias keys and none of
+  /// them can process the same physical event twice. Empty by default —
+  /// every site config without this key behaves byte-for-byte as before.
+  final Map<String, List<String>> unitAliases;
+}
+
+Map<String, List<String>> _parseUnitAliases(Object? raw) {
+  if (raw is! Map) {
+    return const <String, List<String>>{};
+  }
+  final Map<String, List<String>> result = <String, List<String>>{};
+  for (final MapEntry<Object?, Object?> entry in raw.entries) {
+    final String? sourceKey = entry.key?.toString();
+    final Object? aliasesRaw = entry.value;
+    if (sourceKey == null || sourceKey.isEmpty || aliasesRaw is! List) {
+      continue;
+    }
+    final List<String> aliases = aliasesRaw
+        .map((Object? e) => e?.toString() ?? '')
+        .where((String e) => e.isNotEmpty)
+        .toList(growable: false);
+    if (aliases.isNotEmpty) {
+      result[sourceKey] = aliases;
+    }
+  }
+  return result;
 }
 
 class DifferentialPressureHistoryConfig {

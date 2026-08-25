@@ -3006,7 +3006,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                 activeSiteId: _activeSiteId,
                 availableSites: _availableSites,
                 onSiteChanged: _switchSite,
-                canSelectSite: _userRole == UserAppRole.owner,
+                canSelectTenant: _userRole == UserAppRole.owner,
                 activeUsersIndicator:
                     _userRole == UserAppRole.owner && _historyTenantId != null
                     ? ActiveUsersEye(

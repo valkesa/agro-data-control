@@ -2623,7 +2623,7 @@ class _DeviceTypeDropdown extends StatelessWidget {
   Widget build(BuildContext context) {
     return DropdownButtonFormField<AgroDeviceTypeDefinition>(
       initialValue: value,
-      decoration: const InputDecoration(labelText: 'Tipo'),
+      decoration: const InputDecoration(labelText: 'Tipo *'),
       items: [
         for (final AgroDeviceTypeDefinition type in selectableAgroDeviceTypes())
           DropdownMenuItem(value: type, child: Text(type.label)),
@@ -2849,7 +2849,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Site: ${widget.site.name.isEmpty ? widget.site.id : widget.site.name}',
+                'Site *: ${widget.site.name.isEmpty ? widget.site.id : widget.site.name}',
                 style: const TextStyle(
                   color: Color(0xFF94A3B8),
                   fontSize: 12,
@@ -2861,7 +2861,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                 controller: _idController,
                 enabled: !_isSaving,
                 autofocus: true,
-                decoration: const InputDecoration(labelText: 'Device ID'),
+                decoration: const InputDecoration(labelText: 'Device ID *'),
                 onChanged: (_) => setState(() {}),
               ),
               _NormalizedIdPreview(value: _idController.text),
@@ -2869,7 +2869,14 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
               TextField(
                 controller: _nameController,
                 enabled: !_isSaving,
-                decoration: const InputDecoration(labelText: 'Nombre'),
+                decoration: InputDecoration(
+                  labelText: 'Nombre',
+                  helperText: _type.usesRooms
+                      ? 'Con este tipo (multisala), en el dashboard se '
+                            'muestra el nombre de cada room, no este campo.'
+                      : 'Este es el nombre que se muestra en el dashboard.',
+                  helperMaxLines: 2,
+                ),
               ),
               const SizedBox(height: 10),
               _DeviceTypeDropdown(
@@ -2903,7 +2910,16 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                 controller: _sortOrderController,
                 enabled: !_isSaving,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Orden'),
+                decoration: const InputDecoration(
+                  labelText: 'Orden',
+                  helperText:
+                      'Define la posición del device en la lista/grilla '
+                      'del dashboard (Vista general del ambiente, Vista de '
+                      'tabla, etc.), de menor a mayor. Si dos devices '
+                      'quedan con el mismo valor, se desempata '
+                      'alfabéticamente por Nombre.',
+                  helperMaxLines: 4,
+                ),
               ),
               if (!_type.usesRooms) ...[
                 const SizedBox(height: 10),
@@ -3003,6 +3019,11 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
                         setState(() => _roomRows[i].enabled = value),
                   ),
               ],
+              const SizedBox(height: 12),
+              const Text(
+                '* No se puede modificar después de crear el device.',
+                style: TextStyle(fontSize: 11, color: Color(0xFF94A3B8)),
+              ),
               if (_errorMessage != null)
                 _InlineDialogError(message: _errorMessage!),
             ],

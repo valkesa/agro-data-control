@@ -39,7 +39,7 @@ class DashboardHeader extends StatelessWidget {
     this.activeSiteId,
     this.availableSites = const <SiteDocument>[],
     this.onSiteChanged,
-    this.canSelectSite = false,
+    this.canSelectTenant = false,
     this.activeUsersIndicator,
     this.siteAlert,
   });
@@ -66,7 +66,12 @@ class DashboardHeader extends StatelessWidget {
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
-  final bool canSelectSite;
+
+  /// Gates the tenant selector only. The site selector is shown to any
+  /// role whenever [availableSites] has more than one entry — it's already
+  /// scoped server-side to the signed-in user's allowed sites, so no extra
+  /// role gate is needed (or correct) there.
+  final bool canSelectTenant;
 
   /// The owner-only "eye" presence indicator, shown to the left of the
   /// three view buttons.
@@ -95,7 +100,7 @@ class DashboardHeader extends StatelessWidget {
           activeSiteId: activeSiteId,
           availableSites: availableSites,
           onSiteChanged: onSiteChanged,
-          canSelectSite: canSelectSite,
+          canSelectTenant: canSelectTenant,
           compact: narrow,
           veryCompact: veryNarrow,
           onLogoTap: onLogoTap,
@@ -330,7 +335,7 @@ class _HeaderTitle extends StatelessWidget {
     required this.activeSiteId,
     required this.availableSites,
     required this.onSiteChanged,
-    required this.canSelectSite,
+    required this.canSelectTenant,
     required this.compact,
     required this.veryCompact,
     required this.onLogoTap,
@@ -343,7 +348,7 @@ class _HeaderTitle extends StatelessWidget {
   final String? activeSiteId;
   final List<SiteDocument> availableSites;
   final void Function(String siteId)? onSiteChanged;
-  final bool canSelectSite;
+  final bool canSelectTenant;
   final bool compact;
   final bool veryCompact;
   final VoidCallback onLogoTap;
@@ -374,7 +379,7 @@ class _HeaderTitle extends StatelessWidget {
               const SizedBox(height: 3),
               // Client name: a dropdown for owners who can switch between
               // several tenants, plain text for everyone else.
-              if (canSelectSite && availableTenants.length > 1)
+              if (canSelectTenant && availableTenants.length > 1)
                 _TenantDropdown(
                   availableTenants: availableTenants,
                   activeTenantId: activeTenantId,
@@ -391,9 +396,12 @@ class _HeaderTitle extends StatelessWidget {
                     fontWeight: FontWeight.w800,
                   ),
                 ),
-              // Site selector: owners only, and only when there is more
-              // than one site to choose from.
-              if (canSelectSite && availableSites.length > 1) ...[
+              // Site selector: any role, whenever there is more than one
+              // site to choose from — `availableSites` is already scoped
+              // server-side to this user's allowed sites (owner sees every
+              // site in the tenant, everyone else sees only their
+              // `allowedSiteIds`), so no extra role gate belongs here.
+              if (availableSites.length > 1) ...[
                 const SizedBox(height: 3),
                 _SiteDropdown(
                   availableSites: availableSites,
@@ -492,6 +500,23 @@ class _SiteDropdown extends StatelessWidget {
       child: DropdownButton<String>(
         value: safeValue,
         isDense: true,
+        // `isDense` caps the CLOSED button's selected-value box at 24px
+        // tall regardless of `itemHeight` (that param only affects the open
+        // popup's rows) — a 2-line name+chip item overflows that box, so
+        // `selectedItemBuilder` renders a single-line summary there while
+        // `items` below keeps the roomier stacked layout for the open menu.
+        selectedItemBuilder: (context) => availableSites
+            .map(
+              (SiteDocument site) => Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  site.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            )
+            .toList(),
         dropdownColor: const Color(0xFF1E293B),
         style: const TextStyle(
           color: Color(0xFFCBD5E1),
@@ -507,11 +532,12 @@ class _SiteDropdown extends StatelessWidget {
             .map(
               (SiteDocument site) => DropdownMenuItem<String>(
                 value: site.siteId,
-                child: Row(
+                child: Column(
                   mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(child: Text(site.name)),
-                    const SizedBox(width: 8),
+                    Text(site.name),
+                    const SizedBox(height: 2),
                     _SiteStatusChip(site: site),
                   ],
                 ),
