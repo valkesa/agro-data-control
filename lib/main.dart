@@ -12,6 +12,7 @@ import 'firebase_options.dart';
 import 'firebase/firestore_paths.dart';
 import 'models/alert_settings.dart';
 import 'models/backend_presence_snapshot.dart';
+import 'models/cerdas_models.dart';
 import 'models/dashboard_range_settings.dart';
 import 'models/electric_consumption_settings.dart';
 import 'models/dashboard_snapshot.dart';
@@ -53,10 +54,14 @@ import 'services/user_context_service.dart';
 import 'services/user_management_service.dart';
 import 'services/water_shortage_repository.dart';
 import 'services/whatsapp_alert_recipients_service.dart';
+import 'ui_templates/catalog/device_template_resolver.dart';
+import 'ui_templates/models/device_template.dart';
 import 'widgets/active_users_eye.dart';
 import 'widgets/dashboard_header.dart';
+import 'widgets/cerdas_module.dart';
 import 'widgets/press_magnifier_region.dart';
 import 'utils/browser_exit_guard.dart';
+import 'utils/latest_only_guard.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -74,6 +79,58 @@ Future<void> main() async {
 String _createPresenceSessionId() {
   final Random random = Random();
   return '${DateTime.now().microsecondsSinceEpoch}-${random.nextInt(0x7fffffff)}';
+}
+
+CerdasContextKey? _cerdasContextKeyForEntry({
+  required String? tenantId,
+  required String? siteId,
+  required DeviceDashboardEntry entry,
+}) {
+  if (tenantId == null ||
+      tenantId.isEmpty ||
+      siteId == null ||
+      siteId.isEmpty ||
+      entry.device.id.isEmpty) {
+    return null;
+  }
+  return CerdasContextKey.dynamic(
+    tenantId: tenantId,
+    siteId: siteId,
+    deviceId: entry.device.id,
+    roomId: entry.roomId,
+  );
+}
+
+List<CerdasControlEntry> _cerdasControlEntriesForDashboardEntries({
+  required String? tenantId,
+  required String? siteId,
+  required List<DeviceDashboardEntry> entries,
+  required DeviceTemplateResolver templateResolver,
+}) {
+  final List<CerdasControlEntry> result = <CerdasControlEntry>[];
+  for (final DeviceDashboardEntry entry in entries) {
+    final String? templateId = templateResolver.templateIdForDevice(
+      entry.device,
+    );
+    final DeviceTemplate? template = templateId == null
+        ? null
+        : templateResolver.templateForId(templateId);
+    if (template == null || !deviceTemplateSupportsCerdasControl(template)) {
+      continue;
+    }
+    final CerdasContextKey? contextKey = _cerdasContextKeyForEntry(
+      tenantId: tenantId,
+      siteId: siteId,
+      entry: entry,
+    );
+    if (contextKey == null) {
+      continue;
+    }
+    result.add(
+      CerdasControlEntry(label: entry.displayName, contextKey: contextKey),
+    );
+  }
+  return result;
 }
 
 class AgroDataControlApp extends StatelessWidget {
@@ -379,6 +436,22 @@ class _AgroDataShellState extends State<AgroDataShell> {
   // (`provisioningStatus` set), false for legacy Sites. Drives which data
   // source Tablero/Tabla read from — never both for the same Site.
   bool _activeSiteUsesDynamicDevices = false;
+  // Guards `_switchSite`, `_switchTenant` AND `_createDashboardBootstrapFuture`
+  // (Etapa 5C.2 found the bootstrap path was the missing third source of
+  // staleness — 5C.1 only guarded the first two) against out-of-order async
+  // completion. If a second call starts before an earlier one's Firestore
+  // reads land — e.g. the user taps Site A, then quickly taps Site B before
+  // A's reads resolve, or the app is still bootstrapping when the user
+  // starts switching — whichever call finishes LAST would otherwise win the
+  // final `setState`, regardless of which one the user actually asked for
+  // last. See `LatestOnlyGuard` for the isolated, unit-tested mechanism.
+  final LatestOnlyGuard _siteSwitchGuard = LatestOnlyGuard();
+  // Owner-only, session-only override to preview the legacy TABLA layout
+  // on a Site that normally renders the dynamic one. Purely a UI choice —
+  // never persisted, and explicitly reset whenever the active tenant/site
+  // changes so it can never leak into a different Site (see
+  // `_applySiteOperationalState` callers).
+  bool _ownerLegacyTablaPreview = false;
   String? _activeSiteStatusLabel;
   String? _activeSiteNotOperationalMessage;
   String? _activeSiteNotOperationalDetail;
@@ -496,6 +569,34 @@ class _AgroDataShellState extends State<AgroDataShell> {
     _activeSiteStatusLabel = site?.operationalStatusLabel;
     _activeSiteNotOperationalMessage = site?.notOperationalMessage;
     _activeSiteNotOperationalDetail = site?.notOperationalDetail;
+  }
+
+  /// Temporary diagnostic logging for the Etapa 5C.2 stale-Site
+  /// investigation — debug builds only, no tokens/emails/payloads, only
+  /// IDs and counts. Call at each of the 3 places that can apply Site
+  /// identity state (`_switchSite`, `_switchTenant`,
+  /// `_createDashboardBootstrapFuture`) right at their generation-guard
+  /// check, so a stale-skip and an actually-applied update are both
+  /// visible with the same shape.
+  void _logTableSiteDebug(
+    String event, {
+    required int callGeneration,
+    String? targetTenantId,
+    String? targetSiteId,
+    bool? isDynamicSite,
+    int? devicesLength,
+    int? roomsByDeviceIdLength,
+  }) {
+    if (!kDebugMode) return;
+    debugPrint(
+      '[TABLE_SITE_DEBUG] event=$event callGeneration=$callGeneration '
+      'currentGeneration=${_siteSwitchGuard.debugGeneration} '
+      'targetTenantId=$targetTenantId targetSiteId=$targetSiteId '
+      'isDynamicSite=$isDynamicSite devices=$devicesLength '
+      'roomsByDeviceId=$roomsByDeviceIdLength '
+      'forceLegacyLayout=$_ownerLegacyTablaPreview '
+      'selectedTab=$_selectedTab',
+    );
   }
 
   void _stopLiveSnapshotPollingForNonOperationalSite() {
@@ -735,10 +836,40 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<_DashboardBootstrapResult> _createDashboardBootstrapFuture() async {
+    // Etapa 5C.2: this is a THIRD path (besides `_switchSite`/`_switchTenant`)
+    // that applies `_activeSiteId`/`_devices`/`_activeSiteUsesDynamicDevices`
+    // — called from `initState` and again from `didUpdateWidget` on a user
+    // change. It was the actual root cause 5C.1 missed: this bootstrap does
+    // several awaited Firestore reads of its own, and if the user starts
+    // switching Sites before it resolves, its late-arriving `setState` had
+    // no way to know it was stale and would clobber a correct, more recent
+    // switch — same shared `_siteSwitchGuard` guard as the other two.
+    final int myBootstrapGeneration = _siteSwitchGuard.start();
     final _DashboardBootstrapResult result = await _loadDashboardBootstrap();
+    if (!mounted || !_siteSwitchGuard.isCurrent(myBootstrapGeneration)) {
+      _logTableSiteDebug(
+        'bootstrap-stale-skip',
+        callGeneration: myBootstrapGeneration,
+        targetTenantId: result.effectiveTenantId,
+        targetSiteId: result.siteId,
+        isDynamicSite: result.siteDocument?.usesDynamicDevices,
+        devicesLength: result.devices.length,
+        roomsByDeviceIdLength: result.roomsByDeviceId.length,
+      );
+      return result;
+    }
     if (!result.canReadConfig) {
       return result;
     }
+    _logTableSiteDebug(
+      'bootstrap-applied',
+      callGeneration: myBootstrapGeneration,
+      targetTenantId: result.effectiveTenantId,
+      targetSiteId: result.siteId,
+      isDynamicSite: result.siteDocument?.usesDynamicDevices,
+      devicesLength: result.devices.length,
+      roomsByDeviceIdLength: result.roomsByDeviceId.length,
+    );
 
     final DashboardRangeSettings? configuredRangeSettings =
         result.rangeSettingsOrNull;
@@ -780,6 +911,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       setState(() {
         _historyTenantId = result.effectiveTenantId;
         _historySiteId = result.siteId;
+        _ownerLegacyTablaPreview = false;
         _userRole = result.userContext.role;
         _activeSiteId = result.siteId.isNotEmpty ? result.siteId : null;
         _activeSiteName = result.siteDocument?.name;
@@ -836,6 +968,19 @@ class _AgroDataShellState extends State<AgroDataShell> {
     final bool bypassesMembership =
         isOwner || userContext.role == UserAppRole.valkeTechnician;
 
+    if (userContext.hasError ||
+        !userContext.exists ||
+        (!isOwner && userContext.isPendingActivation) ||
+        (!isOwner && !userContext.active)) {
+      return _DashboardBootstrapResult(
+        userContext: userContext,
+        membership: const TenantMembershipLookupResult.notFound(),
+        config: null,
+        siteId: '',
+        resolvedTenantId: userContext.activeTenantId,
+      );
+    }
+
     // Resolve effective siteId: prefer saved defaultSiteId only when it is
     // allowed for the user. If no allowedSiteIds exist, access stays blocked.
     final bool defaultSiteAllowed =
@@ -858,12 +1003,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
     // Global Valke roles bypass tenant membership checks. Owner is the only
     // role allowed through inactive/pending user state.
-    if (userContext.hasError ||
-        !userContext.exists ||
-        (!isOwner && userContext.isPendingActivation) ||
-        (!isOwner && !userContext.active) ||
-        resolvedTenantId == null ||
-        (!isOwner && resolvedSiteId == null)) {
+    if (resolvedTenantId == null || (!isOwner && resolvedSiteId == null)) {
       return _DashboardBootstrapResult(
         userContext: userContext,
         membership: const TenantMembershipLookupResult.notFound(),
@@ -2030,6 +2170,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _switchSite(String siteId) async {
+    final int mySwitchGeneration = _siteSwitchGuard.start();
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     final String? tenantId = bootstrap.effectiveTenantId;
     if (tenantId == null) return;
@@ -2071,13 +2212,37 @@ class _AgroDataShellState extends State<AgroDataShell> {
           )
         : const <String, List<AgroDeviceRoom>>{};
 
-    if (!mounted) return;
+    // A newer switch (site or tenant) started while these awaits were in
+    // flight — that call owns the final state now, applying this stale,
+    // late-arriving response would clobber it. See `_siteSwitchGuard`.
+    if (!mounted || !_siteSwitchGuard.isCurrent(mySwitchGeneration)) {
+      _logTableSiteDebug(
+        'switchSite-stale-skip',
+        callGeneration: mySwitchGeneration,
+        targetTenantId: tenantId,
+        targetSiteId: siteId,
+        isDynamicSite: siteDoc.usesDynamicDevices,
+        devicesLength: devices.length,
+        roomsByDeviceIdLength: roomsByDeviceId.length,
+      );
+      return;
+    }
+    _logTableSiteDebug(
+      'switchSite-applied',
+      callGeneration: mySwitchGeneration,
+      targetTenantId: tenantId,
+      targetSiteId: siteId,
+      isDynamicSite: siteDoc.usesDynamicDevices,
+      devicesLength: devices.length,
+      roomsByDeviceIdLength: roomsByDeviceId.length,
+    );
     setState(() {
       _activeSiteId = siteId;
       _activeSiteName = siteDoc.name;
       _activeBackendEndpoint = siteDoc.backendUrl;
       _applySiteOperationalState(siteDoc);
       _historySiteId = siteId;
+      _ownerLegacyTablaPreview = false;
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
@@ -2108,6 +2273,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _switchTenant(String tenantId) async {
+    final int mySwitchGeneration = _siteSwitchGuard.start();
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     if (bootstrap.userContext.role != UserAppRole.owner) {
       return;
@@ -2157,7 +2323,30 @@ class _AgroDataShellState extends State<AgroDataShell> {
       debugPrint('[tenant-switch] persist error=$error');
     }
 
-    if (!mounted) return;
+    // See `_siteSwitchGuard` on `_switchSite` — same staleness guard,
+    // shared counter so a site-switch and a tenant-switch racing each other
+    // resolve correctly too.
+    if (!mounted || !_siteSwitchGuard.isCurrent(mySwitchGeneration)) {
+      _logTableSiteDebug(
+        'switchTenant-stale-skip',
+        callGeneration: mySwitchGeneration,
+        targetTenantId: tenantId,
+        targetSiteId: siteDoc.siteId,
+        isDynamicSite: siteDoc.usesDynamicDevices,
+        devicesLength: devices.length,
+        roomsByDeviceIdLength: roomsByDeviceId.length,
+      );
+      return;
+    }
+    _logTableSiteDebug(
+      'switchTenant-applied',
+      callGeneration: mySwitchGeneration,
+      targetTenantId: tenantId,
+      targetSiteId: siteDoc.siteId,
+      isDynamicSite: siteDoc.usesDynamicDevices,
+      devicesLength: devices.length,
+      roomsByDeviceIdLength: roomsByDeviceId.length,
+    );
     setState(() {
       _historyTenantId = tenantId;
       _historySiteId = siteDoc.siteId;
@@ -2170,6 +2359,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _plcConfigs = plcConfigs;
       _devices = devices;
       _roomsByDeviceId = roomsByDeviceId;
+      _ownerLegacyTablaPreview = false;
       _recentRoomWashByRoom.clear();
       _processedOperationalEventIds.clear();
       _snapshot = _clearRecentRoomWashEvents(snapshot: _snapshot);
@@ -3057,6 +3247,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
                       if (_selectedTab == 'environmentOverview') {
                         if (_activeSiteUsesDynamicDevices) {
+                          const DeviceTemplateResolver templateResolver =
+                              DeviceTemplateResolver();
                           final List<DeviceDashboardEntry> entries =
                               DeviceDashboardEntry.listFrom(
                                 devices: _devices,
@@ -3073,6 +3265,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             deviceNames: [
                               for (final e in entries) e.device.name,
                             ],
+                            templateIds: [
+                              for (final e in entries)
+                                templateResolver.templateIdForDevice(e.device),
+                            ],
+                            cerdasContextKeys: [
+                              for (final e in entries)
+                                _cerdasContextKeyForEntry(
+                                  tenantId: _historyTenantId,
+                                  siteId: _historySiteId,
+                                  entry: e,
+                                ),
+                            ],
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
                             rangeSettings: _rangeSettings,
@@ -3080,6 +3284,13 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             snapshotStale: _snapshotStale,
                           );
                         }
+                        const DeviceTemplateResolver templateResolver =
+                            DeviceTemplateResolver();
+                        final String? legacyTemplateId = templateResolver
+                            .templateIdForLegacyRoom(
+                              tenantId: _historyTenantId,
+                              siteId: _historySiteId,
+                            );
                         final List<MuntersModel> visibleUnits = <MuntersModel>[
                           if (_unitVisibilitySettings.showMunters1) munters1,
                           if (_unitVisibilitySettings.showMunters2) munters2,
@@ -3108,6 +3319,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           units: visibleUnits,
                           labels: visiblePlcLabels,
                           plcIds: visiblePlcIds,
+                          templateIds: [
+                            for (final _ in visibleUnits) legacyTemplateId,
+                          ],
                           tenantId: _historyTenantId,
                           siteId: _historySiteId,
                           rangeSettings: _rangeSettings,
@@ -3118,27 +3332,72 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
                       if (_selectedTab == 'tableView') {
                         if (_activeSiteUsesDynamicDevices) {
+                          const DeviceTemplateResolver templateResolver =
+                              DeviceTemplateResolver();
                           final List<DeviceDashboardEntry> entries =
                               DeviceDashboardEntry.listFrom(
                                 devices: _devices,
                                 snapshot: _snapshot,
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
-                          return EnvironmentTablePage(
-                            units: [
-                              for (final e in entries)
-                                _applyMaintenanceToDeviceDisplayUnit(e),
+                          final bool ownerCanPreviewLegacyTabla =
+                              _userRole == UserAppRole.owner;
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              if (ownerCanPreviewLegacyTabla)
+                                _OwnerLegacyTablaToggle(
+                                  showingLegacy: _ownerLegacyTablaPreview,
+                                  onToggle: () => setState(
+                                    () => _ownerLegacyTablaPreview =
+                                        !_ownerLegacyTablaPreview,
+                                  ),
+                                ),
+                              Expanded(
+                                child: EnvironmentTablePage(
+                                  units: [
+                                    for (final e in entries)
+                                      _applyMaintenanceToDeviceDisplayUnit(e),
+                                  ],
+                                  labels: [
+                                    for (final e in entries) e.displayName,
+                                  ],
+                                  plcIds: [for (final _ in entries) null],
+                                  deviceNames: [
+                                    for (final e in entries) e.device.name,
+                                  ],
+                                  templateIds: [
+                                    for (final e in entries)
+                                      templateResolver.templateIdForDevice(
+                                        e.device,
+                                      ),
+                                  ],
+                                  cerdasContextKeys: [
+                                    for (final e in entries)
+                                      _cerdasContextKeyForEntry(
+                                        tenantId: _historyTenantId,
+                                        siteId: _historySiteId,
+                                        entry: e,
+                                      ),
+                                  ],
+                                  tenantId: _historyTenantId,
+                                  siteId: _historySiteId,
+                                  rangeSettings: _rangeSettings,
+                                  forceLegacyLayout:
+                                      ownerCanPreviewLegacyTabla &&
+                                      _ownerLegacyTablaPreview,
+                                ),
+                              ),
                             ],
-                            labels: [for (final e in entries) e.displayName],
-                            plcIds: [for (final _ in entries) null],
-                            deviceNames: [
-                              for (final e in entries) e.device.name,
-                            ],
-                            tenantId: _historyTenantId,
-                            siteId: _historySiteId,
-                            rangeSettings: _rangeSettings,
                           );
                         }
+                        const DeviceTemplateResolver templateResolver =
+                            DeviceTemplateResolver();
+                        final String? legacyTemplateId = templateResolver
+                            .templateIdForLegacyRoom(
+                              tenantId: _historyTenantId,
+                              siteId: _historySiteId,
+                            );
                         final List<MuntersModel> visibleUnits = <MuntersModel>[
                           if (_unitVisibilitySettings.showMunters1) munters1,
                           if (_unitVisibilitySettings.showMunters2) munters2,
@@ -3167,6 +3426,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           units: visibleUnits,
                           labels: visiblePlcLabels,
                           plcIds: visiblePlcIds,
+                          templateIds: [
+                            for (final _ in visibleUnits) legacyTemplateId,
+                          ],
                           tenantId: _historyTenantId,
                           siteId: _historySiteId,
                           rangeSettings: _rangeSettings,
@@ -3174,6 +3436,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
                       }
 
                       if (_selectedTab == 'comparativo') {
+                        const DeviceTemplateResolver templateResolver =
+                            DeviceTemplateResolver();
+                        final List<DeviceDashboardEntry> dynamicEntries =
+                            _activeSiteUsesDynamicDevices
+                            ? DeviceDashboardEntry.listFrom(
+                                devices: _devices,
+                                snapshot: _snapshot,
+                                roomsByDeviceId: _roomsByDeviceId,
+                              )
+                            : const <DeviceDashboardEntry>[];
                         return Padding(
                           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
                           child: ComparisonPage(
@@ -3210,6 +3482,14 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                   ? _plcConfigs[1].plcId
                                   : 'munters2',
                             ),
+                            dynamicCerdasEntries: _activeSiteUsesDynamicDevices
+                                ? _cerdasControlEntriesForDashboardEntries(
+                                    tenantId: _historyTenantId,
+                                    siteId: _historySiteId,
+                                    entries: dynamicEntries,
+                                    templateResolver: templateResolver,
+                                  )
+                                : const <CerdasControlEntry>[],
                           ),
                         );
                       }
@@ -8031,6 +8311,48 @@ class _VisualConfigDialogState extends State<_VisualConfigDialog> {
   }
 }
 
+/// Discreet, owner-only control (Etapa 5C.1) to preview the legacy flat
+/// TABLA on a Site that normally renders the dynamic one — purely for
+/// visual comparison/reference, never persisted, and reset automatically
+/// whenever the active tenant/site changes (see `_siteSwitchGuard`).
+class _OwnerLegacyTablaToggle extends StatelessWidget {
+  const _OwnerLegacyTablaToggle({
+    required this.showingLegacy,
+    required this.onToggle,
+  });
+
+  final bool showingLegacy;
+  final VoidCallback onToggle;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 6),
+        child: TextButton.icon(
+          key: const Key('owner-legacy-tabla-toggle'),
+          onPressed: onToggle,
+          icon: Icon(
+            showingLegacy ? Icons.grid_view_rounded : Icons.history,
+            size: 16,
+          ),
+          label: Text(
+            showingLegacy ? 'Volver a tabla actual' : 'Ver tabla legacy',
+          ),
+          style: TextButton.styleFrom(
+            foregroundColor: const Color(0xFF94A3B8),
+            textStyle: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _UnitVisibilitySettingsDialog extends StatefulWidget {
   const _UnitVisibilitySettingsDialog({
     required this.initialSettings,
@@ -9162,13 +9484,42 @@ class _DoorOpeningsCleanupDialogState
   int _doorIndex = 0;
   final Set<String> _selectedOpeningIds = <String>{};
   bool _deleting = false;
+  late Stream<List<DoorOpeningRecord>> _openingsStream;
 
   _CleanupDoorOption get _selectedDoor => _doors[_doorIndex];
 
+  @override
+  void initState() {
+    super.initState();
+    _configureOpeningsStream();
+  }
+
+  @override
+  void didUpdateWidget(covariant _DoorOpeningsCleanupDialog oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.tenantId != widget.tenantId ||
+        oldWidget.siteId != widget.siteId ||
+        oldWidget.repository != widget.repository) {
+      _configureOpeningsStream();
+    }
+  }
+
+  void _configureOpeningsStream() {
+    _openingsStream = widget.repository.watchDoorOpeningsForCleanup(
+      tenantId: widget.tenantId,
+      siteId: widget.siteId,
+      doorId: _selectedDoor.id,
+    );
+  }
+
   void _switchDoor(int index) {
+    if (index == _doorIndex) {
+      return;
+    }
     setState(() {
       _doorIndex = index;
       _selectedOpeningIds.clear();
+      _configureOpeningsStream();
     });
   }
 
@@ -9282,11 +9633,7 @@ class _DoorOpeningsCleanupDialogState
             Expanded(
               child: StreamBuilder<List<DoorOpeningRecord>>(
                 key: ValueKey<String>(_selectedDoor.id),
-                stream: widget.repository.watchDoorOpeningsForCleanup(
-                  tenantId: widget.tenantId,
-                  siteId: widget.siteId,
-                  doorId: _selectedDoor.id,
-                ),
+                stream: _openingsStream,
                 builder: (context, snapshot) {
                   if (snapshot.connectionState == ConnectionState.waiting &&
                       !snapshot.hasData) {

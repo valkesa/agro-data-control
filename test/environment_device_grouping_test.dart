@@ -4,11 +4,9 @@
 //
 // Tablero:
 //   - up to 3 Salas total (across the whole page): single column, stacked.
-//   - beyond 3 Salas total: 2 columns, left-to-right then top-to-bottom.
-//     That threshold is evaluated once for the whole page, independent of
-//     how many Salas any single Device has — a Device with only 1 Sala
-//     still lays out in 2-column mode if another Device pushes the page
-//     total past 3.
+//   - 1-3 Salas: single column.
+//   - 4-6 Salas: two columns, filled top-to-bottom.
+//   - 7+ Salas: up to three columns when the viewport fits complete cards.
 //   - Salas are additionally grouped under a titled header per Device;
 //     groups stack vertically, each using its own mini-grid in the same
 //     column mode.
@@ -31,6 +29,9 @@ void main() {
     testWidgets('hasta 3 salas totales: columna unica (mismo x, y creciente)', (
       WidgetTester tester,
     ) async {
+      await tester.binding.setSurfaceSize(const Size(390, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
       await tester.pumpWidget(
         MaterialApp(
           home: Scaffold(
@@ -72,9 +73,80 @@ void main() {
       expect(p3.dy, greaterThan(p2.dy));
     });
 
+    testWidgets('dos cards quedan en una columna aunque haya ancho', (
+      WidgetTester tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(900, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[_sala('Sala 1'), _sala('Sala 2')],
+              labels: const <String>['Sala 1', 'Sala 2'],
+              plcIds: const <String?>[null, null],
+              deviceNames: const <String>['PLC A', 'PLC A'],
+              templateIds: const <String?>['room_climate', 'room_climate'],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final Offset p1 = tester.getTopLeft(find.text('Sala 1').first);
+      final Offset p2 = tester.getTopLeft(find.text('Sala 2').first);
+
+      expect(p1.dx, p2.dx);
+      expect(p2.dy, greaterThan(p1.dy));
+      expect(tester.takeException(), isNull);
+    });
+
+    testWidgets('cerca del breakpoint: cambia a una columna sin overlap', (
+      WidgetTester tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(720, 900));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[_sala('Sala 1'), _sala('Sala 2')],
+              labels: const <String>['Sala 1', 'Sala 2'],
+              plcIds: const <String?>[null, null],
+              deviceNames: const <String>['PLC A', 'PLC A'],
+              templateIds: const <String?>['room_climate', 'room_climate'],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final Offset p1 = tester.getTopLeft(find.text('Sala 1').first);
+      final Offset p2 = tester.getTopLeft(find.text('Sala 2').first);
+
+      expect(p1.dx, p2.dx);
+      expect(p2.dy, greaterThan(p1.dy));
+      expect(tester.takeException(), isNull);
+    });
+
     testWidgets(
-      'mas de 3 salas totales: 2 columnas, izquierda a derecha y arriba a abajo',
+      '4 salas: 2 columnas x 2 filas, llenadas de arriba hacia abajo',
       (WidgetTester tester) async {
+        await tester.binding.setSurfaceSize(const Size(900, 1200));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
         await tester.pumpWidget(
           MaterialApp(
             home: Scaffold(
@@ -99,23 +171,149 @@ void main() {
         );
         await tester.pump();
 
-        final Offset p1 = tester.getTopLeft(find.text('Sala 1').first);
-        final Offset p2 = tester.getTopLeft(find.text('Sala 2').first);
-        final Offset p3 = tester.getTopLeft(find.text('Sala 3').first);
-        final Offset p4 = tester.getTopLeft(find.text('Sala 4').first);
+        final Offset p1 = tester.getTopLeft(
+          find.byKey(const Key('environment-overview-card-0')),
+        );
+        final Offset p2 = tester.getTopLeft(
+          find.byKey(const Key('environment-overview-card-1')),
+        );
+        final Offset p3 = tester.getTopLeft(
+          find.byKey(const Key('environment-overview-card-2')),
+        );
+        final Offset p4 = tester.getTopLeft(
+          find.byKey(const Key('environment-overview-card-3')),
+        );
 
-        // sala1 arriba, sala2 a la derecha de sala1 (misma fila).
-        expect(p1.dy, p2.dy);
-        expect(p2.dx, greaterThan(p1.dx));
-        // sala3 debajo de sala1, sala4 debajo de sala2 (misma columna que cada una).
-        expect(p3.dx, p1.dx);
-        expect(p4.dx, p2.dx);
-        expect(p3.dy, greaterThan(p1.dy));
-        expect(p4.dy, greaterThan(p2.dy));
-        // sala3 y sala4 en la misma fila entre si.
-        expect(p3.dy, p4.dy);
+        expect(p2.dx, p1.dx);
+        expect(p2.dy, greaterThan(p1.dy));
+        expect(p3.dx, greaterThan(p1.dx));
+        expect(p3.dy, p1.dy);
+        expect(p4.dx, p3.dx);
+        expect(p4.dy, p2.dy);
       },
     );
+
+    testWidgets('5 salas: columnas 3 + 2', (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[
+                for (int i = 1; i <= 5; i++) _sala('Sala $i'),
+              ],
+              labels: <String>[for (int i = 1; i <= 5; i++) 'Sala $i'],
+              plcIds: const <String?>[null, null, null, null, null],
+              deviceNames: const <String>[
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+              ],
+              templateIds: const <String?>[
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+              ],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final Offset p1 = tester.getTopLeft(find.text('Sala 1').first);
+      final Offset p3 = tester.getTopLeft(find.text('Sala 3').first);
+      final Offset p4 = tester.getTopLeft(find.text('Sala 4').first);
+      final Offset p5 = tester.getTopLeft(find.text('Sala 5').first);
+
+      expect(p3.dx, p1.dx);
+      expect(p3.dy, greaterThan(p1.dy));
+      expect(p4.dx, greaterThan(p1.dx));
+      expect(p4.dy, p1.dy);
+      expect(p5.dx, p4.dx);
+      expect(p5.dy, greaterThan(p4.dy));
+    });
+
+    testWidgets('9 salas: 3 columnas x 3 filas si el viewport alcanza', (
+      WidgetTester tester,
+    ) async {
+      await tester.binding.setSurfaceSize(const Size(1320, 1400));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[
+                for (int i = 1; i <= 9; i++) _sala('Sala $i'),
+              ],
+              labels: <String>[for (int i = 1; i <= 9; i++) 'Sala $i'],
+              plcIds: const <String?>[
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+                null,
+              ],
+              deviceNames: const <String>[
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+                'PLC A',
+              ],
+              templateIds: const <String?>[
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+                'room_climate',
+              ],
+              tenantId: null,
+              siteId: null,
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final Offset p1 = tester.getTopLeft(find.text('Sala 1').first);
+      final Offset p4 = tester.getTopLeft(find.text('Sala 4').first);
+      final Offset p7 = tester.getTopLeft(find.text('Sala 7').first);
+      final Offset p9 = tester.getTopLeft(find.text('Sala 9').first);
+
+      expect(p4.dx, greaterThan(p1.dx));
+      expect(p4.dy, p1.dy);
+      expect(p7.dx, greaterThan(p4.dx));
+      expect(p7.dy, p1.dy);
+      expect(p9.dx, p7.dx);
+      expect(p9.dy, greaterThan(p7.dy));
+    });
 
     testWidgets(
       'agrupacion por device es independiente del layout de columnas: '
@@ -133,9 +331,6 @@ void main() {
                 ],
                 labels: const <String>['Sala 1', 'Sala 2', 'Sala 3', 'Sala 4'],
                 plcIds: const <String?>[null, null, null, null],
-                // Device 1 tiene 3 salas, Device 2 tiene 1 -> total 4 > 3,
-                // asi que AMBOS grupos usan el modo de 2 columnas, aunque
-                // Device 2 solo tenga una sola sala.
                 deviceNames: const <String>[
                   'PLC Maternidad',
                   'PLC Maternidad',
@@ -162,9 +357,6 @@ void main() {
         final Offset p4 = tester.getTopLeft(find.text('Sala 4').first);
         final Offset recriaTitle = tester.getTopLeft(find.text('PLC Recria'));
 
-        // Sala 4 (unica sala de Device 2) arranca en la misma columna que
-        // sala1/sala3 (columna izquierda) y, en su propio grupo, no se
-        // "estira" a 2 columnas por si sola.
         expect(p4.dx, p1.dx);
         // El grupo de Device 2 aparece completo debajo del grupo de Device 1.
         expect(recriaTitle.dy, greaterThan(p3.dy));
@@ -193,7 +385,14 @@ void main() {
       );
       await tester.pump();
 
-      expect(find.byIcon(Icons.memory), findsNothing);
+      expect(
+        find.byKey(const Key('environment-device-group-Munters 1')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('environment-device-group-Munters 2')),
+        findsNothing,
+      );
     });
 
     testWidgets('muestra cartel con tipo de mantenimiento en la card', (
@@ -244,8 +443,52 @@ void main() {
         );
         await tester.pump();
 
-        expect(find.byIcon(Icons.memory), findsNothing);
+        expect(
+          find.byKey(const Key('environment-device-group-Sala1')),
+          findsNothing,
+        );
         expect(find.text('Sala1'), findsWidgets);
+      },
+    );
+
+    testWidgets(
+      'regresion: 3+ devices con nombres distintos, cada uno su propio '
+      'grupo de 1 sala (forma real de Las Heras) — no debe tirar '
+      '"Duplicate keys found"',
+      (WidgetTester tester) async {
+        // Antes del fix, la key del Row de cada grupo solo dependia de
+        // (cantidad de cards, columnas) — 3 grupos independientes de 1
+        // card cada uno generaban la MISMA key
+        // ('environment-overview-card-columns-1-1'), sin importar que
+        // fueran devices distintos. Reproduce el crash real reportado en
+        // producción para el tenant the-gene-pig / site las-heras.
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: EnvironmentOverviewPage(
+                units: <MuntersModel>[
+                  _sala('Sala1'),
+                  _sala('Sala2'),
+                  _sala('Laboratorio'),
+                ],
+                labels: const <String>['Sala1', 'Sala2', 'Laboratorio'],
+                plcIds: const <String?>[null, null, null],
+                deviceNames: const <String>['Sala1', 'Sala2', 'Laboratorio'],
+                tenantId: 'the-gene-pig',
+                siteId: 'las-heras',
+                rangeSettings: const DashboardRangeSettings.defaults(),
+                showSnapshotPulse: false,
+                snapshotStale: false,
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(find.text('Sala1'), findsWidgets);
+        expect(find.text('Sala2'), findsWidgets);
+        expect(find.text('Laboratorio'), findsWidgets);
       },
     );
   });

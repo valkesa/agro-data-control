@@ -56,7 +56,7 @@ class UserContextService {
     } catch (error, stackTrace) {
       debugPrint('[Firestore] user context read error uid=$uid error=$error');
       debugPrint('[Firestore] user context read error stack=$stackTrace');
-      return UserContextResult.error(error.toString());
+      return UserContextResult.error(_sanitizeFirestoreErrorForUi(error));
     }
   }
 
@@ -156,6 +156,20 @@ class UserContextService {
           .toList(growable: false);
     }
     return const <String>[];
+  }
+
+  static String _sanitizeFirestoreErrorForUi(Object error) {
+    if (error is FirebaseException) {
+      switch (error.code) {
+        case 'permission-denied':
+          return 'Permisos insuficientes para leer el perfil.';
+        case 'unavailable':
+          return 'Firestore no esta disponible en este momento.';
+        case 'unauthenticated':
+          return 'La sesion no esta autenticada para leer el perfil.';
+      }
+    }
+    return 'Error interno de Firestore al leer el perfil.';
   }
 }
 

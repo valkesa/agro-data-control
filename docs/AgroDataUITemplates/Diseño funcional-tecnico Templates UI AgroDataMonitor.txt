@@ -1,0 +1,93 @@
+Diseño funcional/técnico corto
+
+La idea sería definir un sistema único de templates de UI para que cada device indique qué variables mostrar y cómo mostrarlas, sin crear vistas específicas por tipo de equipo.
+
+La estructura mínima sería:
+
+Device
+ └─ templateId
+      ↓
+DeviceTemplate
+ ├─ metrics
+ ├─ indicators
+ ├─ boardLayout
+ └─ tableLayout
+
+Cada métrica define una sola vez:
+
+MetricDefinition
+- key
+- label
+- unit
+- icon
+- sourceField
+- format
+
+Los indicadores son estados adicionales asociados a una métrica:
+
+IndicatorDefinition
+- sourceField
+- icon
+- condition
+- position
+
+Ejemplo: los dos fueguitos de calefacción de Temperatura Interior.
+
+Para TABLERO, cada template define slots:
+
+BoardSlot
+- metricKey
+- position
+- size
+- indicators[]
+
+Y usaríamos inicialmente tres layouts:
+
+large
+medium
+compact
+
+Para TABLA, cada template define sus columnas:
+
+TableColumn
+- metricKey
+- order
+- width
+- visible
+- indicators[]
+
+Además:
+
+tableSection
+
+para agrupar devices que comparten encabezados.
+
+Ejemplo:
+
+Salas
+ ├─ Sala1
+ └─ Sala2
+
+Laboratorio
+ └─ Lab
+
+Arco de desinfección
+ └─ Arco Desf
+
+Así cada sección tiene su propia cabecera.
+
+Templates iniciales
+room_climate
+→ Large
+→ Sala1 / Sala2
+
+laboratory_basic
+→ Compact
+→ Temperatura interior
+→ Humedad interior
+
+disinfection_arch
+→ Medium
+→ Vehículos desinfectados
+→ Vehículos totales
+→ Nivel tanque

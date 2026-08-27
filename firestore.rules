@@ -848,6 +848,59 @@ service cloud.firestore {
 
         allow delete: if false;
 
+        match /pigStats/pigs {
+          allow read: if canReadTenant(tenantId);
+          allow create, update: if (isTenantMember(tenantId) || isOwner())
+            && request.resource.data.keys().hasOnly([
+              'currentCount',
+              'tenantId',
+              'siteId',
+              'deviceId',
+              'updatedAt',
+              'updatedBy'
+            ])
+            && request.resource.data.currentCount is int
+            && request.resource.data.tenantId == tenantId
+            && request.resource.data.deviceId == deviceId
+            && request.resource.data.siteId is string
+            && request.resource.data.siteId.size() > 0
+            && request.resource.data.updatedAt is timestamp
+            && request.resource.data.updatedBy is string;
+          allow delete: if false;
+        }
+
+        match /pigMovements/{movementId} {
+          allow read: if canReadTenant(tenantId);
+          allow create: if (isTenantMember(tenantId) || isOwner())
+            && request.resource.data.keys().hasOnly([
+              'type',
+              'date',
+              'quantity',
+              'reasonId',
+              'reasonName',
+              'userId',
+              'userName',
+              'tenantId',
+              'siteId',
+              'deviceId',
+              'createdAt',
+              'updatedAt'
+            ])
+            && request.resource.data.type in ['in', 'out']
+            && request.resource.data.date is timestamp
+            && request.resource.data.quantity is int
+            && request.resource.data.quantity > 0
+            && request.resource.data.tenantId == tenantId
+            && request.resource.data.deviceId == deviceId
+            && request.resource.data.siteId is string
+            && request.resource.data.siteId.size() > 0
+            && request.resource.data.userId is string
+            && request.resource.data.userName is string
+            && request.resource.data.createdAt is timestamp
+            && request.resource.data.updatedAt is timestamp;
+          allow update, delete: if false;
+        }
+
         match /rooms/{roomId} {
           allow read: if canReadTenant(tenantId);
 
@@ -903,6 +956,63 @@ service cloud.firestore {
             );
 
           allow delete: if false;
+
+          match /pigStats/pigs {
+            allow read: if canReadTenant(tenantId);
+            allow create, update: if (isTenantMember(tenantId) || isOwner())
+              && request.resource.data.keys().hasOnly([
+                'currentCount',
+                'tenantId',
+                'siteId',
+                'deviceId',
+                'roomId',
+                'updatedAt',
+                'updatedBy'
+              ])
+              && request.resource.data.currentCount is int
+              && request.resource.data.tenantId == tenantId
+              && request.resource.data.deviceId == deviceId
+              && request.resource.data.roomId == roomId
+              && request.resource.data.siteId is string
+              && request.resource.data.siteId.size() > 0
+              && request.resource.data.updatedAt is timestamp
+              && request.resource.data.updatedBy is string;
+            allow delete: if false;
+          }
+
+          match /pigMovements/{movementId} {
+            allow read: if canReadTenant(tenantId);
+            allow create: if (isTenantMember(tenantId) || isOwner())
+              && request.resource.data.keys().hasOnly([
+                'type',
+                'date',
+                'quantity',
+                'reasonId',
+                'reasonName',
+                'userId',
+                'userName',
+                'tenantId',
+                'siteId',
+                'deviceId',
+                'roomId',
+                'createdAt',
+                'updatedAt'
+              ])
+              && request.resource.data.type in ['in', 'out']
+              && request.resource.data.date is timestamp
+              && request.resource.data.quantity is int
+              && request.resource.data.quantity > 0
+              && request.resource.data.tenantId == tenantId
+              && request.resource.data.deviceId == deviceId
+              && request.resource.data.roomId == roomId
+              && request.resource.data.siteId is string
+              && request.resource.data.siteId.size() > 0
+              && request.resource.data.userId is string
+              && request.resource.data.userName is string
+              && request.resource.data.createdAt is timestamp
+              && request.resource.data.updatedAt is timestamp;
+            allow update, delete: if false;
+          }
         }
       }
     }

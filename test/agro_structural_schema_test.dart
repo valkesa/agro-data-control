@@ -243,6 +243,29 @@ void main() {
         FirestorePaths.plcConfigDoc('the-gene-pig', 'main_site', 'munters1'),
         'tenants/the-gene-pig/sites/main_site/plcs/munters1',
       );
+      expect(
+        FirestorePaths.pigStatsDoc(
+          tenantId: 'the-gene-pig',
+          siteId: 'main_site',
+          plcId: 'munters1',
+        ),
+        'tenants/the-gene-pig/sites/main_site/plcs/munters1/plcStats/pigs',
+      );
+      expect(
+        FirestorePaths.devicePigStatsDoc(
+          tenantId: 'the-gene-pig',
+          deviceId: 'plc-gestacion',
+        ),
+        'tenants/the-gene-pig/devices/plc-gestacion/pigStats/pigs',
+      );
+      expect(
+        FirestorePaths.deviceRoomPigStatsDoc(
+          tenantId: 'la-payana',
+          deviceId: 'plc-maternidad',
+          roomId: 'sala-1',
+        ),
+        'tenants/la-payana/devices/plc-maternidad/rooms/sala-1/pigStats/pigs',
+      );
     });
   });
 

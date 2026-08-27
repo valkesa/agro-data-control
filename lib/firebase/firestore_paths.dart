@@ -154,11 +154,33 @@ class FirestorePaths {
     required String plcId,
   }) => 'tenants/$tenantId/sites/$siteId/plcs/$plcId/plcStats/pigs';
 
+  static String devicePigStatsDoc({
+    required String tenantId,
+    required String deviceId,
+  }) => 'tenants/$tenantId/devices/$deviceId/pigStats/pigs';
+
+  static String deviceRoomPigStatsDoc({
+    required String tenantId,
+    required String deviceId,
+    required String roomId,
+  }) => 'tenants/$tenantId/devices/$deviceId/rooms/$roomId/pigStats/pigs';
+
   static String pigMovementsCollection({
     required String tenantId,
     required String siteId,
     required String plcId,
   }) => 'tenants/$tenantId/sites/$siteId/plcs/$plcId/pigMovements';
+
+  static String devicePigMovementsCollection({
+    required String tenantId,
+    required String deviceId,
+  }) => 'tenants/$tenantId/devices/$deviceId/pigMovements';
+
+  static String deviceRoomPigMovementsCollection({
+    required String tenantId,
+    required String deviceId,
+    required String roomId,
+  }) => 'tenants/$tenantId/devices/$deviceId/rooms/$roomId/pigMovements';
 
   static String pigExitReasonsCollection({
     required String tenantId,

@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AgroData UI Templates - Etapa 1</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; margin: 40px; line-height: 1.5; color: #1f2937; }
+  h1, h2, h3 { color: #111827; }
+  h1 { border-bottom: 2px solid #e5e7eb; padding-bottom: 10px; }
+  h2 { margin-top: 34px; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+  pre { background: #f3f4f6; padding: 14px; border-radius: 8px; overflow-x: auto; }
+  .note { background: #eff6ff; border-left: 4px solid #3b82f6; padding: 12px 14px; margin: 16px 0; }
+  .summary { background: #f9fafb; border: 1px solid #e5e7eb; padding: 16px; border-radius: 8px; }
+  ul { margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>AgroData UI Templates — Etapa 1</h1>
+<p>Documento de consulta para definir el contrato funcional del sistema de templates de UI de AgroData antes de avanzar con la implementación.</p>
+
+<h2>1. MetricDefinition</h2>
+<p>Define qué dato representa una métrica.</p>
+<pre>MetricDefinition
+- key
+- label
+- unit
+- icon
+- sourceField
+- displayType
+- decimals</pre>
+
+<h3>Ejemplo</h3>
+<pre>key: tempInterior
+label: Temperatura interior
+unit: °C
+icon: thermometer
+sourceField: tempInt
+displayType: number
+decimals: 1</pre>
+
+<h3>Tipos iniciales de displayType</h3>
+<pre>number
+percentage
+counter
+boolean
+status
+text</pre>
+
+<h2>2. IndicatorDefinition</h2>
+<p>Representa información secundaria asociada a una métrica.</p>
+<pre>IndicatorDefinition
+- key
+- sourceField
+- icon
+- condition
+- position</pre>
+
+<h3>Ejemplo</h3>
+<pre>key: calefaccionEtapa1
+sourceField: heatStage1
+icon: flame
+condition: true
+position: belowValue</pre>
+
+<p>Para la segunda etapa de calefacción se usaría otro indicador equivalente.</p>
+<pre>0...N indicators</pre>
+
+<div class="note">
+<strong>Idea central:</strong> los dos fueguitos de Temperatura Interior no se hardcodean como excepción. Se modelan como dos indicadores asociados a la métrica.
+</div>
+
+<h2>3. BoardSlot</h2>
+<p>Define cómo una métrica se ubica en la vista <strong>TABLERO</strong>.</p>
+<pre>BoardSlot
+- metricKey
+- position
+- size
+- visible
+- indicators[]</pre>
+
+<h3>size</h3>
+<p>Inicialmente:</p>
+<pre>large
+medium
+small</pre>
+<p>Esto describe el tamaño del slot, no el template entero.</p>
+
+<h3>position</h3>
+<p>No se usarían coordenadas pixeladas. La posición sería abstracta:</p>
+<pre>1
+2
+3
+4
+...</pre>
+<p>El layout interpreta qué significa cada posición. Esto permite adaptar el diseño responsive sin cambiar la configuración del template.</p>
+
+<h2>4. TableColumn</h2>
+<p>Define cómo una métrica aparece en la vista <strong>TABLA</strong>.</p>
+<pre>TableColumn
+- metricKey
+- order
+- width
+- visible
+- indicators[]</pre>
+
+<h3>Ejemplo</h3>
+<pre>metricKey: tempInterior
+order: 4
+width: medium
+visible: true</pre>
+
+<p>El icono, la leyenda, la unidad y el formato provienen de <code>MetricDefinition</code>, por lo que no se duplican.</p>
+
+<h2>5. DeviceTemplate</h2>
+<p>Es el objeto central que vincula la definición de métricas con las vistas TABLERO y TABLA.</p>
+<pre>DeviceTemplate
+- id
+- name
+- boardPreset
+- boardSlots[]
+- tableSection
+- tableColumns[]</pre>
+
+<h3>Ejemplo: Laboratorio</h3>
+<pre>id: laboratory_basic
+name: Laboratorio básico
+
+boardPreset: compact
+
+boardSlots:
+- tempInterior
+- humedadInterior
+
+tableSection: Laboratorio
+
+tableColumns:
+- tempInterior
+- humedadInterior</pre>
+
+<h2>6. Presets de TABLERO</h2>
+<p>Se mantienen tres presets iniciales:</p>
+<pre>large
+medium
+compact</pre>
+
+<p>Estos presets determinan la geometría disponible.</p>
+<pre>large
+→ hasta 13 posiciones
+
+medium
+→ aproximadamente 5-7 posiciones
+
+compact
+→ aproximadamente 2-3 posiciones</pre>
+
+<p>No conviene fijar un máximo rígido hasta diseñar las geometrías concretas.</p>
+
+<h2>7. Regla de no duplicación</h2>
+<p>No conviene repetir <code>label</code>, <code>icon</code> y <code>unit</code> dentro de <code>BoardSlot</code> y <code>TableColumn</code>.</p>
+
+<p>La relación correcta es:</p>
+<pre>BoardSlot
+   ↓ metricKey
+MetricDefinition
+   ↓
+label / icon / unit</pre>
+
+<p>Y para tabla:</p>
+<pre>TableColumn
+   ↓ metricKey
+MetricDefinition</pre>
+
+<p>Solo tendría sentido habilitar un <code>labelOverride</code> más adelante si aparece una necesidad real.</p>
+
+<h2>8. Ejemplo completo: Temperatura Interior</h2>
+<h3>MetricDefinition</h3>
+<pre>key: tempInterior
+label: Temperatura interior
+unit: °C
+icon: thermometer
+sourceField: tempInt
+displayType: number
+decimals: 1</pre>
+
+<h3>Indicators</h3>
+<pre>- calefaccionEtapa1
+- calefaccionEtapa2</pre>
+
+<h3>BoardSlot</h3>
+<pre>metricKey: tempInterior
+position: 1
+size: large
+indicators:
+- calefaccionEtapa1
+- calefaccionEtapa2</pre>
+
+<h3>TableColumn</h3>
+<pre>metricKey: tempInterior
+order: 4
+indicators:
+- calefaccionEtapa1
+- calefaccionEtapa2</pre>
+
+<p>Resultado: los mismos dos indicadores de calefacción pueden aparecer tanto en Tablero como en Tabla sin lógica específica para Sala1 o Sala2.</p>
+
+<h2>9. Objetivos de la Etapa 1</h2>
+<div class="summary">
+<ol>
+  <li>Definir los tipos permitidos de métricas.</li>
+  <li>Definir las propiedades definitivas de <code>MetricDefinition</code>.</li>
+  <li>Definir las propiedades de <code>IndicatorDefinition</code>.</li>
+  <li>Definir los tamaños de slot.</li>
+  <li>Definir los tres presets de layout.</li>
+  <li>Definir las reglas de posición y orden.</li>
+</ol>
+</div>
+
+<h2>10. Punto pendiente a resolver</h2>
+<p>Falta decidir cómo manejar los <strong>colores y estados visuales</strong>.</p>
+<p>Ejemplo: una temperatura puede verse verde, blanca o en alarma. Hay que definir si esta lógica forma parte del sistema de templates o continúa dependiendo de la lógica de alarmas existente.</p>
+
+</body>
+</html>

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../models/dashboard_range_settings.dart';
@@ -12,6 +13,15 @@ import '../models/plc_maintenance_settings.dart';
 import '../models/plc_unit_diagnostics.dart';
 import '../models/room_wash_event.dart';
 import '../services/cerdas_repository.dart';
+import '../ui_templates/board/device_board_renderer.dart';
+import '../ui_templates/catalog/device_template_resolver.dart';
+import '../ui_templates/enums/board_preset.dart';
+import '../ui_templates/models/device_template.dart';
+import '../ui_templates/models/template_data_context.dart';
+import '../ui_templates/table/device_table_renderer.dart';
+import '../ui_templates/transforms/environment_calculations.dart';
+import '../ui_templates/transforms/metric_transforms.dart';
+import '../utils/fan_animation.dart';
 import '../widgets/animated_humidity_icon.dart';
 import '../widgets/cerdas_module.dart';
 import '../widgets/differential_pressure_history_card.dart';
@@ -43,6 +53,7 @@ class ComparisonPage extends StatefulWidget {
     this.plc2ColumnLabel,
     this.plc1MaintenanceMode,
     this.plc2MaintenanceMode,
+    this.dynamicCerdasEntries = const <CerdasControlEntry>[],
   });
 
   static const String sectionEstado = 'Estado';
@@ -128,6 +139,7 @@ class ComparisonPage extends StatefulWidget {
   final String? plc2ColumnLabel;
   final PlcMaintenanceMode? plc1MaintenanceMode;
   final PlcMaintenanceMode? plc2MaintenanceMode;
+  final List<CerdasControlEntry> dynamicCerdasEntries;
 
   @override
   State<ComparisonPage> createState() => _ComparisonPageState();
@@ -197,6 +209,10 @@ class EnvironmentOverviewPage extends StatelessWidget {
     required this.showSnapshotPulse,
     required this.snapshotStale,
     this.deviceNames,
+    this.templateIds,
+    this.cerdasContextKeys,
+    this.templateResolver = const DeviceTemplateResolver(),
+    this.cerdasRepository = const CerdasRepository(),
   });
 
   final List<MuntersModel> units;
@@ -207,6 +223,10 @@ class EnvironmentOverviewPage extends StatelessWidget {
   final DashboardRangeSettings rangeSettings;
   final bool showSnapshotPulse;
   final bool snapshotStale;
+  final List<String?>? templateIds;
+  final List<CerdasContextKey?>? cerdasContextKeys;
+  final DeviceTemplateResolver templateResolver;
+  final CerdasRepository cerdasRepository;
 
   /// One entry per [units] index naming the physical Device that unit's
   /// Sala belongs to — e.g. `[PLC Maternidad, PLC Maternidad, PLC Recria]`.
@@ -230,6 +250,10 @@ class EnvironmentOverviewPage extends StatelessWidget {
           showSnapshotPulse: showSnapshotPulse,
           snapshotStale: snapshotStale,
           deviceNames: deviceNames,
+          templateIds: templateIds,
+          cerdasContextKeys: cerdasContextKeys,
+          templateResolver: templateResolver,
+          cerdasRepository: cerdasRepository,
         ),
       ),
     );
@@ -247,6 +271,12 @@ class EnvironmentOverviewPage extends StatelessWidget {
 /// fixed row) so that once a Device in the new Sites/Sectors/Devices
 /// schema can expose more than one Sala's variables, feeding several rows
 /// under the same PLC/Device group is a data change, not a UI rewrite.
+/// TABLA productiva: un renderer dinámico por secciones
+/// (`DeviceTableRenderer`), una por `DeviceTemplate.tableSection`, en vez de
+/// una única tabla con cabecera fija para todos los devices. Migrado en la
+/// Etapa 5B desde la tabla unificada legacy (`_EnvironmentTableGrid`, que se
+/// mantiene sin usar debajo por si hace falta un rollback rápido — ver nota
+/// en esa clase).
 class EnvironmentTablePage extends StatelessWidget {
   const EnvironmentTablePage({
     super.key,
@@ -257,6 +287,11 @@ class EnvironmentTablePage extends StatelessWidget {
     required this.siteId,
     required this.rangeSettings,
     this.deviceNames,
+    this.templateIds,
+    this.cerdasContextKeys,
+    this.templateResolver = const DeviceTemplateResolver(),
+    this.cerdasRepository = const CerdasRepository(),
+    this.forceLegacyLayout = false,
   });
 
   final List<MuntersModel> units;
@@ -266,60 +301,298 @@ class EnvironmentTablePage extends StatelessWidget {
   final String? siteId;
   final DashboardRangeSettings rangeSettings;
 
+  /// Owner-only manual override (Etapa 5C.1): when true, every unit is
+  /// treated as if it had no resolvable [DeviceTemplate], regardless of
+  /// [templateIds] — the same flat legacy grid
+  /// (`_EnvironmentTableGrid`/`_EnvironmentTableRow`) already used as the
+  /// no-template fallback becomes the whole page, purely for visual
+  /// comparison against the dynamic renderer. Never set by anything other
+  /// than the explicit owner toggle in `main.dart`; a dynamic-Devices Site
+  /// keeps rendering `DeviceTableRenderer` by default.
+  final bool forceLegacyLayout;
+
   /// One entry per [units] index naming the physical Device that unit's
   /// Sala belongs to. Null for legacy PLC1/PLC2 dashboards — see
   /// [EnvironmentOverviewPage.deviceNames].
   final List<String>? deviceNames;
 
+  /// One entry per [units] index — mirrors [EnvironmentOverviewPage.templateIds]
+  /// exactly, same resolution/fallback semantics, so TABLERO and TABLA never
+  /// disagree about which `DeviceTemplate` a given unit uses.
+  final List<String?>? templateIds;
+  final List<CerdasContextKey?>? cerdasContextKeys;
+  final DeviceTemplateResolver templateResolver;
+  final CerdasRepository cerdasRepository;
+
   @override
   Widget build(BuildContext context) {
-    // Legacy schema: a PLC always resolves to exactly one Sala row today.
-    // Once a Device can expose more than one Sala's variables, building
-    // several `_EnvironmentTableRow`s per unit here (instead of exactly
-    // one) is all that changes — the single table below stays the same.
-    final List<_EnvironmentTableRow> rows = <_EnvironmentTableRow>[
-      for (int i = 0; i < units.length; i++)
-        _EnvironmentTableRow.fromUnit(
+    final List<_TablaRowSpec> specs = <_TablaRowSpec>[];
+    // Devices sin `DeviceTemplate` resoluble (sección 23/32 del prompt
+    // Etapa 5B) no se descartan: se degradan a la tabla plana legacy
+    // (`_EnvironmentTableGrid`), el mismo fallback que
+    // `_EnvironmentOverviewPresetLayout._buildOverviewCard` ya usa para
+    // TABLERO cuando `cardData.template == null` — no `room_climate` por
+    // defecto, no se rompe el resto de la vista.
+    final List<_EnvironmentTableRow> legacyFallbackRows =
+        <_EnvironmentTableRow>[];
+    final List<String> legacyFallbackDeviceNames = <String>[];
+    for (int i = 0; i < units.length; i++) {
+      final String? explicitTemplateId = i < (templateIds?.length ?? 0)
+          ? templateIds![i]
+          : null;
+      final String? templateId =
+          explicitTemplateId ??
+          templateResolver.templateIdForLegacyRoom(
+            tenantId: tenantId,
+            siteId: siteId,
+          );
+      final DeviceTemplate? template = forceLegacyLayout || templateId == null
+          ? null
+          : templateResolver.templateForId(templateId);
+      final String label = i < labels.length ? labels[i] : units[i].name;
+      // Mismo fallback exacto que `_EnvironmentOverviewPresetLayout.unitCard`
+      // usa para `legacyPlcId`, para que TABLERO y TABLA identifiquen el
+      // mismo plcId por unit (y por lo tanto la misma stream de cerdas).
+      final String? plcId = i < plcIds.length
+          ? plcIds[i]
+          : units[i].historyPlcId;
+      final CerdasContextKey? cerdasKey = _cerdasKeyForIndex(
+        index: i,
+        explicitKeys: cerdasContextKeys,
+        tenantId: tenantId,
+        siteId: siteId,
+        plcId: plcId,
+      );
+      if (template == null) {
+        legacyFallbackRows.add(
+          _EnvironmentTableRow.fromUnit(
+            unit: units[i],
+            roomLabel: label,
+            plcId: plcId,
+            rangeSettings: rangeSettings,
+          ),
+        );
+        if (i < (deviceNames?.length ?? 0)) {
+          legacyFallbackDeviceNames.add(deviceNames![i]);
+        }
+        continue;
+      }
+      specs.add(
+        _TablaRowSpec(
+          template: template,
           unit: units[i],
-          roomLabel: i < labels.length ? labels[i] : units[i].name,
-          plcId: i < plcIds.length ? plcIds[i] : null,
-          rangeSettings: rangeSettings,
+          label: label,
+          plcId: plcId,
+          cerdasKey: cerdasKey,
+          deviceGroupTitle: i < (deviceNames?.length ?? 0)
+              ? deviceNames![i]
+              : null,
         ),
-    ];
+      );
+    }
+
+    if (kDebugMode) {
+      debugPrint(
+        '[TABLE_SITE_DEBUG] event=renderer-decision '
+        'tenantId=$tenantId siteId=$siteId '
+        'forceLegacyLayout=$forceLegacyLayout '
+        'templateIdsCount=${templateIds?.length ?? 0} '
+        'unitsCount=${units.length} '
+        'dynamicSpecs=${specs.length} '
+        'legacyFallbackRows=${legacyFallbackRows.length} '
+        'renderer=${specs.isNotEmpty ? (legacyFallbackRows.isNotEmpty ? 'mixed' : 'DeviceTableRenderer') : (legacyFallbackRows.isNotEmpty ? '_EnvironmentTableGrid' : 'empty')}',
+      );
+    }
+
+    if (specs.isEmpty && legacyFallbackRows.isEmpty) {
+      return const SingleChildScrollView(
+        padding: EdgeInsets.fromLTRB(12, 8, 12, 16),
+        child: _EnvironmentEmptyDevicesState(),
+      );
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: rows.isEmpty
-            ? const [_EnvironmentEmptyDevicesState()]
-            : [
-                Container(
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF0F172A),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF223046)),
-                  ),
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(minWidth: 760),
-                      child: _EnvironmentTableGrid(
-                        rows: rows,
-                        tenantId: tenantId,
-                        siteId: siteId,
-                        rangeSettings: rangeSettings,
-                        deviceNames: deviceNames,
-                      ),
-                    ),
+        children: <Widget>[
+          if (specs.isNotEmpty) ...<Widget>[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF223046)),
+              ),
+              child: _buildRows(0, specs, const <DeviceTableEntry>[]),
+            ),
+            const SizedBox(height: 10),
+          ],
+          if (legacyFallbackRows.isNotEmpty) ...<Widget>[
+            if (forceLegacyLayout) ...<Widget>[
+              const _LegacyPreviewBadge(),
+              const SizedBox(height: 8),
+            ],
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFF223046)),
+              ),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 760),
+                  child: _EnvironmentTableGrid(
+                    rows: legacyFallbackRows,
+                    tenantId: tenantId,
+                    siteId: siteId,
+                    rangeSettings: rangeSettings,
+                    deviceNames:
+                        legacyFallbackDeviceNames.length ==
+                            legacyFallbackRows.length
+                        ? legacyFallbackDeviceNames
+                        : null,
                   ),
                 ),
-                const SizedBox(height: 10),
-                const _EnvironmentTableLegend(),
-              ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          const _EnvironmentTableLegend(),
+        ],
       ),
     );
   }
+
+  /// `false` cuando la fila no aplica para cerdas (no es `room_climate`, o
+  /// falta identidad legacy/dinamica) — mismo gate que
+  /// `_EnvironmentOverviewPresetLayout._templateRendererFor` usa en TABLERO.
+  bool _needsCerdasStream(_TablaRowSpec spec) {
+    return spec.template.id == 'room_climate' && spec.cerdasKey != null;
+  }
+
+  Widget _buildRows(
+    int index,
+    List<_TablaRowSpec> specs,
+    List<DeviceTableEntry> resolved,
+  ) {
+    if (index >= specs.length) {
+      return DeviceTableRenderer(
+        entries: resolved,
+        rangeSettings: rangeSettings,
+      );
+    }
+    final _TablaRowSpec spec = specs[index];
+    if (!_needsCerdasStream(spec)) {
+      return _buildRows(index + 1, specs, <DeviceTableEntry>[
+        ...resolved,
+        DeviceTableEntry(
+          template: spec.template,
+          deviceData: spec.unit,
+          title: spec.label,
+          deviceGroupTitle: spec.deviceGroupTitle,
+        ),
+      ]);
+    }
+    final CerdasContextKey cerdasKey = spec.cerdasKey!;
+    return _PigStatsForKeyBuilder(
+      key: ValueKey<String>('table-pig-${cerdasKey.debugLabel}'),
+      contextKey: cerdasKey,
+      repository: cerdasRepository,
+      builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
+        return _buildRows(index + 1, specs, <DeviceTableEntry>[
+          ...resolved,
+          DeviceTableEntry(
+            template: spec.template,
+            deviceData: TemplateDataContext(
+              source: spec.unit,
+              extras: <String, Object?>{
+                'currentCount': snapshot.data?.currentCount,
+              },
+            ),
+            title: spec.label,
+            deviceGroupTitle: spec.deviceGroupTitle,
+          ),
+        ]);
+      },
+    );
+  }
+}
+
+/// Discreet indicator shown only when an owner manually opted into
+/// [EnvironmentTablePage.forceLegacyLayout] on a Site that normally renders
+/// the dynamic TABLA — never shown for a genuinely legacy Site, where the
+/// flat grid is just the expected, unremarkable layout.
+class _LegacyPreviewBadge extends StatelessWidget {
+  const _LegacyPreviewBadge();
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        key: const Key('environment-table-legacy-preview-badge'),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: const Color(0xFF3F2D0B),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF92400E)),
+        ),
+        child: const Text(
+          'Vista legacy · solo referencia',
+          style: TextStyle(
+            color: Color(0xFFFBBF24),
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TablaRowSpec {
+  const _TablaRowSpec({
+    required this.template,
+    required this.unit,
+    required this.label,
+    required this.deviceGroupTitle,
+    required this.plcId,
+    required this.cerdasKey,
+  });
+
+  final DeviceTemplate template;
+  final MuntersModel unit;
+  final String label;
+  final String? plcId;
+  final CerdasContextKey? cerdasKey;
+  final String? deviceGroupTitle;
+}
+
+CerdasContextKey? _cerdasKeyForIndex({
+  required int index,
+  required List<CerdasContextKey?>? explicitKeys,
+  required String? tenantId,
+  required String? siteId,
+  required String? plcId,
+}) {
+  if (index < (explicitKeys?.length ?? 0)) {
+    return explicitKeys![index];
+  }
+  if (tenantId == null ||
+      tenantId.isEmpty ||
+      siteId == null ||
+      siteId.isEmpty ||
+      plcId == null ||
+      plcId.isEmpty) {
+    return null;
+  }
+  return CerdasContextKey.legacy(
+    tenantId: tenantId,
+    siteId: siteId,
+    plcId: plcId,
+  );
 }
 
 /// Shown by both Tablero and Tabla when there's nothing to render — e.g. a
@@ -396,6 +669,11 @@ class _EnvironmentTableRow {
   /// Legacy schema: a PLC always resolves to exactly one Sala row today.
   /// Once a Device can expose more than one Sala's variables, building
   /// several rows per unit here is all that changes.
+  ///
+  /// Etapa 5B: sigue en uso — `EnvironmentTablePage` renderiza filas con
+  /// esta clase cuando un device no tiene `DeviceTemplate` resoluble
+  /// (fallback legacy, mismo criterio que
+  /// `_EnvironmentOverviewPresetLayout._buildOverviewCard` en TABLERO).
   factory _EnvironmentTableRow.fromUnit({
     required MuntersModel unit,
     required String roomLabel,
@@ -407,7 +685,7 @@ class _EnvironmentTableRow {
     final double? humidity = blocked ? null : unit.displayHumInterior;
     final double? dewPoint = blocked
         ? null
-        : _calculateDewPointC(
+        : calculateDewPointC(
             temperatureC: unit.tempInterior,
             relativeHumidityPercent: unit.humInterior,
           );
@@ -444,7 +722,7 @@ class _EnvironmentTableRow {
       ),
       fanPercent: blocked
           ? null
-          : _normalizeVoltageToPercent(unit.tensionSalidaVentiladores),
+          : normalizeVoltageToPercent(unit.tensionSalidaVentiladores),
       heatingStageCount: blocked ? null : _activeHeatingStageCount(unit),
       heatingStageTotal: blocked ? null : _configuredHeatingStageCount(unit),
       evaporativePanelOn: blocked ? null : unit.bombaHumidificador,
@@ -489,6 +767,10 @@ class _EnvironmentTableHeaderData {
   final String? tooltip;
 }
 
+/// Legacy: única cabecera global para todos los devices. Reemplazada como
+/// vista principal en Etapa 5B por `DeviceTableRenderer` (secciones
+/// dinámicas por `tableSection`); sigue en uso como fallback para devices
+/// sin `DeviceTemplate` resoluble — ver `_EnvironmentTableRow.fromUnit`.
 class _EnvironmentTableGrid extends StatelessWidget {
   const _EnvironmentTableGrid({
     required this.rows,
@@ -964,9 +1246,11 @@ class _EnvironmentTableGrid extends StatelessWidget {
   }) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 9),
-      child: Center(
+      child: Align(
+        alignment: Alignment.centerLeft,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
               mainAxisSize: MainAxisSize.min,
@@ -1094,6 +1378,61 @@ class _EnvironmentTableLegendItem extends StatelessWidget {
   }
 }
 
+class _PigStatsForKeyBuilder extends StatefulWidget {
+  const _PigStatsForKeyBuilder({
+    super.key,
+    required this.contextKey,
+    required this.repository,
+    required this.builder,
+  });
+
+  final CerdasContextKey contextKey;
+  final CerdasRepository repository;
+  final Widget Function(
+    BuildContext context,
+    AsyncSnapshot<PigStatsRecord?> snapshot,
+  )
+  builder;
+
+  @override
+  State<_PigStatsForKeyBuilder> createState() => _PigStatsForKeyBuilderState();
+}
+
+class _PigStatsForKeyBuilderState extends State<_PigStatsForKeyBuilder> {
+  late Stream<PigStatsRecord?> _stream;
+
+  @override
+  void initState() {
+    super.initState();
+    _configureStream();
+  }
+
+  @override
+  void didUpdateWidget(covariant _PigStatsForKeyBuilder oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository ||
+        oldWidget.contextKey != widget.contextKey) {
+      _configureStream();
+    }
+  }
+
+  void _configureStream() {
+    try {
+      _stream = widget.repository.watchPigStatsForKey(widget.contextKey);
+    } catch (_) {
+      _stream = Stream<PigStatsRecord?>.value(null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<PigStatsRecord?>(
+      stream: _stream,
+      builder: widget.builder,
+    );
+  }
+}
+
 class _EnvironmentTablePigCell extends StatelessWidget {
   const _EnvironmentTablePigCell({
     required this.tenantId,
@@ -1137,12 +1476,14 @@ class _EnvironmentTablePigCell extends StatelessWidget {
         plcId.isEmpty) {
       return textCell('-');
     }
-    return StreamBuilder<PigStatsRecord?>(
-      stream: repository.watchPigStats(
+    return _PigStatsForKeyBuilder(
+      key: ValueKey<String>('legacy-table-pig-$tenantId-$siteId-$plcId'),
+      contextKey: CerdasContextKey.legacy(
         tenantId: tenantId,
         siteId: siteId,
         plcId: plcId,
       ),
+      repository: repository,
       builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
         final int? count = snapshot.data?.currentCount;
         return textCell(count == null ? '-' : '$count');
@@ -1162,6 +1503,10 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     required this.showSnapshotPulse,
     required this.snapshotStale,
     this.deviceNames,
+    this.templateIds,
+    this.cerdasContextKeys,
+    this.templateResolver = const DeviceTemplateResolver(),
+    this.cerdasRepository = const CerdasRepository(),
   });
 
   final List<MuntersModel> units;
@@ -1173,10 +1518,15 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
   final bool showSnapshotPulse;
   final bool snapshotStale;
   final List<String>? deviceNames;
+  final List<String?>? templateIds;
+  final List<CerdasContextKey?>? cerdasContextKeys;
+  final DeviceTemplateResolver templateResolver;
+  final CerdasRepository cerdasRepository;
 
-  static const double _maxCardWidth = 430;
-  static const double _spacing = 14;
-  static const double _groupSpacing = 22;
+  static const double _maxCardWidth = 406;
+  static const double _minLargeTemplateCardWidth = 406;
+  static const double _spacing = 8;
+  static const double _groupSpacing = 16;
 
   @override
   Widget build(BuildContext context) {
@@ -1193,71 +1543,114 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
           );
         }
 
-        // Rule: up to 3 Salas total stack in a single column; beyond that,
-        // everything lays out 2-per-row (left-to-right, top-to-bottom).
-        // This threshold is evaluated once across ALL Salas on the page,
-        // independent of how many belong to each Device — a lone Device
-        // with 1 Sala still renders in 2-column mode if some other Device
-        // pushes the page total past 3.
-        final int columns = units.length > 3 ? 2 : 1;
-        final double cardWidth = columns == 2
-            ? math.min(_maxCardWidth, (constraints.maxWidth - _spacing) / 2)
-            : math.min(_maxCardWidth, constraints.maxWidth);
-        final double groupWidth = columns == 2
-            ? cardWidth * 2 + _spacing
-            : cardWidth;
+        final int desiredColumns = _desiredColumnsForCardCount(units.length);
+        final int viewportColumns = _columnsThatFit(
+          constraints.maxWidth,
+          desiredColumns,
+        );
+        final double cardWidth = math.min(
+          _maxCardWidth,
+          constraints.maxWidth < _minLargeTemplateCardWidth
+              ? constraints.maxWidth
+              : (constraints.maxWidth - (_spacing * (viewportColumns - 1))) /
+                    viewportColumns,
+        );
+        final double groupWidth =
+            cardWidth * viewportColumns + _spacing * (viewportColumns - 1);
 
         final List<_EnvLabelGroup> groups = _groupConsecutiveByLabel(
           deviceNames,
           units.length,
         );
 
-        Widget card(int i) => _LargeEnvironmentUnitCard(
-          label: i < labels.length ? labels[i] : units[i].name,
-          unit: units[i],
-          tenantId: tenantId,
-          siteId: siteId,
-          plcId: i < plcIds.length ? plcIds[i] : units[i].historyPlcId,
-          rangeSettings: rangeSettings,
-          blocked: _shouldBlockOperationalData(units[i]),
-          showSnapshotPulse: showSnapshotPulse,
-          snapshotStale: snapshotStale,
-          scale: 0.58,
-        );
+        _EnvironmentBoardCardData unitCard(int i) {
+          final MuntersModel unit = units[i];
+          final String templateId =
+              i < (templateIds?.length ?? 0) && templateIds![i] != null
+              ? templateIds![i]!
+              : templateResolver.templateIdForLegacyRoom(
+                      tenantId: tenantId,
+                      siteId: siteId,
+                    ) ??
+                    '';
+          return _EnvironmentBoardCardData(
+            label: i < labels.length ? labels[i] : unit.name,
+            template: templateResolver.templateForId(templateId),
+            deviceData: _shouldBlockOperationalData(unit)
+                ? MuntersModel.placeholder(
+                    name: i < labels.length ? labels[i] : unit.name,
+                  )
+                : unit,
+            legacyUnit: unit,
+            legacyPlcId: i < plcIds.length ? plcIds[i] : unit.historyPlcId,
+            cerdasKey: _cerdasKeyForIndex(
+              index: i,
+              explicitKeys: cerdasContextKeys,
+              tenantId: tenantId,
+              siteId: siteId,
+              plcId: i < plcIds.length ? plcIds[i] : unit.historyPlcId,
+            ),
+          );
+        }
 
-        List<Widget> layoutGroupCards(List<int> indices) {
-          if (columns == 1) {
-            return <Widget>[
-              for (int k = 0; k < indices.length; k++) ...[
-                SizedBox(width: cardWidth, child: card(indices[k])),
-                if (k != indices.length - 1) const SizedBox(height: _spacing),
-              ],
+        final List<_EnvironmentBoardCardData> unitCards =
+            <_EnvironmentBoardCardData>[
+              for (int i = 0; i < units.length; i++) unitCard(i),
             ];
-          }
-          final List<Widget> rows = <Widget>[];
-          for (int r = 0; r * 2 < indices.length; r++) {
-            final int leftIndex = indices[r * 2];
-            final int? rightIndex = r * 2 + 1 < indices.length
-                ? indices[r * 2 + 1]
-                : null;
-            rows.add(
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: <Widget>[
-                  SizedBox(width: cardWidth, child: card(leftIndex)),
-                  if (rightIndex != null) ...[
-                    const SizedBox(width: _spacing),
-                    SizedBox(width: cardWidth, child: card(rightIndex)),
+
+        Widget layoutGroupCards(List<int> indices) {
+          final int columns = math.min(
+            viewportColumns,
+            _desiredColumnsForCardCount(indices.length),
+          );
+          final List<List<int>> columnIndexes = _columnIndexesForCards(
+            indices,
+            columns,
+          );
+          return Row(
+            // `indices.first` makes this key unique per group — indices
+            // partition 0..totalCount-1 with no overlap across groups, so
+            // two different groups that happen to share the same card
+            // count and column count (e.g. Sala1/Sala2/Laboratorio as 3
+            // separate 1-card groups on a dynamic-devices site) no longer
+            // collide. Length/columns stay in the key for readability in
+            // debug widget trees, but are no longer what guarantees
+            // uniqueness.
+            key: Key(
+              'environment-overview-card-columns-${indices.first}-${indices.length}-$columns',
+            ),
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              for (int c = 0; c < columnIndexes.length; c++) ...[
+                Column(
+                  key: Key('environment-overview-card-column-$c'),
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: <Widget>[
+                    for (int k = 0; k < columnIndexes[c].length; k++) ...[
+                      SizedBox(
+                        key: Key(
+                          'environment-overview-card-${columnIndexes[c][k]}',
+                        ),
+                        width: _cardWidthForTemplate(
+                          unitCards[columnIndexes[c][k]].template,
+                          cardWidth,
+                        ),
+                        child: _buildOverviewCard(
+                          unitCards[columnIndexes[c][k]],
+                        ),
+                      ),
+                      if (k != columnIndexes[c].length - 1)
+                        const SizedBox(height: _spacing),
+                    ],
                   ],
-                ],
-              ),
-            );
-            if (r * 2 + 2 < indices.length) {
-              rows.add(const SizedBox(height: _spacing));
-            }
-          }
-          return rows;
+                ),
+                if (c != columnIndexes.length - 1)
+                  const SizedBox(width: _spacing),
+              ],
+            ],
+          );
         }
 
         return Column(
@@ -1272,15 +1665,21 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
               // card's own title.
               if (groups[g].title != null &&
                   !(groups[g].indices.length == 1 &&
-                      labels[groups[g].indices.single] ==
-                          groups[g].title)) ...[
+                      labels[groups[g].indices.single] == groups[g].title)) ...[
                 _EnvironmentDeviceGroupHeader(
                   title: groups[g].title!,
+                  // `indices.first` disambiguates two non-adjacent groups
+                  // that happen to share the same device name (nothing in
+                  // the admin UI prevents naming two devices identically),
+                  // same rationale as the Row key below.
+                  key: Key(
+                    'environment-device-group-${groups[g].indices.first}-${groups[g].title!}',
+                  ),
                   width: groupWidth,
                 ),
                 const SizedBox(height: 8),
               ],
-              ...layoutGroupCards(groups[g].indices),
+              layoutGroupCards(groups[g].indices),
               if (g != groups.length - 1) const SizedBox(height: _groupSpacing),
             ],
           ],
@@ -1288,6 +1687,205 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
       },
     );
   }
+
+  Widget _buildOverviewCard(_EnvironmentBoardCardData cardData) {
+    final DeviceTemplate? template = cardData.template;
+    if (template == null) {
+      return _LargeEnvironmentUnitCard(
+        label: cardData.label,
+        unit:
+            cardData.legacyUnit ??
+            MuntersModel.placeholder(name: cardData.label),
+        tenantId: tenantId,
+        siteId: siteId,
+        plcId: cardData.legacyPlcId,
+        rangeSettings: rangeSettings,
+        blocked: cardData.legacyUnit == null
+            ? true
+            : _shouldBlockOperationalData(cardData.legacyUnit!),
+        showSnapshotPulse: showSnapshotPulse,
+        snapshotStale: snapshotStale,
+        scale: 0.58,
+      );
+    }
+
+    final String? maintenanceLabel = cardData.legacyUnit == null
+        ? null
+        : _maintenanceLabelForUnit(cardData.legacyUnit!);
+    return Stack(
+      clipBehavior: Clip.none,
+      children: <Widget>[
+        _templateRendererFor(cardData),
+        if (maintenanceLabel != null)
+          Positioned(
+            left: 8,
+            right: 8,
+            top: 54,
+            child: _EnvironmentMaintenanceBanner(
+              label: maintenanceLabel,
+              scale: 0.58,
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _templateRendererFor(_EnvironmentBoardCardData cardData) {
+    final String? plcId = cardData.legacyPlcId;
+    final CerdasContextKey? cerdasKey = cardData.cerdasKey;
+    final Map<String, Object?> baseExtras = <String, Object?>{
+      'roomDoorLabel': cardData.label,
+      'equipmentDoorLabel': _equipmentDoorLabel(cardData.label, plcId),
+    };
+    if (cerdasKey == null || cardData.template?.id != 'room_climate') {
+      return DeviceBoardRenderer(
+        template: cardData.template!,
+        deviceData: TemplateDataContext(
+          source: cardData.deviceData,
+          extras: baseExtras,
+        ),
+        title: cardData.label,
+        rangeSettings: rangeSettings,
+        showSnapshotPulse: showSnapshotPulse,
+        snapshotStale: snapshotStale,
+      );
+    }
+    return _PigStatsForKeyBuilder(
+      key: ValueKey<String>('overview-pig-${cerdasKey.debugLabel}'),
+      contextKey: cerdasKey,
+      repository: cerdasRepository,
+      builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
+        return _templateRendererWithExtras(cardData, <String, Object?>{
+          ...baseExtras,
+          'currentCount': snapshot.data?.currentCount,
+        });
+      },
+    );
+  }
+
+  Widget _templateRendererWithExtras(
+    _EnvironmentBoardCardData cardData,
+    Map<String, Object?> extras,
+  ) {
+    return DeviceBoardRenderer(
+      template: cardData.template!,
+      deviceData: TemplateDataContext(
+        source: cardData.deviceData,
+        extras: extras,
+      ),
+      title: cardData.label,
+      rangeSettings: rangeSettings,
+      showSnapshotPulse: showSnapshotPulse,
+      snapshotStale: snapshotStale,
+    );
+  }
+
+  double _cardWidthForTemplate(DeviceTemplate? template, double baseWidth) {
+    return switch (template?.boardPreset) {
+      BoardPreset.compact => math.max(408, baseWidth),
+      BoardPreset.medium => math.max(260, baseWidth * 0.64),
+      _ => baseWidth,
+    };
+  }
+}
+
+class _EnvironmentBoardCardData {
+  const _EnvironmentBoardCardData({
+    required this.label,
+    required this.template,
+    required this.deviceData,
+    this.legacyUnit,
+    this.legacyPlcId,
+    this.cerdasKey,
+  });
+
+  final String label;
+  final DeviceTemplate? template;
+  final Object? deviceData;
+  final MuntersModel? legacyUnit;
+  final String? legacyPlcId;
+  final CerdasContextKey? cerdasKey;
+}
+
+int _desiredColumnsForCardCount(int count) {
+  if (count <= 3) {
+    return 1;
+  }
+  if (count <= 6) {
+    return 2;
+  }
+  return 3;
+}
+
+int _columnsThatFit(double availableWidth, int desiredColumns) {
+  if (!availableWidth.isFinite || availableWidth <= 0) {
+    return 1;
+  }
+  for (int columns = desiredColumns; columns > 1; columns--) {
+    final double requiredWidth =
+        (_EnvironmentOverviewPresetLayout._minLargeTemplateCardWidth *
+            columns) +
+        (_EnvironmentOverviewPresetLayout._spacing * (columns - 1));
+    if (availableWidth >= requiredWidth) {
+      return columns;
+    }
+  }
+  return 1;
+}
+
+List<List<int>> _columnIndexesForCards(List<int> indices, int columns) {
+  final int safeColumns = math.max(1, columns);
+  final List<List<int>> result = <List<int>>[
+    for (int i = 0; i < safeColumns; i++) <int>[],
+  ];
+  if (indices.isEmpty) {
+    return result;
+  }
+  final List<int> heights = _columnHeightsForCount(indices.length, safeColumns);
+  int cursor = 0;
+  for (int c = 0; c < heights.length; c++) {
+    for (int k = 0; k < heights[c] && cursor < indices.length; k++) {
+      result[c].add(indices[cursor]);
+      cursor++;
+    }
+  }
+  return result.where((List<int> column) => column.isNotEmpty).toList();
+}
+
+List<int> _columnHeightsForCount(int count, int columns) {
+  if (columns <= 1) {
+    return <int>[count];
+  }
+  if (columns == 2) {
+    return <int>[(count / 2).ceil(), count ~/ 2];
+  }
+  final int firstNine = math.min(count, 9);
+  final int base = firstNine ~/ 3;
+  final int remainder = firstNine % 3;
+  final List<int> heights = <int>[
+    base + (remainder > 0 ? 1 : 0),
+    base + (remainder > 1 ? 1 : 0),
+    base,
+  ];
+  if (count > 9) {
+    heights[0] += count - 9;
+  }
+  return heights;
+}
+
+String _equipmentDoorLabel(String roomLabel, String? plcId) {
+  final RegExp numberPattern = RegExp(r'(\d+)\s*$');
+  final RegExpMatch? roomMatch = numberPattern.firstMatch(roomLabel.trim());
+  if (roomMatch != null) {
+    return 'Munters ${roomMatch.group(1)}';
+  }
+  final RegExpMatch? plcMatch = plcId == null
+      ? null
+      : numberPattern.firstMatch(plcId.trim());
+  if (plcMatch != null) {
+    return 'Munters ${plcMatch.group(1)}';
+  }
+  return 'Munters';
 }
 
 /// Title bar above a Device's Salas in the Tablero — e.g. "PLC Maternidad"
@@ -1295,7 +1893,11 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
 /// receives `deviceNames` (dynamic-Devices Sites); legacy PLC1/PLC2
 /// dashboards never build this.
 class _EnvironmentDeviceGroupHeader extends StatelessWidget {
-  const _EnvironmentDeviceGroupHeader({required this.title, this.width});
+  const _EnvironmentDeviceGroupHeader({
+    super.key,
+    required this.title,
+    this.width,
+  });
 
   final String title;
   final double? width;
@@ -1732,11 +2334,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
         spinning: _isVentilationFullyRunning(munters1),
         spinningSpeedPercent: munters1DataBlocked
             ? null
-            : _normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
+            : normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
         extraWidget: _VentilationHeaderPowerValue(
           value: munters1DataBlocked
               ? null
-              : _normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
+              : normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
         ),
       ),
       _PlcModuleIconData(
@@ -1746,11 +2348,11 @@ class _ComparisonPageState extends State<ComparisonPage> {
         spinning: _isVentilationFullyRunning(munters2),
         spinningSpeedPercent: munters2DataBlocked
             ? null
-            : _normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
+            : normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
         extraWidget: _VentilationHeaderPowerValue(
           value: munters2DataBlocked
               ? null
-              : _normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
+              : normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
         ),
       ),
     ];
@@ -2202,9 +2804,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
             ],
             speedPercent: munters1DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(
-                    munters1.tensionSalidaVentiladores,
-                  ),
+                : normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
             blocked: munters1DataBlocked,
           ),
           munters2: _FanStateValue(
@@ -2218,9 +2818,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
             ],
             speedPercent: munters2DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(
-                    munters2.tensionSalidaVentiladores,
-                  ),
+                : normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
             blocked: munters2DataBlocked,
           ),
         ),
@@ -2229,17 +2827,13 @@ class _ComparisonPageState extends State<ComparisonPage> {
           munters1: _BarValue(
             value: munters1DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(
-                    munters1.tensionSalidaVentiladores,
-                  ),
+                : normalizeVoltageToPercent(munters1.tensionSalidaVentiladores),
             blocked: munters1DataBlocked,
           ),
           munters2: _BarValue(
             value: munters2DataBlocked
                 ? null
-                : _normalizeVoltageToPercent(
-                    munters2.tensionSalidaVentiladores,
-                  ),
+                : normalizeVoltageToPercent(munters2.tensionSalidaVentiladores),
             blocked: munters2DataBlocked,
           ),
         ),
@@ -2609,6 +3203,7 @@ class _ComparisonPageState extends State<ComparisonPage> {
     final String? cerdasSiteId = widget.siteId;
     final String? cerdasPlc1Id = widget.munters1.historyPlcId;
     final String? cerdasPlc2Id = widget.munters2.historyPlcId;
+    final bool hasDynamicCerdasEntries = widget.dynamicCerdasEntries.isNotEmpty;
     final bool cerdasHasContext =
         cerdasTenantId != null &&
         cerdasTenantId.isNotEmpty &&
@@ -2646,19 +3241,42 @@ class _ComparisonPageState extends State<ComparisonPage> {
       key: _sectionKeys[_sectionCerdas],
       sectionId: _sectionCerdas,
       title: 'CERDAS',
-      plcIconData: cerdasPlcIconData,
+      plcIconData: hasDynamicCerdasEntries
+          ? <_PlcModuleIconData>[
+              _PlcModuleIconData(
+                icon: Icons.pets,
+                iconColor: const Color(0xFF38BDF8),
+                status: const _ModuleStatus.ok(),
+                extraWidget: Text(
+                  '${widget.dynamicCerdasEntries.length}',
+                  style: const TextStyle(
+                    color: Color(0xFF38BDF8),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ]
+          : cerdasPlcIconData,
       collapseGeneration: _sectionsCollapseGeneration,
       expandRequestGeneration: _sectionExpandRequests[_sectionCerdas] ?? 0,
       onExpandedChanged: _handleSectionExpandedChanged,
       rows: <Widget>[
-        CerdasModule(
-          tenantId: widget.tenantId,
-          siteId: widget.siteId,
-          plc1Id: cerdasPlc1Id,
-          plc2Id: cerdasPlc2Id,
-          plc1Label: widget.plc1ColumnLabel ?? 'M1',
-          plc2Label: widget.plc2ColumnLabel ?? 'M2',
-        ),
+        if (hasDynamicCerdasEntries && cerdasHasContext)
+          CerdasDynamicModule(
+            tenantId: cerdasTenantId,
+            siteId: cerdasSiteId,
+            entries: widget.dynamicCerdasEntries,
+          )
+        else
+          CerdasModule(
+            tenantId: widget.tenantId,
+            siteId: widget.siteId,
+            plc1Id: cerdasPlc1Id,
+            plc2Id: cerdasPlc2Id,
+            plc1Label: widget.plc1ColumnLabel ?? 'M1',
+            plc2Label: widget.plc2ColumnLabel ?? 'M2',
+          ),
       ],
     );
     final bool hasAnyModuleAlarm =
@@ -3044,7 +3662,7 @@ class _LargeEnvironmentUnitCard extends StatelessWidget {
                           nh3: blocked ? null : unit.nh3,
                           ventilationPower: blocked
                               ? null
-                              : _normalizeVoltageToPercent(
+                              : normalizeVoltageToPercent(
                                   unit.tensionSalidaVentiladores,
                                 ),
                           differentialPressure: blocked
@@ -3116,7 +3734,7 @@ _EnvironmentAlarmLevels _assessEnvironmentAlarmLevels({
   final double? humidity = blocked ? null : unit.displayHumInterior;
   final double? dewPoint = blocked
       ? null
-      : _calculateDewPointC(
+      : calculateDewPointC(
           temperatureC: unit.tempInterior,
           relativeHumidityPercent: unit.humInterior,
         );
@@ -3220,11 +3838,11 @@ class _EnvironmentPrimaryPanel extends StatelessWidget {
     final double? humidity = blocked ? null : unit.displayHumInterior;
     final double? dewPoint = blocked
         ? null
-        : _calculateDewPointC(
+        : calculateDewPointC(
             temperatureC: unit.tempInterior,
             relativeHumidityPercent: unit.humInterior,
           );
-    final double? dewPointDelta = _calculateDewPointDeltaC(
+    final double? dewPointDelta = calculateDewPointDeltaC(
       temperatureC: temp,
       dewPointC: dewPoint,
     );
@@ -4920,12 +5538,14 @@ class _LargeCerdasValue extends StatelessWidget {
         plcId.isEmpty) {
       return _LargeExtraValueText('-', scale: scale);
     }
-    return StreamBuilder<PigStatsRecord?>(
-      stream: repository.watchPigStats(
+    return _PigStatsForKeyBuilder(
+      key: ValueKey<String>('large-pig-$tenantId-$siteId-$plcId'),
+      contextKey: CerdasContextKey.legacy(
         tenantId: tenantId,
         siteId: siteId,
         plcId: plcId,
       ),
+      repository: repository,
       builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
         final int? count = snapshot.data?.currentCount;
         return _LargeExtraValueText(
@@ -5502,7 +6122,7 @@ class _SpinningIconState extends State<_SpinningIcon>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: _fanSpinDurationForPercent(widget.speedPercent),
+      duration: fanSpinDurationForPercent(widget.speedPercent),
     );
     if (widget.spinning) {
       _controller.repeat();
@@ -5513,7 +6133,7 @@ class _SpinningIconState extends State<_SpinningIcon>
   void didUpdateWidget(covariant _SpinningIcon oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.speedPercent != widget.speedPercent) {
-      _controller.duration = _fanSpinDurationForPercent(widget.speedPercent);
+      _controller.duration = fanSpinDurationForPercent(widget.speedPercent);
     }
     if (oldWidget.spinning != widget.spinning ||
         oldWidget.speedPercent != widget.speedPercent) {
@@ -7440,11 +8060,11 @@ class _EnvironmentTemperatureColumn extends StatelessWidget {
     final double? delta = ingreso != null && egreso != null
         ? egreso! - ingreso!
         : null;
-    final double? puntoRocio = _calculateDewPointC(
+    final double? puntoRocio = calculateDewPointC(
       temperatureC: egreso,
       relativeHumidityPercent: humedadRelativa,
     );
-    final double? deltaPuntoRocio = _calculateDewPointDeltaC(
+    final double? deltaPuntoRocio = calculateDewPointDeltaC(
       temperatureC: egreso,
       dewPointC: puntoRocio,
     );
@@ -8740,23 +9360,6 @@ class _FanStateValue extends StatelessWidget {
   }
 }
 
-Duration _fanSpinDurationForPercent(double? speedPercent) {
-  if (speedPercent == null) {
-    return const Duration(milliseconds: 650);
-  }
-  final double clamped = speedPercent.clamp(0.0, 1.0);
-  if (clamped <= 0.25) {
-    return const Duration(milliseconds: 1500);
-  }
-  if (clamped <= 0.5) {
-    return const Duration(milliseconds: 650);
-  }
-  if (clamped < 0.75) {
-    return const Duration(milliseconds: 400);
-  }
-  return const Duration(milliseconds: 250);
-}
-
 class _FanBladeIcon extends StatelessWidget {
   const _FanBladeIcon({required this.size, required this.color});
 
@@ -8838,7 +9441,7 @@ class _FanIconState extends State<FanIcon> with SingleTickerProviderStateMixin {
     _controller = AnimationController(
       vsync: this,
       duration: widget.running == true
-          ? _fanSpinDurationForPercent(widget.speedPercent)
+          ? fanSpinDurationForPercent(widget.speedPercent)
           : const Duration(milliseconds: 650),
     );
     _syncAnimation();
@@ -8850,7 +9453,7 @@ class _FanIconState extends State<FanIcon> with SingleTickerProviderStateMixin {
     if (oldWidget.running != widget.running ||
         oldWidget.speedPercent != widget.speedPercent) {
       _controller.duration = widget.running == true
-          ? _fanSpinDurationForPercent(widget.speedPercent)
+          ? fanSpinDurationForPercent(widget.speedPercent)
           : const Duration(milliseconds: 650);
       _syncAnimation();
     }
@@ -9192,15 +9795,6 @@ String _formatValueWithUnit(double? value, String unit) {
   return '${value.toStringAsFixed(fractionDigits)} $unit';
 }
 
-double? _normalizeVoltageToPercent(double? voltage) {
-  if (voltage == null) {
-    return null;
-  }
-  // Backend exposes the raw analog output scaled by 100.
-  // Example: 450 => 4.50 V, so 100% = 10.00 V.
-  return (voltage / 1000).clamp(0.0, 1.0);
-}
-
 class _LinearGaugeEmpty extends StatelessWidget {
   const _LinearGaugeEmpty({
     required this.min,
@@ -9404,38 +9998,6 @@ class _DewPointValue extends StatelessWidget {
       ),
     );
   }
-}
-
-double? _calculateDewPointC({
-  required double? temperatureC,
-  required double? relativeHumidityPercent,
-}) {
-  if (temperatureC == null || relativeHumidityPercent == null) {
-    return null;
-  }
-  if (!temperatureC.isFinite || !relativeHumidityPercent.isFinite) {
-    return null;
-  }
-
-  final double rh = relativeHumidityPercent.clamp(1.0, 100.0);
-  const double a = 17.62;
-  const double b = 243.12;
-  final double gamma =
-      (a * temperatureC) / (b + temperatureC) + math.log(rh / 100.0);
-  return (b * gamma) / (a - gamma);
-}
-
-double? _calculateDewPointDeltaC({
-  required double? temperatureC,
-  required double? dewPointC,
-}) {
-  if (temperatureC == null || dewPointC == null) {
-    return null;
-  }
-  if (!temperatureC.isFinite || !dewPointC.isFinite) {
-    return null;
-  }
-  return dewPointC - temperatureC;
 }
 
 class _DeltaTrianglePainter extends CustomPainter {

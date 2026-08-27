@@ -25,6 +25,7 @@ class DeviceDashboardEntry {
     required this.device,
     required this.roomName,
     required this.liveUnit,
+    this.roomId,
   });
 
   final AgroDevice device;
@@ -32,6 +33,10 @@ class DeviceDashboardEntry {
   /// What to actually display as this row's label: the Room's name when the
   /// Device has explicit Rooms, otherwise the Device's own name.
   final String roomName;
+
+  /// Null for implicit single-room devices; set to the real Room document ID
+  /// for multi-room devices so auxiliary per-room data does not collide.
+  final String? roomId;
 
   /// Null when this Room has no matching telemetry in the current
   /// snapshot yet — never configured, backend offline, or a
@@ -125,6 +130,7 @@ class DeviceDashboardEntry {
           DeviceDashboardEntry(
             device: device,
             roomName: room.name,
+            roomId: room.id,
             liveUnit: unit,
           ),
         );

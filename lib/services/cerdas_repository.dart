@@ -17,11 +17,13 @@ class CerdasRepository {
     required String siteId,
     required String plcId,
   }) {
-    final String path = FirestorePaths.pigStatsDoc(
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
+    return watchPigStatsForKey(
+      CerdasContextKey.legacy(tenantId: tenantId, siteId: siteId, plcId: plcId),
     );
+  }
+
+  Stream<PigStatsRecord?> watchPigStatsForKey(CerdasContextKey key) {
+    final String path = _pigStatsDocPath(key);
     debugPrint('[Firestore] pig stats stream started path=$path');
     return firestore.doc(path).snapshots().map((
       DocumentSnapshot<Map<String, dynamic>> snapshot,
@@ -41,11 +43,17 @@ class CerdasRepository {
     required String plcId,
     int limit = 10,
   }) {
-    final String path = FirestorePaths.pigMovementsCollection(
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
+    return watchPigMovementsForKey(
+      CerdasContextKey.legacy(tenantId: tenantId, siteId: siteId, plcId: plcId),
+      limit: limit,
     );
+  }
+
+  Stream<List<PigMovementRecord>> watchPigMovementsForKey(
+    CerdasContextKey key, {
+    int limit = 10,
+  }) {
+    final String path = _pigMovementsCollectionPath(key);
     debugPrint(
       '[Firestore] pig movements stream started path=$path limit=$limit',
     );
@@ -65,6 +73,54 @@ class CerdasRepository {
               )
               .toList(growable: false);
         });
+  }
+
+  String _pigStatsDocPath(CerdasContextKey key) {
+    if (key.isLegacy) {
+      return FirestorePaths.pigStatsDoc(
+        tenantId: key.tenantId,
+        siteId: key.siteId,
+        plcId: key.plcId!,
+      );
+    }
+    if (key.isDynamic && key.isRoomScoped) {
+      return FirestorePaths.deviceRoomPigStatsDoc(
+        tenantId: key.tenantId,
+        deviceId: key.deviceId!,
+        roomId: key.roomId!,
+      );
+    }
+    if (key.isDynamic) {
+      return FirestorePaths.devicePigStatsDoc(
+        tenantId: key.tenantId,
+        deviceId: key.deviceId!,
+      );
+    }
+    throw ArgumentError.value(key.debugLabel, 'key', 'Invalid cerdas context');
+  }
+
+  String _pigMovementsCollectionPath(CerdasContextKey key) {
+    if (key.isLegacy) {
+      return FirestorePaths.pigMovementsCollection(
+        tenantId: key.tenantId,
+        siteId: key.siteId,
+        plcId: key.plcId!,
+      );
+    }
+    if (key.isDynamic && key.isRoomScoped) {
+      return FirestorePaths.deviceRoomPigMovementsCollection(
+        tenantId: key.tenantId,
+        deviceId: key.deviceId!,
+        roomId: key.roomId!,
+      );
+    }
+    if (key.isDynamic) {
+      return FirestorePaths.devicePigMovementsCollection(
+        tenantId: key.tenantId,
+        deviceId: key.deviceId!,
+      );
+    }
+    throw ArgumentError.value(key.debugLabel, 'key', 'Invalid cerdas context');
   }
 
   Stream<List<PigExitReasonRecord>> watchPigExitReasons({
@@ -109,22 +165,36 @@ class CerdasRepository {
     required String userId,
     required String userName,
   }) async {
+    return addPigMovementForKey(
+      CerdasContextKey.legacy(tenantId: tenantId, siteId: siteId, plcId: plcId),
+      type: type,
+      date: date,
+      quantity: quantity,
+      reasonId: reasonId,
+      reasonName: reasonName,
+      userId: userId,
+      userName: userName,
+    );
+  }
+
+  Future<void> addPigMovementForKey(
+    CerdasContextKey key, {
+    required String type,
+    required DateTime date,
+    required int quantity,
+    String? reasonId,
+    String? reasonName,
+    required String userId,
+    required String userName,
+  }) async {
     assert(type == 'in' || type == 'out', 'type must be "in" or "out"');
     assert(quantity > 0, 'quantity must be positive');
 
-    final String statsPath = FirestorePaths.pigStatsDoc(
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
-    );
-    final String movementsPath = FirestorePaths.pigMovementsCollection(
-      tenantId: tenantId,
-      siteId: siteId,
-      plcId: plcId,
-    );
+    final String statsPath = _pigStatsDocPath(key);
+    final String movementsPath = _pigMovementsCollectionPath(key);
 
     debugPrint(
-      '[Firestore] pig movement transaction plcId=$plcId type=$type qty=$quantity',
+      '[Firestore] pig movement transaction key=${key.debugLabel} type=$type qty=$quantity',
     );
 
     await firestore.runTransaction((Transaction transaction) async {
@@ -160,19 +230,29 @@ class CerdasRepository {
         'reasonName': reasonName,
         'userId': userId,
         'userName': userName,
+        'tenantId': key.tenantId,
+        'siteId': key.siteId,
+        if (key.plcId != null) 'plcId': key.plcId,
+        if (key.deviceId != null) 'deviceId': key.deviceId,
+        if (key.roomId != null) 'roomId': key.roomId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
 
       transaction.set(firestore.doc(statsPath), <String, dynamic>{
         'currentCount': newCount,
+        'tenantId': key.tenantId,
+        'siteId': key.siteId,
+        if (key.plcId != null) 'plcId': key.plcId,
+        if (key.deviceId != null) 'deviceId': key.deviceId,
+        if (key.roomId != null) 'roomId': key.roomId,
         'updatedAt': FieldValue.serverTimestamp(),
         'updatedBy': userId,
       }, SetOptions(merge: true));
     });
 
     debugPrint(
-      '[Firestore] pig movement transaction done plcId=$plcId type=$type qty=$quantity',
+      '[Firestore] pig movement transaction done key=${key.debugLabel} type=$type qty=$quantity',
     );
   }
 

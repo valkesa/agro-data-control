@@ -1,5 +1,69 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+class CerdasContextKey {
+  const CerdasContextKey._({
+    required this.tenantId,
+    required this.siteId,
+    this.plcId,
+    this.deviceId,
+    this.roomId,
+  });
+
+  factory CerdasContextKey.legacy({
+    required String tenantId,
+    required String siteId,
+    required String plcId,
+  }) {
+    return CerdasContextKey._(tenantId: tenantId, siteId: siteId, plcId: plcId);
+  }
+
+  factory CerdasContextKey.dynamic({
+    required String tenantId,
+    required String siteId,
+    required String deviceId,
+    String? roomId,
+  }) {
+    return CerdasContextKey._(
+      tenantId: tenantId,
+      siteId: siteId,
+      deviceId: deviceId,
+      roomId: roomId,
+    );
+  }
+
+  final String tenantId;
+  final String siteId;
+  final String? plcId;
+  final String? deviceId;
+  final String? roomId;
+
+  bool get isLegacy => plcId != null && plcId!.isNotEmpty;
+  bool get isDynamic => deviceId != null && deviceId!.isNotEmpty;
+  bool get isRoomScoped => roomId != null && roomId!.isNotEmpty;
+
+  String get debugLabel {
+    if (isLegacy) {
+      return 'legacy:$tenantId/$siteId/plc:$plcId';
+    }
+    return isRoomScoped
+        ? 'dynamic:$tenantId/$siteId/device:$deviceId/room:$roomId'
+        : 'dynamic:$tenantId/$siteId/device:$deviceId';
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is CerdasContextKey &&
+        other.tenantId == tenantId &&
+        other.siteId == siteId &&
+        other.plcId == plcId &&
+        other.deviceId == deviceId &&
+        other.roomId == roomId;
+  }
+
+  @override
+  int get hashCode => Object.hash(tenantId, siteId, plcId, deviceId, roomId);
+}
+
 class PigStatsRecord {
   const PigStatsRecord({
     required this.currentCount,

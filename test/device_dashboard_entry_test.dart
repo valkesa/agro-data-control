@@ -321,6 +321,9 @@ void main() {
         for (final DeviceDashboardEntry entry in entries) {
           expect(entry.device.id, 'plc-maternidad');
         }
+        expect(entries.map((e) => e.roomId).toList(), <String>[
+          for (int i = 1; i <= 8; i++) 'sala-$i',
+        ]);
         expect(entries[2].hasTelemetry, isTrue);
         expect(entries[2].displayName, 'Sala 3');
         final List<DeviceDashboardEntry> withoutData = [...entries]

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 
 import '../models/cerdas_models.dart';
 import '../services/cerdas_repository.dart';
+import '../ui_templates/models/device_template.dart';
 
 // ---------------------------------------------------------------------------
 // Public entry point
@@ -18,7 +19,11 @@ class CerdasModule extends StatelessWidget {
     this.plc2Id,
     this.plc1Label = 'M1',
     this.plc2Label = 'M2',
-  });
+    this.cerdas1ContextKey,
+    this.cerdas2ContextKey,
+    this.userIdentity,
+    CerdasRepository? repository,
+  }) : repository = repository ?? _repository;
 
   final String? tenantId;
   final String? siteId;
@@ -26,6 +31,10 @@ class CerdasModule extends StatelessWidget {
   final String? plc2Id;
   final String plc1Label;
   final String plc2Label;
+  final CerdasContextKey? cerdas1ContextKey;
+  final CerdasContextKey? cerdas2ContextKey;
+  final CerdasUserIdentity? userIdentity;
+  final CerdasRepository repository;
 
   static const CerdasRepository _repository = CerdasRepository();
 
@@ -43,10 +52,26 @@ class CerdasModule extends StatelessWidget {
       );
     }
 
-    final bool hasPlc1 = plc1Id != null && plc1Id!.isNotEmpty;
-    final bool hasPlc2 = plc2Id != null && plc2Id!.isNotEmpty;
+    final CerdasContextKey? key1 =
+        cerdas1ContextKey ??
+        (plc1Id != null && plc1Id!.isNotEmpty
+            ? CerdasContextKey.legacy(
+                tenantId: tenantId,
+                siteId: siteId,
+                plcId: plc1Id!,
+              )
+            : null);
+    final CerdasContextKey? key2 =
+        cerdas2ContextKey ??
+        (plc2Id != null && plc2Id!.isNotEmpty
+            ? CerdasContextKey.legacy(
+                tenantId: tenantId,
+                siteId: siteId,
+                plcId: plc2Id!,
+              )
+            : null);
 
-    if (!hasPlc1 && !hasPlc2) {
+    if (key1 == null && key2 == null) {
       return const _FooterMessage(
         text: 'Sin salas configuradas.',
         color: Color(0xFF94A3B8),
@@ -56,11 +81,208 @@ class CerdasModule extends StatelessWidget {
     return _CerdasContent(
       tenantId: tenantId,
       siteId: siteId,
-      plc1Id: hasPlc1 ? plc1Id! : null,
-      plc2Id: hasPlc2 ? plc2Id! : null,
+      cerdas1Key: key1,
+      cerdas2Key: key2,
       plc1Label: plc1Label,
       plc2Label: plc2Label,
-      repository: _repository,
+      repository: repository,
+      userIdentity: userIdentity,
+    );
+  }
+}
+
+class CerdasUserIdentity {
+  const CerdasUserIdentity({required this.uid, required this.name});
+
+  final String uid;
+  final String name;
+}
+
+class CerdasControlEntry {
+  const CerdasControlEntry({required this.label, required this.contextKey});
+
+  final String label;
+  final CerdasContextKey contextKey;
+}
+
+bool deviceTemplateSupportsCerdasControl(DeviceTemplate template) {
+  return template.metrics.any((metric) => metric.key == 'sowCount');
+}
+
+class CerdasDynamicModule extends StatefulWidget {
+  const CerdasDynamicModule({
+    super.key,
+    required this.tenantId,
+    required this.siteId,
+    required this.entries,
+    this.userIdentity,
+    CerdasRepository? repository,
+  }) : repository = repository ?? CerdasModule._repository;
+
+  final String tenantId;
+  final String siteId;
+  final List<CerdasControlEntry> entries;
+  final CerdasUserIdentity? userIdentity;
+  final CerdasRepository repository;
+
+  @override
+  State<CerdasDynamicModule> createState() => _CerdasDynamicModuleState();
+}
+
+class _CerdasDynamicModuleState extends State<CerdasDynamicModule> {
+  void _openDialog(CerdasControlEntry entry, String type) {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _MovementDialog(
+        tenantId: widget.tenantId,
+        siteId: widget.siteId,
+        cerdasKey: entry.contextKey,
+        plcLabel: entry.label,
+        type: type,
+        repository: widget.repository,
+        userIdentity: widget.userIdentity,
+      ),
+    );
+  }
+
+  void _openHistoryDialog(CerdasControlEntry entry) {
+    showDialog<void>(
+      context: context,
+      builder: (_) => _HistoryDialog(
+        plcLabel: entry.label,
+        stream: widget.repository.watchPigMovementsForKey(
+          entry.contextKey,
+          limit: 50,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final List<CerdasControlEntry> entries = widget.entries;
+    if (entries.isEmpty) {
+      return const _FooterMessage(
+        text: 'Sin salas configuradas.',
+        color: Color(0xFF94A3B8),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        for (int i = 0; i < entries.length; i++)
+          _DynamicCerdasEntryRow(
+            key: Key('cerdas-dynamic-row-${entries[i].contextKey.debugLabel}'),
+            entry: entries[i],
+            repository: widget.repository,
+            backgroundColor: i.isEven
+                ? const Color(0xFF0F172A)
+                : const Color(0xFF1E293B),
+            onIngreso: () => _openDialog(entries[i], 'in'),
+            onEgreso: () => _openDialog(entries[i], 'out'),
+            onHistory: () => _openHistoryDialog(entries[i]),
+          ),
+      ],
+    );
+  }
+}
+
+class _DynamicCerdasEntryRow extends StatefulWidget {
+  const _DynamicCerdasEntryRow({
+    super.key,
+    required this.entry,
+    required this.repository,
+    required this.backgroundColor,
+    required this.onIngreso,
+    required this.onEgreso,
+    required this.onHistory,
+  });
+
+  final CerdasControlEntry entry;
+  final CerdasRepository repository;
+  final Color backgroundColor;
+  final VoidCallback onIngreso;
+  final VoidCallback onEgreso;
+  final VoidCallback onHistory;
+
+  @override
+  State<_DynamicCerdasEntryRow> createState() => _DynamicCerdasEntryRowState();
+}
+
+class _DynamicCerdasEntryRowState extends State<_DynamicCerdasEntryRow> {
+  late Stream<PigStatsRecord?> _statsStream;
+
+  @override
+  void initState() {
+    super.initState();
+    _statsStream = widget.repository.watchPigStatsForKey(
+      widget.entry.contextKey,
+    );
+  }
+
+  @override
+  void didUpdateWidget(covariant _DynamicCerdasEntryRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.repository != widget.repository ||
+        oldWidget.entry.contextKey != widget.entry.contextKey) {
+      _statsStream = widget.repository.watchPigStatsForKey(
+        widget.entry.contextKey,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<PigStatsRecord?>(
+      stream: _statsStream,
+      builder: (BuildContext context, AsyncSnapshot<PigStatsRecord?> snapshot) {
+        final int? count = snapshot.data?.currentCount;
+        return Container(
+          margin: const EdgeInsets.only(bottom: 2),
+          color: widget.backgroundColor,
+          padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 6),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                flex: 4,
+                child: Text(
+                  widget.entry.label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Color(0xFFCBD5E1),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+              Expanded(
+                flex: 3,
+                child: Text(
+                  snapshot.connectionState == ConnectionState.waiting &&
+                          !snapshot.hasData
+                      ? '--'
+                      : count == null
+                      ? 'Sin datos'
+                      : '$count',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    color: Color(0xFF38BDF8),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              _ActionIcons(
+                onIngreso: widget.onIngreso,
+                onEgreso: widget.onEgreso,
+                onHistory: widget.onHistory,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -73,20 +295,22 @@ class _CerdasContent extends StatefulWidget {
   const _CerdasContent({
     required this.tenantId,
     required this.siteId,
-    this.plc1Id,
-    this.plc2Id,
+    this.cerdas1Key,
+    this.cerdas2Key,
     required this.plc1Label,
     required this.plc2Label,
     required this.repository,
+    this.userIdentity,
   });
 
   final String tenantId;
   final String siteId;
-  final String? plc1Id;
-  final String? plc2Id;
+  final CerdasContextKey? cerdas1Key;
+  final CerdasContextKey? cerdas2Key;
   final String plc1Label;
   final String plc2Label;
   final CerdasRepository repository;
+  final CerdasUserIdentity? userIdentity;
 
   @override
   State<_CerdasContent> createState() => _CerdasContentState();
@@ -101,35 +325,27 @@ class _CerdasContentState extends State<_CerdasContent> {
   @override
   void initState() {
     super.initState();
-    if (widget.plc1Id != null) {
-      _plc1StatsStream = widget.repository.watchPigStats(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        plcId: widget.plc1Id!,
+    if (widget.cerdas1Key != null) {
+      _plc1StatsStream = widget.repository.watchPigStatsForKey(
+        widget.cerdas1Key!,
       );
-      _plc1MovementsStream = widget.repository.watchPigMovements(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        plcId: widget.plc1Id!,
+      _plc1MovementsStream = widget.repository.watchPigMovementsForKey(
+        widget.cerdas1Key!,
       );
     }
-    if (widget.plc2Id != null) {
-      _plc2StatsStream = widget.repository.watchPigStats(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        plcId: widget.plc2Id!,
+    if (widget.cerdas2Key != null) {
+      _plc2StatsStream = widget.repository.watchPigStatsForKey(
+        widget.cerdas2Key!,
       );
-      _plc2MovementsStream = widget.repository.watchPigMovements(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        plcId: widget.plc2Id!,
+      _plc2MovementsStream = widget.repository.watchPigMovementsForKey(
+        widget.cerdas2Key!,
       );
     }
   }
 
   void _openDialog(
     BuildContext ctx,
-    String plcId,
+    CerdasContextKey key,
     String plcLabel,
     String type,
   ) {
@@ -139,25 +355,25 @@ class _CerdasContentState extends State<_CerdasContent> {
       builder: (_) => _MovementDialog(
         tenantId: widget.tenantId,
         siteId: widget.siteId,
-        plcId: plcId,
+        cerdasKey: key,
         plcLabel: plcLabel,
         type: type,
         repository: widget.repository,
+        userIdentity: widget.userIdentity,
       ),
     );
   }
 
-  void _openHistoryDialog(BuildContext ctx, String plcId, String plcLabel) {
+  void _openHistoryDialog(
+    BuildContext ctx,
+    CerdasContextKey key,
+    String plcLabel,
+  ) {
     showDialog<void>(
       context: ctx,
       builder: (_) => _HistoryDialog(
         plcLabel: plcLabel,
-        stream: widget.repository.watchPigMovements(
-          tenantId: widget.tenantId,
-          siteId: widget.siteId,
-          plcId: plcId,
-          limit: 50,
-        ),
+        stream: widget.repository.watchPigMovementsForKey(key, limit: 50),
       ),
     );
   }
@@ -221,8 +437,8 @@ class _CerdasContentState extends State<_CerdasContent> {
         ? 'Error: ${m2.error}'
         : null;
 
-    final String? plc1Id = widget.plc1Id;
-    final String? plc2Id = widget.plc2Id;
+    final CerdasContextKey? key1 = widget.cerdas1Key;
+    final CerdasContextKey? key2 = widget.cerdas2Key;
 
     int i = 0;
     Color rc() =>
@@ -255,24 +471,24 @@ class _CerdasContentState extends State<_CerdasContent> {
         _CerdasRow(
           label: '',
           backgroundColor: rc(),
-          m1Child: plc1Id != null
+          m1Child: key1 != null
               ? _ActionIcons(
                   onIngreso: () =>
-                      _openDialog(context, plc1Id, widget.plc1Label, 'in'),
+                      _openDialog(context, key1, widget.plc1Label, 'in'),
                   onEgreso: () =>
-                      _openDialog(context, plc1Id, widget.plc1Label, 'out'),
+                      _openDialog(context, key1, widget.plc1Label, 'out'),
                   onHistory: () =>
-                      _openHistoryDialog(context, plc1Id, widget.plc1Label),
+                      _openHistoryDialog(context, key1, widget.plc1Label),
                 )
               : const SizedBox.shrink(),
-          m2Child: plc2Id != null
+          m2Child: key2 != null
               ? _ActionIcons(
                   onIngreso: () =>
-                      _openDialog(context, plc2Id, widget.plc2Label, 'in'),
+                      _openDialog(context, key2, widget.plc2Label, 'in'),
                   onEgreso: () =>
-                      _openDialog(context, plc2Id, widget.plc2Label, 'out'),
+                      _openDialog(context, key2, widget.plc2Label, 'out'),
                   onHistory: () =>
-                      _openHistoryDialog(context, plc2Id, widget.plc2Label),
+                      _openHistoryDialog(context, key2, widget.plc2Label),
                 )
               : const SizedBox.shrink(),
         ),
@@ -356,18 +572,20 @@ class _MovementDialog extends StatefulWidget {
   const _MovementDialog({
     required this.tenantId,
     required this.siteId,
-    required this.plcId,
+    required this.cerdasKey,
     required this.plcLabel,
     required this.type,
     required this.repository,
+    this.userIdentity,
   });
 
   final String tenantId;
   final String siteId;
-  final String plcId;
+  final CerdasContextKey cerdasKey;
   final String plcLabel;
   final String type;
   final CerdasRepository repository;
+  final CerdasUserIdentity? userIdentity;
 
   @override
   State<_MovementDialog> createState() => _MovementDialogState();
@@ -400,7 +618,20 @@ class _MovementDialogState extends State<_MovementDialog> {
     super.dispose();
   }
 
-  User? get _currentUser => FirebaseAuth.instance.currentUser;
+  CerdasUserIdentity? get _currentUser {
+    final CerdasUserIdentity? userIdentity = widget.userIdentity;
+    if (userIdentity != null) {
+      return userIdentity;
+    }
+    final User? user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      return null;
+    }
+    return CerdasUserIdentity(
+      uid: user.uid,
+      name: user.displayName ?? user.email ?? user.uid,
+    );
+  }
 
   Future<void> _save(List<PigExitReasonRecord> reasons) async {
     if (!_formKey.currentState!.validate()) {
@@ -413,7 +644,7 @@ class _MovementDialogState extends State<_MovementDialog> {
       return;
     }
 
-    final User? user = _currentUser;
+    final CerdasUserIdentity? user = _currentUser;
     if (user == null) {
       setState(() {
         _errorMessage = 'Usuario no autenticado.';
@@ -427,17 +658,15 @@ class _MovementDialogState extends State<_MovementDialog> {
     });
 
     try {
-      await widget.repository.addPigMovement(
-        tenantId: widget.tenantId,
-        siteId: widget.siteId,
-        plcId: widget.plcId,
+      await widget.repository.addPigMovementForKey(
+        widget.cerdasKey,
         type: widget.type,
         date: _date,
         quantity: int.parse(_quantityController.text.trim()),
         reasonId: _isOut ? _selectedReason?.reasonId : null,
         reasonName: _isOut ? _selectedReason?.name : null,
         userId: user.uid,
-        userName: user.displayName ?? user.email ?? user.uid,
+        userName: user.name,
       );
       if (mounted) {
         Navigator.of(context).pop();
@@ -527,7 +756,7 @@ class _MovementDialogState extends State<_MovementDialog> {
 
     if (name == null || name.isEmpty || !mounted) return;
 
-    final User? user = _currentUser;
+    final CerdasUserIdentity? user = _currentUser;
     if (user == null) return;
 
     try {
@@ -710,10 +939,7 @@ class _MovementDialogState extends State<_MovementDialog> {
               border: Border.all(color: const Color(0xFF334155)),
             ),
             child: Text(
-              _currentUser?.displayName ??
-                  _currentUser?.email ??
-                  _currentUser?.uid ??
-                  '—',
+              _currentUser?.name ?? '—',
               style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
             ),
           ),
@@ -738,8 +964,11 @@ class _MovementDialogState extends State<_MovementDialog> {
           ],
 
           // Botones
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 8,
+            runSpacing: 8,
             children: <Widget>[
               TextButton(
                 onPressed: _saving ? null : () => Navigator.of(context).pop(),
@@ -748,7 +977,6 @@ class _MovementDialogState extends State<_MovementDialog> {
                   style: TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
                 ),
               ),
-              const SizedBox(width: 8),
               _saving
                   ? const SizedBox(
                       width: 20,
