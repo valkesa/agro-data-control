@@ -21,6 +21,7 @@ Future<void> main() async {
   await _testTransientNullReadingDoesNotFalselyRecover();
   await _testCooldownSuppressesFastResend();
   await _testDoorOpeningsUseDoorCooldown();
+  await _testDoorOpeningDelayGatesFirstSendAndShowsRealElapsedMinutes();
   await _testThresholdChangeCreatesActivation();
   await _testActiveAlertConfigChangeRespectsCooldown();
   await _testSendWhatsappEnableReevaluatesActiveAlert();
@@ -467,6 +468,97 @@ Future<void> _testDoorOpeningsUseDoorCooldown() async {
       (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
     ),
     'door reactivation after 60 minutes sends again',
+  );
+}
+
+Future<void> _testDoorOpeningDelayGatesFirstSendAndShowsRealElapsedMinutes() async {
+  final _FakeLoader loader = _FakeLoader(
+    _settingsRaw(
+      toggleOverrides: <String, Object?>{
+        'muntersDoorOpen': <String, Object?>{
+          'enabled': true,
+          'sendWhatsapp': true,
+          'whatsappDelayMinutes': 5,
+        },
+      },
+    ),
+  );
+  final AlertRuntime runtime = AlertRuntime(
+    settingsCache: AlertSettingsCache(loader: loader),
+    config: const AlertRuntimeConfig(
+      cooldown: Duration(minutes: 10),
+      doorOpeningCooldown: Duration(minutes: 60),
+    ),
+  );
+  final AlertProcessingCoordinator coordinator = AlertProcessingCoordinator(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    runtime: runtime,
+  );
+  final DateTime t0 = DateTime.utc(2026, 1, 1, 10);
+
+  SnapshotAlertProcessingResult result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0,
+  );
+  _expect(
+    result.rooms.first.evaluatedAlerts.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'dashboard alert is immediate even while whatsapp is delayed',
+  );
+  _expect(
+    result.whatsAppCandidates.isEmpty,
+    'whatsapp does not send before the configured delay',
+  );
+
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 3)),
+  );
+  _expect(
+    result.whatsAppCandidates.isEmpty,
+    'whatsapp still withheld below the configured delay while the door stays open',
+  );
+
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 5)),
+  );
+  List<EvaluatedAlert> doorSends = result.whatsAppCandidates
+      .where((EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen)
+      .toList(growable: false);
+  _expect(doorSends.length == 1, 'whatsapp sends once the delay is reached');
+  _expect(
+    doorSends.single.openSinceMinutes == 5,
+    'first send reports the real elapsed minutes (5), not a hardcoded value',
+  );
+
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 40)),
+  );
+  _expect(
+    !result.whatsAppCandidates.any(
+      (EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen,
+    ),
+    'still-open door does not resend before the door cooldown elapses',
+  );
+
+  result = await coordinator.processSnapshot(
+    _snapshot(_unit(puertaMunter: true)),
+    evaluatedAt: t0.add(const Duration(minutes: 65)),
+  );
+  doorSends = result.whatsAppCandidates
+      .where((EvaluatedAlert alert) => alert.type == AlertType.muntersDoorOpen)
+      .toList(growable: false);
+  _expect(
+    doorSends.length == 1,
+    'still-open door resends after the door cooldown elapses',
+  );
+  _expect(
+    doorSends.single.openSinceMinutes == 65,
+    'resend reports the real elapsed time (65 minutes), not the configured delay',
   );
 }
 

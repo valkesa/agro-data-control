@@ -274,6 +274,7 @@ Object? _notifiableAlertToggle(Object? rawToggle) {
   return <String, Object?>{
     'enabled': rawToggle['enabled'],
     'sendWhatsapp': rawToggle['sendWhatsapp'],
+    'whatsappDelayMinutes': rawToggle['whatsappDelayMinutes'],
   };
 }
 
@@ -528,6 +529,7 @@ class CachedAlertToggle {
     required this.enabled,
     required this.sendWhatsapp,
     required this.order,
+    this.whatsappDelayMinutes = 0,
   });
 
   factory CachedAlertToggle.fromRaw(Object? raw, {required int defaultOrder}) {
@@ -547,6 +549,8 @@ class CachedAlertToggle {
       enabled: enabled,
       sendWhatsapp: sendWhatsapp,
       order: _readPositiveInt(data['order']) ?? defaultOrder,
+      whatsappDelayMinutes:
+          _readNonNegativeInt(data['whatsappDelayMinutes']) ?? 0,
     );
   }
 
@@ -554,12 +558,24 @@ class CachedAlertToggle {
   final bool sendWhatsapp;
   final int order;
 
-  CachedAlertToggle copyWith({bool? enabled, bool? sendWhatsapp, int? order}) {
+  /// Minutes a door must stay continuously open before the first WhatsApp
+  /// send is allowed — 0 (the default) preserves the historic immediate-send
+  /// behavior. Only meaningful for `muntersDoorOpen`/`roomDoorOpen`; other
+  /// alert types carry the field but never read it.
+  final int whatsappDelayMinutes;
+
+  CachedAlertToggle copyWith({
+    bool? enabled,
+    bool? sendWhatsapp,
+    int? order,
+    int? whatsappDelayMinutes,
+  }) {
     final bool nextEnabled = enabled ?? this.enabled;
     return CachedAlertToggle(
       enabled: nextEnabled,
       sendWhatsapp: nextEnabled ? sendWhatsapp ?? this.sendWhatsapp : false,
       order: order ?? this.order,
+      whatsappDelayMinutes: whatsappDelayMinutes ?? this.whatsappDelayMinutes,
     );
   }
 }
@@ -683,6 +699,22 @@ double? _readDouble(Map<String, Object?> raw, List<List<String>> paths) {
       if (parsed != null) {
         return parsed;
       }
+    }
+  }
+  return null;
+}
+
+int? _readNonNegativeInt(Object? raw) {
+  if (raw is int && raw >= 0) {
+    return raw;
+  }
+  if (raw is num && raw.isFinite && raw >= 0) {
+    return raw.toInt();
+  }
+  if (raw is String) {
+    final int? parsed = int.tryParse(raw.trim());
+    if (parsed != null && parsed >= 0) {
+      return parsed;
     }
   }
   return null;

@@ -194,6 +194,22 @@ void main() {
       },
     );
 
+    test('el boton "Templates UI" vive dentro del bloque owner-only', () {
+      final int ownerBlockStart = mainSource.indexOf(
+        'if (userRole == UserAppRole.owner)',
+      );
+      final int manageTemplatesPop = mainSource.indexOf(
+        '_SettingsMenuAction.manageTemplates',
+        ownerBlockStart,
+      );
+      expect(ownerBlockStart, greaterThan(-1));
+      expect(
+        manageTemplatesPop,
+        greaterThan(ownerBlockStart),
+        reason: 'el editor de templates debe seguir expuesto solo para owner',
+      );
+    });
+
     test('Etapa 4: gestion de rooms existe pero solo se carga bajo demanda '
         '(ver el grupo "Etapa 4" para el detalle)', () {
       // Superado por la Etapa 4 (gestion de devices/rooms) — ya no es

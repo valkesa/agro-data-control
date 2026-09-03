@@ -162,16 +162,28 @@ class AlertProcessingCoordinator {
         );
     _logTransitions(transitionBatch, evaluatedAt);
 
-    final List<EvaluatedAlert> orderedActivated =
-        transitionBatch.activated
-            .where((EvaluatedAlert alert) => alert.sendWhatsapp)
-            .toList(growable: false)
-          ..sort(
-            (EvaluatedAlert a, EvaluatedAlert b) =>
-                settings!.alerts.compareAlertTypes(a.type, b.type),
-          );
+    // Door alerts are re-checked every poll (not just on the open-transition
+    // edge) because "send after the door has been open N minutes" can only
+    // be known once N minutes have actually elapsed — see
+    // _doorAlertsReadyForWhatsapp. Every other alert type keeps the original
+    // edge-triggered behavior: only a fresh transitionBatch.activated makes
+    // it to WhatsApp.
+    final List<EvaluatedAlert> whatsappEligible = <EvaluatedAlert>[
+      ...transitionBatch.activated.where(
+        (EvaluatedAlert alert) =>
+            alert.sendWhatsapp && !_isDoorAlertType(alert.type),
+      ),
+      ..._doorAlertsReadyForWhatsapp(
+        evaluatedAlerts: evaluatedAlerts,
+        evaluatedAt: evaluatedAt,
+        settings: settings,
+      ),
+    ]..sort(
+      (EvaluatedAlert a, EvaluatedAlert b) =>
+          settings!.alerts.compareAlertTypes(a.type, b.type),
+    );
     final List<EvaluatedAlert> whatsAppCandidates = <EvaluatedAlert>[];
-    for (final EvaluatedAlert alert in orderedActivated) {
+    for (final EvaluatedAlert alert in whatsappEligible) {
       final Duration cooldown = runtime.config.cooldownFor(alert.type);
       if (!runtime.notificationCooldownRegistry.canSend(
         key: alert.key,
@@ -220,6 +232,49 @@ class AlertProcessingCoordinator {
       alertOrder: alertOrder,
     );
     return result;
+  }
+
+  static bool _isDoorAlertType(AlertType type) =>
+      type == AlertType.muntersDoorOpen || type == AlertType.roomDoorOpen;
+
+  /// Door alerts that are currently open, whatsapp-enabled, and have been
+  /// open for at least their configured `whatsappDelayMinutes` — tagged with
+  /// how long they've actually been open so
+  /// [AlertNotificationFormatter.format] can say so. Sourced from
+  /// [evaluatedAlerts] (this poll's currently-active alerts) rather than
+  /// [AlertTransitionBatch.activated]/[AlertTransitionBatch.stillActive], so
+  /// a door that stays open past the delay gets picked up on the very poll
+  /// it crosses the threshold, not only on the (single, immediate) moment it
+  /// first opened.
+  List<EvaluatedAlert> _doorAlertsReadyForWhatsapp({
+    required List<EvaluatedAlert> evaluatedAlerts,
+    required DateTime evaluatedAt,
+    required CachedAlertSettings settings,
+  }) {
+    final List<EvaluatedAlert> ready = <EvaluatedAlert>[];
+    for (final EvaluatedAlert alert in evaluatedAlerts) {
+      if (!alert.sendWhatsapp || !_isDoorAlertType(alert.type)) {
+        continue;
+      }
+      final ActiveAlertState? state = runtime.activeAlertsRegistry
+          .activeStateFor(alert.key);
+      if (state == null) {
+        // Just synced into the registry a few lines above in processRoom —
+        // should always be present. Skip defensively rather than crash.
+        continue;
+      }
+      final int openMinutes = evaluatedAt
+          .difference(state.firstDetectedAt)
+          .inMinutes;
+      final int delayMinutes = settings.alerts
+          .toggleFor(alert.type)
+          .whatsappDelayMinutes;
+      if (openMinutes < delayMinutes) {
+        continue;
+      }
+      ready.add(alert.withOpenSinceMinutes(openMinutes));
+    }
+    return ready;
   }
 
   void _logTransitions(AlertTransitionBatch batch, DateTime evaluatedAt) {

@@ -13,6 +13,11 @@ class ActiveAlertsRegistry {
   List<ActiveAlertState> get activeAlerts =>
       List<ActiveAlertState>.unmodifiable(_active.values);
 
+  /// Looks up the tracked state (notably [ActiveAlertState.firstDetectedAt])
+  /// for an alert that is currently active. Returns null once the alert has
+  /// recovered/been removed from the registry.
+  ActiveAlertState? activeStateFor(AlertInstanceKey key) => _active[key];
+
   int sizeForTenantSite({required String tenantId, required String siteId}) {
     return _active.keys
         .where(

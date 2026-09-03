@@ -186,4 +186,12 @@ class FirestorePaths {
     required String tenantId,
     required String siteId,
   }) => 'tenants/$tenantId/sites/$siteId/pigExitReasons';
+
+  // Global, not tenant-scoped: room_climate/laboratory_basic/
+  // disinfection_arch are reusable presentation types shared across every
+  // tenant, not data that varies per tenant — see Etapa 6A.
+  static String deviceTemplatesCollection() => 'deviceTemplates';
+
+  static String deviceTemplateDoc(String templateId) =>
+      'deviceTemplates/$templateId';
 }

@@ -372,6 +372,19 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Etapa 6A: global, not tenant-scoped — room_climate/laboratory_basic/
+    // disinfection_arch are reusable presentation types shared across every
+    // tenant. Read: any authenticated app user. Write: owner-only, same as
+    // every other structural/config collection in this file (sites,
+    // sectors, devices) — there is no template-editor UI yet, but writes
+    // are already gated for when one exists. Never physically deleted,
+    // consistent with every other collection here.
+    match /deviceTemplates/{templateId} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner();
+      allow delete: if false;
+    }
+
     function isValidPresenceDoc(uid) {
       return request.resource.data.keys().hasOnly([
           'uid',

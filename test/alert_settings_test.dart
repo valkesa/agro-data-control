@@ -38,8 +38,66 @@ void main() {
         'enabled': true,
         'sendWhatsapp': true,
         'order': 7,
+        'whatsappDelayMinutes': 0,
       }),
     );
+  });
+
+  test('defaults whatsappDelayMinutes to 0 when missing', () {
+    final AlertSettings settings = AlertSettings.fromRaw(<String, dynamic>{});
+
+    expect(settings.muntersDoorOpen.whatsappDelayMinutes, 0);
+    expect(settings.roomDoorOpen.whatsappDelayMinutes, 0);
+  });
+
+  test('reads whatsappDelayMinutes independently per door alert', () {
+    final AlertSettings settings = AlertSettings.fromRaw(<String, dynamic>{
+      'alerts': <String, dynamic>{
+        'muntersDoorOpen': <String, dynamic>{
+          'enabled': true,
+          'sendWhatsapp': true,
+          'whatsappDelayMinutes': 5,
+        },
+        'roomDoorOpen': <String, dynamic>{
+          'enabled': true,
+          'sendWhatsapp': true,
+          'whatsappDelayMinutes': 15,
+        },
+      },
+    });
+
+    expect(settings.muntersDoorOpen.whatsappDelayMinutes, 5);
+    expect(settings.roomDoorOpen.whatsappDelayMinutes, 15);
+  });
+
+  test('copyWith updates whatsappDelayMinutes independently', () {
+    const AlertToggleSettings toggle = AlertToggleSettings(
+      enabled: true,
+      sendWhatsapp: true,
+      order: 1,
+      whatsappDelayMinutes: 2,
+    );
+    final AlertToggleSettings updated = toggle.copyWith(
+      whatsappDelayMinutes: 10,
+    );
+
+    expect(updated.whatsappDelayMinutes, 10);
+    expect(updated.enabled, isTrue);
+    expect(updated.sendWhatsapp, isTrue);
+  });
+
+  test('ignores negative whatsappDelayMinutes and falls back to 0', () {
+    final AlertToggleSettings settings = AlertToggleSettings.fromRaw(
+      <String, dynamic>{
+        'enabled': true,
+        'sendWhatsapp': false,
+        'whatsappDelayMinutes': -5,
+      },
+      defaultEnabled: true,
+      defaultOrder: 1,
+    );
+
+    expect(settings.whatsappDelayMinutes, 0);
   });
 
   test('reads legacy temperature alert toggle keys', () {

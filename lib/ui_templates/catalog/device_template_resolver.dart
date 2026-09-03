@@ -1,6 +1,7 @@
 import '../../models/agro_device.dart';
 import '../models/device_template.dart';
 import 'agro_ui_templates.dart';
+import 'device_template_registry.dart';
 
 class DeviceTemplateResolver {
   const DeviceTemplateResolver();
@@ -49,7 +50,13 @@ class DeviceTemplateResolver {
     };
   }
 
+  /// Remote-preferred, local-fallback (Etapa 6A): a valid, enabled, warm
+  /// remote template wins; otherwise the local catalog resolves it exactly
+  /// as before. `DeviceTemplateRegistry.resolve` is a synchronous map
+  /// lookup, so this stays safe to call per card on every rebuild, same as
+  /// it always has been — no Firestore read happens here.
   DeviceTemplate? templateForId(String templateId) =>
+      DeviceTemplateRegistry.instance.resolve(templateId) ??
       getTemplateById(templateId);
 
   String? _templateIdForKnownDeviceIdentity(AgroDevice device) {

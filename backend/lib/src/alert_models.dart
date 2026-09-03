@@ -59,6 +59,7 @@ class EvaluatedAlert {
     this.configVersion = 0,
     this.measuredValue,
     this.thresholdValue,
+    this.openSinceMinutes,
   });
 
   final AlertInstanceKey key;
@@ -71,6 +72,29 @@ class EvaluatedAlert {
   final String unit;
   final DateTime evaluatedAt;
   final int configVersion;
+
+  /// Minutes this door has been continuously open as of [evaluatedAt], set
+  /// only when [AlertProcessingCoordinator] promotes a door-open alert to a
+  /// WhatsApp candidate (see `_doorAlertsReadyForWhatsapp`) — null for every
+  /// other alert type and for door alerts that haven't reached their
+  /// configured delay yet.
+  final int? openSinceMinutes;
+
+  EvaluatedAlert withOpenSinceMinutes(int minutes) {
+    return EvaluatedAlert(
+      key: key,
+      type: type,
+      isActive: isActive,
+      sendWhatsapp: sendWhatsapp,
+      thresholdKind: thresholdKind,
+      unit: unit,
+      evaluatedAt: evaluatedAt,
+      configVersion: configVersion,
+      measuredValue: measuredValue,
+      thresholdValue: thresholdValue,
+      openSinceMinutes: minutes,
+    );
+  }
 }
 
 class ActiveAlertState {

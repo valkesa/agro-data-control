@@ -38,7 +38,28 @@ void _testFormatter() {
   _expect(
     formatter.format(_alert(AlertType.muntersDoorOpen)) ==
         'Puerta Munters abierta',
-    'formats munters door',
+    'formats munters door without elapsed time when not gated by a delay',
+  );
+  _expect(
+    formatter.format(
+          _alert(AlertType.muntersDoorOpen, openSinceMinutes: 2),
+        ) ==
+        'Puerta Munters abierta desde hace 2 minutos',
+    'formats munters door with elapsed minutes',
+  );
+  _expect(
+    formatter.format(
+          _alert(AlertType.roomDoorOpen, openSinceMinutes: 62),
+        ) ==
+        'Puerta de sala abierta desde hace 62 minutos',
+    'formats room door with elapsed minutes past an hour',
+  );
+  _expect(
+    formatter.format(
+          _alert(AlertType.muntersDoorOpen, openSinceMinutes: 1),
+        ) ==
+        'Puerta Munters abierta desde hace 1 minuto',
+    'formats singular minute',
   );
 }
 
@@ -356,6 +377,7 @@ EvaluatedAlert _alert(
   String roomId = 'room_1',
   num? measured,
   num? threshold,
+  int? openSinceMinutes,
 }) {
   return EvaluatedAlert(
     key: AlertInstanceKey(
@@ -374,6 +396,7 @@ EvaluatedAlert _alert(
     thresholdKind: AlertThresholdKind.maximum,
     unit: '',
     evaluatedAt: DateTime.utc(2026, 7, 12, 9),
+    openSinceMinutes: openSinceMinutes,
   );
 }
 

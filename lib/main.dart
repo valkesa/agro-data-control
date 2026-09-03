@@ -30,6 +30,7 @@ import 'pages/comparison_page.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
+import 'pages/template_management_page.dart';
 import 'pages/tenant_management_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
@@ -54,6 +55,7 @@ import 'services/user_context_service.dart';
 import 'services/user_management_service.dart';
 import 'services/water_shortage_repository.dart';
 import 'services/whatsapp_alert_recipients_service.dart';
+import 'ui_templates/catalog/device_template_registry.dart';
 import 'ui_templates/catalog/device_template_resolver.dart';
 import 'ui_templates/models/device_template.dart';
 import 'widgets/active_users_eye.dart';
@@ -529,6 +531,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
     super.initState();
     _disposeBrowserExitGuard = registerBrowserExitGuard();
     _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
+    // Templates are global (not tenant-scoped, see Etapa 6A), so this warms
+    // up once per authenticated shell — not on every tenant/site switch.
+    DeviceTemplateRegistry.instance.start();
   }
 
   @override
@@ -540,6 +545,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
     _configSubscription?.cancel();
     _presenceSnapshotNotifier.dispose();
     _presenceDetailsRequested.dispose();
+    DeviceTemplateRegistry.instance.stop();
     super.dispose();
   }
 
@@ -1270,6 +1276,16 @@ class _AgroDataShellState extends State<AgroDataShell> {
           ).push(
             MaterialPageRoute(
               builder: (context) => const TenantManagementPage(),
+            ),
+          );
+          continue;
+        case _SettingsMenuAction.manageTemplates:
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (context) => const TemplateManagementPage(),
             ),
           );
           continue;
@@ -4460,6 +4476,7 @@ enum _SettingsMenuAction {
   whatsappTest,
   manageUsers,
   manageTenants,
+  manageTemplates,
   doorOpeningsCleanup,
   rolesHelp,
   rolesCompare,
@@ -4792,6 +4809,24 @@ class _SettingsMenuDialog extends StatelessWidget {
                           Icon(Icons.business_rounded, size: 18),
                           SizedBox(width: 8),
                           Text('Gestión de clientes'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.manageTemplates),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.dashboard_customize_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Templates UI'),
                         ],
                       ),
                     ),
@@ -5996,6 +6031,8 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   late final TextEditingController _filterPressureMaxController;
   late final TextEditingController _thermalFlowThresholdController;
   late final TextEditingController _thermalFlowMarkedDeltaController;
+  late final TextEditingController _muntersDoorDelayController;
+  late final TextEditingController _roomDoorDelayController;
   late AlertSettings _alerts;
   WhatsAppAlertRecipientsResult? _recipientsResult;
   bool _loadingRecipients = true;
@@ -6036,6 +6073,12 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     _thermalFlowMarkedDeltaController = TextEditingController(
       text: ranges.thermalFlowMarkedDeltaC.toString(),
     );
+    _muntersDoorDelayController = TextEditingController(
+      text: _alerts.muntersDoorOpen.whatsappDelayMinutes.toString(),
+    );
+    _roomDoorDelayController = TextEditingController(
+      text: _alerts.roomDoorOpen.whatsappDelayMinutes.toString(),
+    );
     unawaited(_loadRecipients());
   }
 
@@ -6051,6 +6094,8 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     _filterPressureMaxController.dispose();
     _thermalFlowThresholdController.dispose();
     _thermalFlowMarkedDeltaController.dispose();
+    _muntersDoorDelayController.dispose();
+    _roomDoorDelayController.dispose();
     super.dispose();
   }
 
@@ -6068,6 +6113,14 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
 
   double? _parseInput(TextEditingController controller) {
     return double.tryParse(controller.text.trim().replaceAll(',', '.'));
+  }
+
+  int? _parseNonNegativeInt(TextEditingController controller) {
+    final double? value = _parseInput(controller);
+    if (value == null || value < 0) {
+      return null;
+    }
+    return value.round();
   }
 
   void _submit() {
@@ -6093,6 +6146,20 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     final double? thermalFlowMarkedDelta = _parseInput(
       _thermalFlowMarkedDeltaController,
     );
+    final int? muntersDoorDelayMinutes = _parseNonNegativeInt(
+      _muntersDoorDelayController,
+    );
+    final int? roomDoorDelayMinutes = _parseNonNegativeInt(
+      _roomDoorDelayController,
+    );
+
+    if (muntersDoorDelayMinutes == null || roomDoorDelayMinutes == null) {
+      setState(() {
+        _errorText =
+            'El tiempo de apertura de puertas debe ser un numero entero mayor o igual a 0.';
+      });
+      return;
+    }
 
     if (temperatureMin == null ||
         temperatureMax == null ||
@@ -6161,9 +6228,22 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
     }
 
     final DashboardRangeSettings current = widget.initialRangeSettings;
+    final AlertSettings finalAlerts = _alerts
+        .withToggle(
+          AlertSettingKey.muntersDoorOpen,
+          _alerts.muntersDoorOpen.copyWith(
+            whatsappDelayMinutes: muntersDoorDelayMinutes,
+          ),
+        )
+        .withToggle(
+          AlertSettingKey.roomDoorOpen,
+          _alerts.roomDoorOpen.copyWith(
+            whatsappDelayMinutes: roomDoorDelayMinutes,
+          ),
+        );
     Navigator.of(context).pop(
       _AlertSettingsDialogResult(
-        alertSettings: _alerts,
+        alertSettings: finalAlerts,
         rangeSettings: current.copyWith(
           temperatureMin: temperatureMin,
           temperatureMax: temperatureMax,
@@ -6255,11 +6335,27 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
         keyType: key,
         title: 'Puerta Munters abierta',
         settings: settings,
+        hint: _doorDelayHint,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Después de',
+            controller: _muntersDoorDelayController,
+            suffix: 'min',
+          ),
+        ],
       ),
       AlertSettingKey.roomDoorOpen => _AlertSettingsTableRow(
         keyType: key,
         title: 'Puerta de sala abierta',
         settings: settings,
+        hint: _doorDelayHint,
+        values: <_AlertTableValueSpec>[
+          _AlertTableValueSpec(
+            label: 'Después de',
+            controller: _roomDoorDelayController,
+            suffix: 'min',
+          ),
+        ],
       ),
       AlertSettingKey.temperatureInterior => _AlertSettingsTableRow(
         keyType: key,
@@ -6525,6 +6621,10 @@ class _AlertSettingsDialogState extends State<_AlertSettingsDialog> {
   }
 }
 
+const String _doorDelayHint =
+    'No afecta la alerta en pantalla (siempre inmediata). '
+    'Solo retrasa el envío por WhatsApp.';
+
 class _AlertSettingsTableRow {
   const _AlertSettingsTableRow({
     required this.keyType,
@@ -6532,6 +6632,7 @@ class _AlertSettingsTableRow {
     required this.settings,
     this.values = const <_AlertTableValueSpec>[],
     this.whatsappLabel = 'WhatsApp',
+    this.hint,
   });
 
   final AlertSettingKey keyType;
@@ -6539,6 +6640,7 @@ class _AlertSettingsTableRow {
   final AlertToggleSettings settings;
   final List<_AlertTableValueSpec> values;
   final String whatsappLabel;
+  final String? hint;
 }
 
 class _AlertTableValueSpec {
@@ -6618,6 +6720,7 @@ class _AlertSettingsTable extends StatelessWidget {
                     _AlertNameCell(
                       rows[index].title,
                       enabled: rows[index].settings.enabled,
+                      hint: rows[index].hint,
                     ),
                     _AlertValueCell(row: rows[index]),
                     _AlertSwitchCell(
@@ -6751,24 +6854,42 @@ class _AlertTableHeaderCell extends StatelessWidget {
 }
 
 class _AlertNameCell extends StatelessWidget {
-  const _AlertNameCell(this.text, {required this.enabled});
+  const _AlertNameCell(this.text, {required this.enabled, this.hint});
 
   final String text;
   final bool enabled;
+  final String? hint;
 
   @override
   Widget build(BuildContext context) {
+    final Color color = enabled
+        ? const Color(0xFFE5E7EB)
+        : const Color(0xFF64748B);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      child: Text(
-        text,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: enabled ? const Color(0xFFE5E7EB) : const Color(0xFF64748B),
-          fontSize: 13,
-          fontWeight: FontWeight.w700,
-        ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              text,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          if (hint != null) ...[
+            const SizedBox(width: 4),
+            Tooltip(
+              message: hint,
+              child: Icon(Icons.info_outline, size: 14, color: color),
+            ),
+          ],
+        ],
       ),
     );
   }

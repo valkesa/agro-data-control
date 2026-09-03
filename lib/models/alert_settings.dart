@@ -342,7 +342,9 @@ class AlertToggleSettings {
     required this.enabled,
     required this.sendWhatsapp,
     required this.order,
-  }) : assert(enabled || !sendWhatsapp);
+    this.whatsappDelayMinutes = 0,
+  }) : assert(enabled || !sendWhatsapp),
+       assert(whatsappDelayMinutes >= 0);
 
   factory AlertToggleSettings.fromRaw(
     Object? value, {
@@ -363,25 +365,36 @@ class AlertToggleSettings {
         ? value['sendWhatsapp'] as bool
         : false;
     final int order = _readPositiveInt(value['order']) ?? defaultOrder;
+    final int whatsappDelayMinutes =
+        _readNonNegativeInt(value['whatsappDelayMinutes']) ?? 0;
     return AlertToggleSettings(
       enabled: enabled,
       sendWhatsapp: enabled && rawSendWhatsapp,
       order: order,
+      whatsappDelayMinutes: whatsappDelayMinutes,
     );
   }
 
   const AlertToggleSettings.defaults({required this.order})
     : enabled = true,
-      sendWhatsapp = false;
+      sendWhatsapp = false,
+      whatsappDelayMinutes = 0;
 
   final bool enabled;
   final bool sendWhatsapp;
   final int order;
 
+  /// Minutes a door alert must stay continuously open before the first
+  /// WhatsApp send — 0 means immediate (the historic behavior). Only
+  /// meaningful for `muntersDoorOpen`/`roomDoorOpen`; every other alert
+  /// carries the field but the UI never exposes it for them.
+  final int whatsappDelayMinutes;
+
   AlertToggleSettings copyWith({
     bool? enabled,
     bool? sendWhatsapp,
     int? order,
+    int? whatsappDelayMinutes,
   }) {
     final bool nextEnabled = enabled ?? this.enabled;
     final bool nextSendWhatsapp = nextEnabled
@@ -391,6 +404,7 @@ class AlertToggleSettings {
       enabled: nextEnabled,
       sendWhatsapp: nextSendWhatsapp,
       order: order ?? this.order,
+      whatsappDelayMinutes: whatsappDelayMinutes ?? this.whatsappDelayMinutes,
     );
   }
 
@@ -399,6 +413,7 @@ class AlertToggleSettings {
       'enabled': enabled,
       'sendWhatsapp': enabled && sendWhatsapp,
       'order': order,
+      'whatsappDelayMinutes': whatsappDelayMinutes,
     };
   }
 
@@ -407,11 +422,13 @@ class AlertToggleSettings {
     return other is AlertToggleSettings &&
         other.enabled == enabled &&
         other.sendWhatsapp == sendWhatsapp &&
-        other.order == order;
+        other.order == order &&
+        other.whatsappDelayMinutes == whatsappDelayMinutes;
   }
 
   @override
-  int get hashCode => Object.hash(enabled, sendWhatsapp, order);
+  int get hashCode =>
+      Object.hash(enabled, sendWhatsapp, order, whatsappDelayMinutes);
 }
 
 int? _readPositiveInt(Object? value) {
@@ -419,6 +436,16 @@ int? _readPositiveInt(Object? value) {
     return value;
   }
   if (value is num && value.isFinite && value > 0) {
+    return value.toInt();
+  }
+  return null;
+}
+
+int? _readNonNegativeInt(Object? value) {
+  if (value is int && value >= 0) {
+    return value;
+  }
+  if (value is num && value.isFinite && value >= 0) {
     return value.toInt();
   }
   return null;

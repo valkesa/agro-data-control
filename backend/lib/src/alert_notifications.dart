@@ -264,8 +264,10 @@ class AlertNotificationFormatter {
 
   String format(EvaluatedAlert alert) {
     return switch (alert.type) {
-      AlertType.muntersDoorOpen => 'Puerta Munters abierta',
-      AlertType.roomDoorOpen => 'Puerta de sala abierta',
+      AlertType.muntersDoorOpen =>
+        'Puerta Munters abierta${_openSinceSuffix(alert.openSinceMinutes)}',
+      AlertType.roomDoorOpen =>
+        'Puerta de sala abierta${_openSinceSuffix(alert.openSinceMinutes)}',
       AlertType.sensorFailure =>
         'Falla sensor (cod. ${_value(alert.measuredValue)})',
       AlertType.temperatureInterior =>
@@ -283,6 +285,15 @@ class AlertNotificationFormatter {
       AlertType.dewPointRisk =>
         'Margen al punto de rocio: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)',
     };
+  }
+
+  String _openSinceSuffix(int? minutes) {
+    if (minutes == null) {
+      return '';
+    }
+    return minutes == 1
+        ? ' desde hace 1 minuto'
+        : ' desde hace $minutes minutos';
   }
 
   String _value(num? value) {
