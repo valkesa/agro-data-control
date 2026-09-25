@@ -10,6 +10,13 @@ echo "→ Sincronizando backend al VPS..."
 rsync -avz --delete \
   --exclude='.dart_tool/' \
   --exclude='.DS_Store' \
+  --exclude='/state/' \
+  --exclude='/tmp/' \
+  --exclude='/config/service-account*.json' \
+  --exclude='/.env*' \
+  --exclude='/secrets/' \
+  --exclude='*.pem' \
+  --exclude='*.key' \
   "$LOCAL" "$VPS:$REMOTE"
 
 echo "→ Instalando dependencias y reiniciando servicio..."

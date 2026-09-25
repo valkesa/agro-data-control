@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'alert_configuration_contracts.dart';
 import 'alert_models.dart';
 import 'alert_priority.dart';
+import 'alert_recipient_validation.dart';
+import 'hierarchical_alert_recipients.dart';
 import 'whatsapp_alert_recipients.dart';
 import 'whatsapp_service.dart';
 
@@ -121,6 +124,15 @@ class _TimerNotificationHandle implements NotificationTimerHandle {
   void cancel() => _timer.cancel();
 }
 
+typedef NotificationBatchProcessedCallback =
+    void Function(
+      PendingNotificationBatch batch,
+      NotificationBatchSendResult result,
+    );
+
+typedef NotificationBatchFailedCallback =
+    void Function(PendingNotificationBatch batch, Object error);
+
 class NotificationBatchManager {
   NotificationBatchManager({
     required this.processor,
@@ -129,16 +141,22 @@ class NotificationBatchManager {
     DateTime Function()? now,
     Duration window = defaultNotificationBatchWindow,
     String Function(DateTime now)? batchIdFactory,
+    NotificationBatchProcessedCallback? onProcessed,
+    NotificationBatchFailedCallback? onFailed,
   }) : _scheduler = scheduler,
        _now = now ?? DateTime.now,
        _window = window,
-       _batchIdFactory = batchIdFactory ?? generateNotificationBatchId;
+       _batchIdFactory = batchIdFactory ?? generateNotificationBatchId,
+       _onProcessed = onProcessed,
+       _onFailed = onFailed;
 
   final AlertNotificationProcessor processor;
   final NotificationBatchScheduler _scheduler;
   final DateTime Function() _now;
   final Duration _window;
   final String Function(DateTime now) _batchIdFactory;
+  final NotificationBatchProcessedCallback? _onProcessed;
+  final NotificationBatchFailedCallback? _onFailed;
   final Map<NotificationBatchKey, PendingNotificationBatch> _batches =
       <NotificationBatchKey, PendingNotificationBatch>{};
   final Map<NotificationBatchKey, NotificationTimerHandle> _timers =
@@ -215,15 +233,20 @@ class NotificationBatchManager {
     _logNotification(
       'event=notification_batch_closed batchId=${batch.batchId} tenantId=${batch.tenantId} siteId=${batch.siteId} roomId=${batch.roomId} alertCount=${batch.alertCount} createdAt=${batch.createdAt.toIso8601String()} closedAt=${closedAt.toIso8601String()} windowDurationMs=${batch.closesAt.difference(batch.createdAt).inMilliseconds}',
     );
-    try {
-      unawaited(processor.process(batch));
-      return batch;
-    } catch (error) {
-      _logNotification(
-        'event=notification_batch_failed batchId=${batch.batchId} errorType=${error.runtimeType} errorMessage=${sanitizeLogValue(error.toString())}',
-      );
-      return null;
-    }
+    unawaited(
+      processor
+          .process(batch)
+          .then((NotificationBatchSendResult result) {
+            _onProcessed?.call(batch, result);
+          })
+          .catchError((Object error) {
+            _logNotification(
+              'event=notification_batch_failed batchId=${batch.batchId} errorType=${error.runtimeType} errorMessage=${sanitizeLogValue(error.toString())}',
+            );
+            _onFailed?.call(batch, error);
+          }),
+    );
+    return batch;
   }
 
   Future<void> flushAll() async {
@@ -269,7 +292,7 @@ class AlertNotificationFormatter {
       AlertType.roomDoorOpen =>
         'Puerta de sala abierta${_openSinceSuffix(alert.openSinceMinutes)}',
       AlertType.sensorFailure =>
-        'Falla sensor (cod. ${_value(alert.measuredValue)})',
+        'Falla sensor Temp. Interior (lectura: ${_value(alert.measuredValue)} C, minimo: ${_value(alert.thresholdValue)} C)',
       AlertType.temperatureInterior =>
         alert.thresholdKind == AlertThresholdKind.minimum
             ? 'Temperatura interior: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)'
@@ -281,7 +304,9 @@ class AlertNotificationFormatter {
       AlertType.highDifferentialPressure =>
         'Presion diferencial: ${_value(alert.measuredValue)} Pa (max: ${_value(alert.thresholdValue)} Pa)',
       AlertType.highHumidity =>
-        'Humedad interior: ${_value(alert.measuredValue)} % (max: ${_value(alert.thresholdValue)} %)',
+        alert.thresholdKind == AlertThresholdKind.minimum
+            ? 'Humedad interior: ${_value(alert.measuredValue)} % (min: ${_value(alert.thresholdValue)} %)'
+            : 'Humedad interior: ${_value(alert.measuredValue)} % (max: ${_value(alert.thresholdValue)} %)',
       AlertType.dewPointRisk =>
         'Margen al punto de rocio: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)',
     };
@@ -702,9 +727,13 @@ class AlertNotificationProcessor {
     required this.clientName,
     required this.siteName,
     this.builder = const NotificationBatchBuilder(),
-  });
+    AlertRecipientProvider? recipientProvider,
+  }) : recipientProvider =
+           recipientProvider ??
+           LegacyAlertRecipientProvider(recipientsConfig: recipientsConfig);
 
   final WhatsAppAlertRecipientsConfig recipientsConfig;
+  final AlertRecipientProvider recipientProvider;
   final AlertNotificationSender sender;
   final String clientName;
   final String siteName;
@@ -713,10 +742,8 @@ class AlertNotificationProcessor {
   Future<NotificationBatchSendResult> process(
     PendingNotificationBatch batch,
   ) async {
-    final List<AlertRecipient> recipients = recipientsConfig.recipientsFor(
-      tenantId: batch.tenantId,
-      siteId: batch.siteId,
-    );
+    final List<AlertRecipient> recipients = await recipientProvider
+        .recipientsForBatch(batch, clientName: clientName, siteName: siteName);
     if (recipients.isEmpty) {
       _logNotification(
         'event=notification_batch_skipped batchId=${batch.batchId} reason=no_recipients',
@@ -739,6 +766,182 @@ class AlertNotificationProcessor {
       siteName: siteName,
     );
     return sender.send(builtBatch: builtBatch, recipients: recipients);
+  }
+}
+
+enum AlertRecipientProviderMode { legacy, validate, hierarchical }
+
+abstract class AlertRecipientProvider {
+  Future<List<AlertRecipient>> recipientsForBatch(
+    PendingNotificationBatch batch, {
+    required String clientName,
+    required String siteName,
+  });
+
+  Map<String, Object?> healthJson();
+}
+
+class LegacyAlertRecipientProvider implements AlertRecipientProvider {
+  const LegacyAlertRecipientProvider({required this.recipientsConfig});
+
+  final WhatsAppAlertRecipientsConfig recipientsConfig;
+
+  @override
+  Future<List<AlertRecipient>> recipientsForBatch(
+    PendingNotificationBatch batch, {
+    required String clientName,
+    required String siteName,
+  }) async {
+    return recipientsConfig.recipientsFor(
+      tenantId: batch.tenantId,
+      siteId: batch.siteId,
+    );
+  }
+
+  @override
+  Map<String, Object?> healthJson() {
+    return <String, Object?>{
+      'alertRecipientsCache': <String, Object?>{
+        'mode': AlertRecipientProviderMode.legacy.name,
+        'targets': 0,
+        'loaded': true,
+        'lastRefreshAt': null,
+        'lastError': null,
+        'lastReadCount': 0,
+      },
+    };
+  }
+}
+
+class HierarchicalAlertRecipientProvider implements AlertRecipientProvider {
+  HierarchicalAlertRecipientProvider({
+    required this.mode,
+    required this.legacyConfig,
+    required this.cache,
+    this.legacyAdapter = const LegacyAlertRecipientAdapter(),
+    AlertRecipientValidationTracker? validationTracker,
+  }) : validationTracker =
+           validationTracker ?? AlertRecipientValidationTracker();
+
+  final AlertRecipientProviderMode mode;
+  final WhatsAppAlertRecipientsConfig legacyConfig;
+  final HierarchicalAlertRecipientsCache cache;
+  final LegacyAlertRecipientAdapter legacyAdapter;
+
+  /// Etapa B6.3 — métricas/clasificación de diferencias en modo `validate`
+  /// (§14/§19). Se puede inyectar una instancia compartida con `/health`;
+  /// si no se pasa ninguna, se crea una propia solo para no romper llamadas
+  /// existentes (tests) que no la necesitan.
+  final AlertRecipientValidationTracker validationTracker;
+
+  @override
+  Future<List<AlertRecipient>> recipientsForBatch(
+    PendingNotificationBatch batch, {
+    required String clientName,
+    required String siteName,
+  }) async {
+    final List<AlertRecipient> legacyRecipients = legacyConfig.recipientsFor(
+      tenantId: batch.tenantId,
+      siteId: batch.siteId,
+    );
+    if (mode == AlertRecipientProviderMode.legacy) {
+      return legacyRecipients;
+    }
+    late final List<HierarchicalAlertRecipient> modernRecipients;
+    try {
+      modernRecipients = await cache.getOrLoad(
+        target: _targetForBatch(batch),
+        // Etapa B6.3 (hallazgo durante la implementación): en `validate`
+        // deliberadamente NO se pasa legacy como fallback. El resolver
+        // (Room>Device>Site>Tenant>Legacy) lo incorporaría al resultado
+        // "moderno", así que comparar legacy contra
+        // (moderno unión legacy) siempre da un match perfecto trivial —
+        // nunca detectaría un gap real (p. ej. Nicolás faltando en
+        // moderno), que es justamente lo que esta etapa necesita poder
+        // detectar. En `hierarchical` sí se pasa, a propósito, como
+        // fail-safe real de envío (si falta algo en moderno, legacy lo
+        // cubre). La cache indexa solo por `target`, no por este
+        // parámetro — como hoy solo un modo corre por proceso (nunca
+        // `validate` e `hierarchical` a la vez), no hay colisión real.
+        legacyRecipients: mode == AlertRecipientProviderMode.validate
+            ? const <HierarchicalAlertRecipient>[]
+            : legacyAdapter.fromLegacyRecipients(legacyRecipients),
+      );
+    } catch (error) {
+      _logNotification(
+        'event=alert_recipients_modern_load_failed tenantId=${batch.tenantId} siteId=${batch.siteId} mode=${mode.name} errorType=${error.runtimeType}',
+      );
+      // Etapa B6.3 §25/§26: si falla la capa moderna, legacy sigue
+      // enviando (ya devolvemos legacyRecipients abajo) — solo se registra
+      // el error de validación, nunca se bloquea el envío real.
+      if (mode == AlertRecipientProviderMode.validate) {
+        validationTracker.recordError(error);
+      }
+      return legacyRecipients;
+    }
+    if (mode == AlertRecipientProviderMode.validate) {
+      final AlertRecipientComparison comparison =
+          compareLegacyAndModernRecipients(
+            legacyRecipients: legacyRecipients,
+            modernRecipients: modernRecipients,
+          );
+      // Etapa B6.3 §16: un identificador legible del/de los tipos de
+      // alerta de este batch — puede haber más de uno agrupado en la misma
+      // ventana de batching.
+      final String alertId = batch.alerts
+          .map((EvaluatedAlert a) => a.type.name)
+          .toSet()
+          .join('+');
+      validationTracker.record(
+        tenantId: batch.tenantId,
+        siteId: batch.siteId,
+        targetKey: batch.muntersId?.trim().isNotEmpty == true
+            ? batch.muntersId!.trim()
+            : 'site',
+        alertId: alertId.isEmpty ? 'unknown' : alertId,
+        comparison: comparison,
+        legacyRecipients: legacyRecipients,
+      );
+      return legacyRecipients;
+    }
+    return hierarchicalRecipientsToLegacySendList(
+      recipients: modernRecipients,
+      tenantId: batch.tenantId,
+      siteId: batch.siteId,
+      clientName: clientName,
+      siteName: siteName,
+    );
+  }
+
+  @override
+  Map<String, Object?> healthJson() {
+    return <String, Object?>{
+      'alertRecipientsCache': cache.healthJson(mode: mode.name),
+    };
+  }
+
+  /// Etapa B6.3 §18 — bloque separado para `/health`, requiere `tenantId`
+  /// porque el tracker no lo conoce de antemano (puede acumular targets de
+  /// más de un batch/tenant si este provider llegara a reutilizarse).
+  Map<String, Object?> validationHealthJson({required String tenantId}) {
+    return validationTracker.healthJson(mode: mode.name, tenantId: tenantId);
+  }
+
+  AlertConfigurationTarget _targetForBatch(PendingNotificationBatch batch) {
+    final String? deviceId = batch.muntersId?.trim().isNotEmpty == true
+        ? batch.muntersId!.trim()
+        : null;
+    return AlertConfigurationTarget(
+      tenantId: batch.tenantId,
+      siteId: batch.siteId,
+      scope: deviceId == null
+          ? AlertConfigurationScope.site
+          : AlertConfigurationScope.room,
+      deviceId: deviceId,
+      roomId: batch.roomId.trim().isEmpty ? null : batch.roomId,
+      snapshotUnitKey: deviceId,
+      muntersId: deviceId,
+    );
   }
 }
 

@@ -38,6 +38,16 @@ void main() {
     );
   }
 
+  DeviceTemplateRecord remoteDisinfectionArch({required int templateVersion}) {
+    final DeviceTemplate local = getTemplateById('disinfection_arch')!;
+    return DeviceTemplateRecord(
+      template: local,
+      schemaVersion: 1,
+      templateVersion: templateVersion,
+      enabled: true,
+    );
+  }
+
   group('DeviceTemplateRegistry fallback matrix', () {
     test('remote válido -> remote', () async {
       final _FakeDeviceTemplateRepository fake = _FakeDeviceTemplateRepository(
@@ -234,6 +244,29 @@ void main() {
         expect(resolved!.name, 'Sala / Ambiente controlado (remoto)');
       },
     );
+
+    test(
+      'nuevo snapshot actualiza disinfection_arch sin lecturas por resolve',
+      () async {
+        final _FakeDeviceTemplateRepository fake =
+            _FakeDeviceTemplateRepository(<DeviceTemplateRecord>[
+              remoteDisinfectionArch(templateVersion: 2),
+            ]);
+
+        DeviceTemplateRegistry.instance.start(repository: fake);
+        await fake.emit();
+        await fake.emitRecords(<DeviceTemplateRecord>[
+          remoteDisinfectionArch(templateVersion: 3),
+        ]);
+
+        for (int i = 0; i < 5; i++) {
+          final DeviceTemplate? resolved = DeviceTemplateRegistry.instance
+              .resolve('disinfection_arch');
+          expect(resolved?.name, 'Arco de desinfección');
+        }
+        expect(fake.watchCallCount, 1);
+      },
+    );
   });
 }
 
@@ -255,6 +288,11 @@ class _FakeDeviceTemplateRepository extends DeviceTemplateRepository {
   /// `.listen` callback has run before assertions.
   Future<void> emit() async {
     _controller.add(_records);
+    await Future<void>.delayed(Duration.zero);
+  }
+
+  Future<void> emitRecords(List<DeviceTemplateRecord> records) async {
+    _controller.add(records);
     await Future<void>.delayed(Duration.zero);
   }
 

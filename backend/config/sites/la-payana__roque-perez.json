@@ -18,6 +18,14 @@
       "plcId": "plc-maternidad"
     }
   ],
+  "deviceEnvironmentHistories": [
+    {
+      "enabled": false,
+      "tenantId": "la-payana",
+      "siteId": "roque-perez",
+      "deviceId": "plc-maternidad"
+    }
+  ],
   "units": {
     "plc-maternidad__sala-1": { "name": "Sala 1", "signals": {} },
     "plc-maternidad__sala-2": { "name": "Sala 2", "signals": {} },

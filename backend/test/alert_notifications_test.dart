@@ -12,6 +12,7 @@ Future<void> main() async {
   _testTemplateBuilderSingleAndMultiple();
   _testTemplateBuilderFromEnvironment();
   await _testBatching();
+  await _testBatchingCallbacks();
   await _testSender();
 }
 
@@ -41,23 +42,17 @@ void _testFormatter() {
     'formats munters door without elapsed time when not gated by a delay',
   );
   _expect(
-    formatter.format(
-          _alert(AlertType.muntersDoorOpen, openSinceMinutes: 2),
-        ) ==
+    formatter.format(_alert(AlertType.muntersDoorOpen, openSinceMinutes: 2)) ==
         'Puerta Munters abierta desde hace 2 minutos',
     'formats munters door with elapsed minutes',
   );
   _expect(
-    formatter.format(
-          _alert(AlertType.roomDoorOpen, openSinceMinutes: 62),
-        ) ==
+    formatter.format(_alert(AlertType.roomDoorOpen, openSinceMinutes: 62)) ==
         'Puerta de sala abierta desde hace 62 minutos',
     'formats room door with elapsed minutes past an hour',
   );
   _expect(
-    formatter.format(
-          _alert(AlertType.muntersDoorOpen, openSinceMinutes: 1),
-        ) ==
+    formatter.format(_alert(AlertType.muntersDoorOpen, openSinceMinutes: 1)) ==
         'Puerta Munters abierta desde hace 1 minuto',
     'formats singular minute',
   );
@@ -276,6 +271,69 @@ Future<void> _testBatching() async {
   );
 }
 
+Future<void> _testBatchingCallbacks() async {
+  final _FakeScheduler successScheduler = _FakeScheduler();
+  final _FakeNotificationProcessor successProcessor =
+      _FakeNotificationProcessor();
+  final List<NotificationBatchSendResult> processed =
+      <NotificationBatchSendResult>[];
+  final NotificationBatchManager successManager = NotificationBatchManager(
+    processor: successProcessor,
+    scheduler: successScheduler,
+    now: () => DateTime.utc(2026, 7, 12, 9),
+    batchIdFactory: (_) => 'NTF-20260712-090000-SUCCESS',
+    onProcessed:
+        (PendingNotificationBatch batch, NotificationBatchSendResult result) {
+          processed.add(result);
+        },
+  );
+
+  successManager.addCandidates(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    roomId: 'room_1',
+    roomNumber: 1,
+    muntersId: 'munters1',
+    alerts: <EvaluatedAlert>[_alert(AlertType.muntersDoorOpen)],
+    alertOrder: _order(),
+  );
+  successScheduler.handles.single.fire();
+  await Future<void>.delayed(Duration.zero);
+  _expect(processed.length == 1, 'batch processed callback runs on success');
+  _expect(
+    processed.single.successCount == 1,
+    'batch processed callback receives send result',
+  );
+
+  final _FakeScheduler failureScheduler = _FakeScheduler();
+  final _FakeNotificationProcessor failureProcessor =
+      _FakeNotificationProcessor(throwAsync: true);
+  final List<Object> failures = <Object>[];
+  final NotificationBatchManager failureManager = NotificationBatchManager(
+    processor: failureProcessor,
+    scheduler: failureScheduler,
+    now: () => DateTime.utc(2026, 7, 12, 9),
+    batchIdFactory: (_) => 'NTF-20260712-090000-FAILURE',
+    onFailed: (PendingNotificationBatch batch, Object error) {
+      failures.add(error);
+    },
+  );
+
+  failureManager.addCandidates(
+    tenantId: 'tenant-a',
+    siteId: 'site-a',
+    roomId: 'room_1',
+    roomNumber: 1,
+    muntersId: 'munters1',
+    alerts: <EvaluatedAlert>[_alert(AlertType.roomDoorOpen)],
+    alertOrder: _order(),
+  );
+  failureScheduler.handles.single.fire();
+  await Future<void>.delayed(Duration.zero);
+  await Future<void>.delayed(Duration.zero);
+  _expect(failures.length == 1, 'async batch failures are captured');
+}
+
 Future<void> _testSender() async {
   final _FakeWhatsAppService whatsApp = _FakeWhatsAppService();
   final AlertNotificationProcessor processor = AlertNotificationProcessor(
@@ -449,7 +507,7 @@ class _FakeTimerHandle implements NotificationTimerHandle {
 }
 
 class _FakeNotificationProcessor extends AlertNotificationProcessor {
-  _FakeNotificationProcessor()
+  _FakeNotificationProcessor({this.throwAsync = false})
     : super(
         recipientsConfig: const WhatsAppAlertRecipientsConfig(),
         sender: AlertNotificationSender(
@@ -459,12 +517,17 @@ class _FakeNotificationProcessor extends AlertNotificationProcessor {
         siteName: 'Sitio principal',
       );
 
+  final bool throwAsync;
   final List<PendingNotificationBatch> processed = <PendingNotificationBatch>[];
 
   @override
   Future<NotificationBatchSendResult> process(
     PendingNotificationBatch batch,
   ) async {
+    if (throwAsync) {
+      await Future<void>.delayed(Duration.zero);
+      throw StateError('processor failed');
+    }
     processed.add(batch);
     return NotificationBatchSendResult(
       batchId: batch.batchId,

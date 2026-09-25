@@ -27,7 +27,8 @@ import '../widgets/cerdas_module.dart';
 import '../widgets/differential_pressure_history_card.dart';
 import '../widgets/door_openings_module.dart';
 import '../widgets/status_indicator.dart';
-import '../widgets/temperature_history_mini_charts_card.dart';
+import '../widgets/device_environment_history_card.dart';
+import '../services/device_environment_history_repository.dart';
 
 class ComparisonPage extends StatefulWidget {
   const ComparisonPage({
@@ -54,7 +55,10 @@ class ComparisonPage extends StatefulWidget {
     this.plc1MaintenanceMode,
     this.plc2MaintenanceMode,
     this.dynamicCerdasEntries = const <CerdasControlEntry>[],
+    this.environmentHistoryRepository,
   });
+
+  final DeviceEnvironmentHistoryRepository? environmentHistoryRepository;
 
   static const String sectionEstado = 'Estado';
   static const String sectionAmbiente = 'Ambiente';
@@ -213,6 +217,8 @@ class EnvironmentOverviewPage extends StatelessWidget {
     this.cerdasContextKeys,
     this.templateResolver = const DeviceTemplateResolver(),
     this.cerdasRepository = const CerdasRepository(),
+    this.environmentHistoryRepository,
+    this.deviceIds,
   });
 
   final List<MuntersModel> units;
@@ -227,6 +233,27 @@ class EnvironmentOverviewPage extends StatelessWidget {
   final List<CerdasContextKey?>? cerdasContextKeys;
   final DeviceTemplateResolver templateResolver;
   final CerdasRepository cerdasRepository;
+
+  /// One entry per [units] index with the REAL Devices/Sites schema
+  /// document id (e.g. `plc-genetica-sala1`) — populated only on the
+  /// dynamic-Devices path (`_activeSiteUsesDynamicDevices`), where [plcIds]
+  /// is always null per-entry (nothing else needed it before). Preferred
+  /// over [plcIds] for resolving the history repository scope whenever
+  /// present, since it names the Device directly instead of an alias that
+  /// has to be looked up (see `resolveFromDevices`) — root cause of the fix
+  /// this parameter exists for: history access silently depended on
+  /// [plcIds] alone, which is why it worked from the legacy Site
+  /// (`genetica-1`, real `plcIds`) but not from the structural one
+  /// (`las-heras`, dynamic-Devices path, `plcIds` all null).
+  final List<String?>? deviceIds;
+
+  /// Access point for the historical-chart icons on Temperatura/HR cards
+  /// (Prompt_Graficos_Etapa_1_de_2_Mejoras_UI §8-9). Shares the same
+  /// repository instance `main.dart` passes to Detalle when provided, so
+  /// opening a Sala's chart from either surface reuses one session cache
+  /// (§15). Defaults to a fresh instance only for callers (tests, previews)
+  /// that don't wire one in.
+  final DeviceEnvironmentHistoryRepository? environmentHistoryRepository;
 
   /// One entry per [units] index naming the physical Device that unit's
   /// Sala belongs to — e.g. `[PLC Maternidad, PLC Maternidad, PLC Recria]`.
@@ -254,6 +281,9 @@ class EnvironmentOverviewPage extends StatelessWidget {
           cerdasContextKeys: cerdasContextKeys,
           templateResolver: templateResolver,
           cerdasRepository: cerdasRepository,
+          environmentHistoryRepository:
+              environmentHistoryRepository ?? DeviceEnvironmentHistoryRepository(),
+          deviceIds: deviceIds,
         ),
       ),
     );
@@ -1507,6 +1537,8 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     this.cerdasContextKeys,
     this.templateResolver = const DeviceTemplateResolver(),
     this.cerdasRepository = const CerdasRepository(),
+    required this.environmentHistoryRepository,
+    this.deviceIds,
   });
 
   final List<MuntersModel> units;
@@ -1522,6 +1554,8 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
   final List<CerdasContextKey?>? cerdasContextKeys;
   final DeviceTemplateResolver templateResolver;
   final CerdasRepository cerdasRepository;
+  final DeviceEnvironmentHistoryRepository environmentHistoryRepository;
+  final List<String?>? deviceIds;
 
   static const double _maxCardWidth = 406;
   static const double _minLargeTemplateCardWidth = 406;
@@ -1583,6 +1617,7 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
                 : unit,
             legacyUnit: unit,
             legacyPlcId: i < plcIds.length ? plcIds[i] : unit.historyPlcId,
+            realDeviceId: i < (deviceIds?.length ?? 0) ? deviceIds![i] : null,
             cerdasKey: _cerdasKeyForIndex(
               index: i,
               explicitKeys: cerdasContextKeys,
@@ -1730,6 +1765,46 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     );
   }
 
+  /// FIX Etapa 1/2 (§4/§6/§11 del prompt de corrección): el/los ícono(s) de
+  /// histórico ya NO se superponen sobre toda la card — viven dentro del
+  /// slot de cada métrica (`tempInterior`/`humedadInterior`) vía
+  /// `DeviceBoardRenderer.metricActions`, un mecanismo genérico
+  /// (`BoardSlotAction`, keyed por `MetricDefinition.key`) que el renderer
+  /// no conoce como "histórico" ni como "Gene Pig" — ver
+  /// device_board_renderer.dart. Preferimos `cardData.realDeviceId` (Device
+  /// real de Sites/Sectors/Devices) sobre `cardData.legacyPlcId` (alias
+  /// runtime) cuando ambos existen: es la causa raíz del desvío que este fix
+  /// corrige — `legacyPlcId` es siempre null en el camino de Devices
+  /// dinámicos (`las-heras`), así que depender solo de él dejaba `las-heras`
+  /// sin accesos aunque el Device real ya estuviera disponible.
+  Map<String, BoardSlotAction>? _historyMetricActions(
+    _EnvironmentBoardCardData cardData,
+  ) {
+    final String? tenant = tenantId;
+    final String? unit = cardData.realDeviceId ?? cardData.legacyPlcId;
+    if (tenant == null || unit == null) return null;
+    BoardSlotAction action(EnvironmentHistoryMetric metric) => BoardSlotAction(
+      icon: Icons.bar_chart,
+      tooltip: 'Ver histórico',
+      onTap: (context) => openEnvironmentHistory(
+        context,
+        repository: environmentHistoryRepository,
+        tenantId: tenant,
+        unitId: unit,
+        title: cardData.label,
+        initialMetric: metric,
+      ),
+    );
+    // Metric keys from agro_ui_templates.dart's room_climate definition —
+    // any future template reusing these keys gets the same action for free;
+    // a template without them simply never looks this map up (see
+    // metricActions?[slot.metricKey] in device_board_renderer.dart).
+    return <String, BoardSlotAction>{
+      'tempInterior': action(EnvironmentHistoryMetric.temperature),
+      'humedadInterior': action(EnvironmentHistoryMetric.humidity),
+    };
+  }
+
   Widget _templateRendererFor(_EnvironmentBoardCardData cardData) {
     final String? plcId = cardData.legacyPlcId;
     final CerdasContextKey? cerdasKey = cardData.cerdasKey;
@@ -1748,6 +1823,7 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
         rangeSettings: rangeSettings,
         showSnapshotPulse: showSnapshotPulse,
         snapshotStale: snapshotStale,
+        metricActions: _historyMetricActions(cardData),
       );
     }
     return _PigStatsForKeyBuilder(
@@ -1777,6 +1853,7 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
       rangeSettings: rangeSettings,
       showSnapshotPulse: showSnapshotPulse,
       snapshotStale: snapshotStale,
+      metricActions: _historyMetricActions(cardData),
     );
   }
 
@@ -1796,6 +1873,7 @@ class _EnvironmentBoardCardData {
     required this.deviceData,
     this.legacyUnit,
     this.legacyPlcId,
+    this.realDeviceId,
     this.cerdasKey,
   });
 
@@ -1804,6 +1882,10 @@ class _EnvironmentBoardCardData {
   final Object? deviceData;
   final MuntersModel? legacyUnit;
   final String? legacyPlcId;
+  // Real Sites/Sectors/Devices id (e.g. plc-genetica-sala1) — see
+  // EnvironmentOverviewPage.deviceIds for why this exists separately from
+  // legacyPlcId.
+  final String? realDeviceId;
   final CerdasContextKey? cerdasKey;
 }
 
@@ -1929,6 +2011,9 @@ class _EnvironmentDeviceGroupHeader extends StatelessWidget {
 }
 
 class _ComparisonPageState extends State<ComparisonPage> {
+  late final DeviceEnvironmentHistoryRepository _environmentHistory =
+      widget.environmentHistoryRepository ??
+      DeviceEnvironmentHistoryRepository();
   static const Duration _technicalDataAutoCollapseDelay = Duration(minutes: 5);
   static const Duration _sectionsAutoCollapseDelay = Duration(minutes: 10);
   static const String _sectionFuncionamiento = ComparisonPage.sectionEstado;
@@ -2675,26 +2760,20 @@ class _ComparisonPageState extends State<ComparisonPage> {
               label: 'Gráfico',
               alignToTop: munters1HistoryExpanded || munters2HistoryExpanded,
               munters1: _ComparisonHistoryValue(
-                unitName: munters1.name,
-                rangeSettings: rangeSettings,
+                repository: _environmentHistory,
                 tenantId: widget.tenantId,
-                siteId: widget.siteId,
                 plcId: munters1.historyPlcId,
                 expanded: munters1HistoryExpanded,
                 onToggle: () =>
                     _toggleTemperatureHistoryExpanded(munters1HistoryKey),
-                blocked: munters1DataBlocked,
               ),
               munters2: _ComparisonHistoryValue(
-                unitName: munters2.name,
-                rangeSettings: rangeSettings,
+                repository: _environmentHistory,
                 tenantId: widget.tenantId,
-                siteId: widget.siteId,
                 plcId: munters2.historyPlcId,
                 expanded: munters2HistoryExpanded,
                 onToggle: () =>
                     _toggleTemperatureHistoryExpanded(munters2HistoryKey),
-                blocked: munters2DataBlocked,
               ),
             );
           },
@@ -8870,55 +8949,116 @@ class _RoomWashNoticeText extends StatelessWidget {
   }
 }
 
+/// Single centralized entry point for opening the environmental history
+/// chart, regardless of which surface triggered it. Detalle's own inline
+/// toggle (`_ComparisonHistoryValue` below) doesn't need to route through
+/// this — it already shares the same widget/repository inline — but every
+/// NEW access point (Tablero icons, and any future one) should call this
+/// instead of composing its own `showDialog`, specifically so a future
+/// commercial entitlement gate has exactly one place to intercept
+/// (Prompt_Graficos_Etapa_1_de_2_Mejoras_UI §13):
+///
+/// ```dart
+/// if (!historyEntitlement.enabled) { showUpgradeMessage(context); return; }
+/// openEnvironmentHistory(...);
+/// ```
+///
+/// No `historyEntitlement` exists yet — this etapa only prepares the seam.
+/// Opens a compact dialog (not the fullscreen/modal-ampliado planned for
+/// Etapa 2/2) hosting the exact same [DeviceEnvironmentHistoryCard] Detalle
+/// uses, with `visible: true` from the moment it opens — the read only
+/// happens because the user explicitly tapped an access icon, never before.
+void openEnvironmentHistory(
+  BuildContext context, {
+  required DeviceEnvironmentHistoryRepository repository,
+  required String? tenantId,
+  required String? unitId,
+  required String title,
+  EnvironmentHistoryMetric initialMetric = EnvironmentHistoryMetric.temperature,
+}) {
+  showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Dialog(
+      backgroundColor: const Color(0xFF0F172A),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'Histórico · $title',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cerrar',
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white70,
+                      size: 20,
+                    ),
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                  ),
+                ],
+              ),
+              DeviceEnvironmentHistoryCard(
+                repository: repository,
+                tenantId: tenantId,
+                unitId: unitId,
+                visible: true,
+                initialMetric: initialMetric,
+              ),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
 class _ComparisonHistoryValue extends StatelessWidget {
   const _ComparisonHistoryValue({
-    required this.unitName,
-    required this.rangeSettings,
+    required this.repository,
     required this.tenantId,
-    required this.siteId,
     required this.plcId,
     required this.expanded,
     required this.onToggle,
-    this.blocked = false,
   });
-
-  final String unitName;
-  final DashboardRangeSettings rangeSettings;
-  final String? tenantId;
-  final String? siteId;
-  final String? plcId;
+  final DeviceEnvironmentHistoryRepository repository;
+  final String? tenantId, plcId;
   final bool expanded;
   final VoidCallback onToggle;
-  final bool blocked;
-
   @override
-  Widget build(BuildContext context) {
-    if (blocked) {
-      return const _TextValue('-', fontWeight: FontWeight.w400);
-    }
-    if (!expanded) {
-      return _CollapsedComparisonHistoryButton(onTap: onToggle);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      if (expanded)
         Align(
           alignment: Alignment.centerRight,
           child: _ExpandedComparisonHistoryButton(onTap: onToggle),
-        ),
-        const SizedBox(height: 6),
-        TemperatureHistoryMiniChartsCard(
-          unitName: unitName,
-          lowerLimit: rangeSettings.temperatureMin,
-          upperLimit: rangeSettings.temperatureMax,
-          tenantId: tenantId,
-          siteId: siteId,
-          plcId: plcId,
-          horizontalMargin: 8,
-        ),
-      ],
-    );
-  }
+        )
+      else
+        _CollapsedComparisonHistoryButton(onTap: onToggle),
+      DeviceEnvironmentHistoryCard(
+        key: ValueKey('$tenantId/$plcId'),
+        repository: repository,
+        tenantId: tenantId,
+        unitId: plcId,
+        visible: expanded,
+      ),
+    ],
+  );
 }
 
 class _CollapsedComparisonHistoryButton extends StatelessWidget {

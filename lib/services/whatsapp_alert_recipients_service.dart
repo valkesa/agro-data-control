@@ -59,20 +59,24 @@ class WhatsAppAlertRecipientsService {
         );
       }
 
-      final List<WhatsAppAlertRecipient> recipients =
-          (decoded['recipients'] is List ? decoded['recipients'] as List : [])
-              .whereType<Map>()
-              .map(
-                (Map value) => WhatsAppAlertRecipient.fromJson(
-                  Map<String, Object?>.from(value),
-                ),
-              )
-              .toList(growable: false);
+      List<WhatsAppAlertRecipient> parseList(String key) {
+        return (decoded[key] is List ? decoded[key] as List : [])
+            .whereType<Map>()
+            .map(
+              (Map value) => WhatsAppAlertRecipient.fromJson(
+                Map<String, Object?>.from(value),
+              ),
+            )
+            .toList(growable: false);
+      }
+
+      final List<WhatsAppAlertRecipient> recipients = parseList('recipients');
       return WhatsAppAlertRecipientsResult.success(
         enabled: decoded['enabled'] == true,
         recipientCount:
             _readInt(decoded, 'recipientCount') ?? recipients.length,
         recipients: recipients,
+        globalRecipients: parseList('globalRecipients'),
         runtimeControl: decoded['runtimeControl'] is Map
             ? AlertRuntimeControl.fromJson(
                 Map<String, Object?>.from(decoded['runtimeControl'] as Map),
@@ -122,6 +126,7 @@ class WhatsAppAlertRecipientsResult {
     this.enabled = false,
     this.recipientCount = 0,
     this.recipients = const <WhatsAppAlertRecipient>[],
+    this.globalRecipients = const <WhatsAppAlertRecipient>[],
     this.runtimeControl,
     this.message,
     this.details,
@@ -131,12 +136,15 @@ class WhatsAppAlertRecipientsResult {
     required bool enabled,
     required int recipientCount,
     required List<WhatsAppAlertRecipient> recipients,
+    List<WhatsAppAlertRecipient> globalRecipients =
+        const <WhatsAppAlertRecipient>[],
     AlertRuntimeControl? runtimeControl,
   }) : this._(
          ok: true,
          enabled: enabled,
          recipientCount: recipientCount,
          recipients: recipients,
+         globalRecipients: globalRecipients,
          runtimeControl: runtimeControl,
        );
 
@@ -147,6 +155,11 @@ class WhatsAppAlertRecipientsResult {
   final bool enabled;
   final int recipientCount;
   final List<WhatsAppAlertRecipient> recipients;
+
+  /// Subconjunto de `recipients` con scope `global` (Etapa 2026-09-10) —
+  /// destinatarios legacy técnicos de Valke, independientes de tenant/site
+  /// (p.ej. Gerardo, Demián). Usado por la tabla resumen de destinatarios.
+  final List<WhatsAppAlertRecipient> globalRecipients;
   final AlertRuntimeControl? runtimeControl;
   final String? message;
   final String? details;

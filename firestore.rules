@@ -211,6 +211,240 @@ service cloud.firestore {
       return isOwner() || isValkeTechnician(tenantId);
     }
 
+    function canWriteAlertConfig(tenantId) {
+      return isOwner() || isTenantAdmin(tenantId);
+    }
+
+    function isKnownAlertId(alertId) {
+      return [
+        'munters_door_open',
+        'room_door_open',
+        'sensor_failure',
+        'temperature_interior',
+        'high_temperature_heating_active',
+        'low_temperature_humidifier_active',
+        'high_differential_pressure',
+        'high_humidity',
+        'dew_point_risk'
+      ].hasAny([alertId]);
+    }
+
+    function hasFunctionalAlertConfigOverride() {
+      return request.resource.data.keys().hasAny([
+        'enabled',
+        'visualEnabled',
+        'whatsappEnabled',
+        'whatsappDelayMinutes',
+        'thresholds',
+        'cooldownMinutes',
+        'order'
+      ]);
+    }
+
+    function isValidAlertConfigThresholds(thresholds) {
+      return thresholds is map
+        && thresholds.keys().hasOnly([
+          'min',
+          'max',
+          'threshold',
+          'margin',
+          'sensorFailureMin'
+        ])
+        && (
+          !thresholds.keys().hasAny(['min'])
+          || thresholds.min is number
+        )
+        && (
+          !thresholds.keys().hasAny(['max'])
+          || thresholds.max is number
+        )
+        && (
+          !thresholds.keys().hasAny(['threshold'])
+          || thresholds.threshold is number
+        )
+        && (
+          !thresholds.keys().hasAny(['margin'])
+          || thresholds.margin is number
+        )
+        && (
+          !thresholds.keys().hasAny(['sensorFailureMin'])
+          || thresholds.sensorFailureMin is number
+        );
+    }
+
+    function isValidAlertConfigDocument() {
+      return request.resource.data.keys().hasOnly([
+          'schemaVersion',
+          'enabled',
+          'visualEnabled',
+          'whatsappEnabled',
+          'whatsappDelayMinutes',
+          'thresholds',
+          'cooldownMinutes',
+          'order',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.keys().hasAll([
+          'schemaVersion',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && hasFunctionalAlertConfigOverride()
+        && (
+          !request.resource.data.keys().hasAny(['createdAt'])
+          || request.resource.data.createdAt is timestamp
+        )
+        && (
+          !request.resource.data.keys().hasAny(['createdBy'])
+          || request.resource.data.createdBy is string
+        )
+        && (
+          !request.resource.data.keys().hasAny(['enabled'])
+          || request.resource.data.enabled is bool
+        )
+        && (
+          !request.resource.data.keys().hasAny(['visualEnabled'])
+          || request.resource.data.visualEnabled is bool
+        )
+        && (
+          !request.resource.data.keys().hasAny(['whatsappEnabled'])
+          || request.resource.data.whatsappEnabled is bool
+        )
+        && (
+          !request.resource.data.keys().hasAny(['whatsappDelayMinutes'])
+          || (
+            request.resource.data.whatsappDelayMinutes is int
+            && request.resource.data.whatsappDelayMinutes >= 0
+          )
+        )
+        && (
+          !request.resource.data.keys().hasAny(['cooldownMinutes'])
+          || (
+            request.resource.data.cooldownMinutes is int
+            && request.resource.data.cooldownMinutes >= 0
+          )
+        )
+        && (
+          !request.resource.data.keys().hasAny(['order'])
+          || (
+            request.resource.data.order is int
+            && request.resource.data.order >= 0
+          )
+        )
+        && (
+          !request.resource.data.keys().hasAny(['thresholds'])
+          || isValidAlertConfigThresholds(request.resource.data.thresholds)
+        );
+    }
+
+    function canReadAlertConfig(tenantId) {
+      return canReadTenant(tenantId);
+    }
+
+    function canCreateAlertConfig(tenantId, alertId) {
+      return canWriteAlertConfig(tenantId)
+        && isKnownAlertId(alertId)
+        && isValidAlertConfigDocument()
+        && request.resource.data.keys().hasAll(['createdBy'])
+        && request.resource.data.createdBy == request.auth.uid;
+    }
+
+    function canUpdateAlertConfig(tenantId, alertId) {
+      return canWriteAlertConfig(tenantId)
+        && isKnownAlertId(alertId)
+        && isValidAlertConfigDocument()
+        && (
+          !request.resource.data.keys().hasAny(['createdAt'])
+          || request.resource.data.createdAt == resource.data.createdAt
+        )
+        && (
+          !request.resource.data.keys().hasAny(['createdBy'])
+          || request.resource.data.createdBy == resource.data.createdBy
+        );
+    }
+
+    function canDeleteAlertConfig(tenantId, alertId) {
+      return canWriteAlertConfig(tenantId) && isKnownAlertId(alertId);
+    }
+
+    function canWriteAlertRecipient(tenantId) {
+      return isOwner() || isTenantAdmin(tenantId);
+    }
+
+    function isValidAlertRecipientPhone(phone) {
+      return phone is string
+        && phone.size() >= 9
+        && phone.size() <= 16
+        && phone.matches('^\\+[0-9]+$');
+    }
+
+    function isValidAlertRecipientDocument() {
+      return request.resource.data.keys().hasOnly([
+          'schemaVersion',
+          'displayName',
+          'phoneE164',
+          'enabled',
+          'createdAt',
+          'createdBy',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.keys().hasAll([
+          'schemaVersion',
+          'displayName',
+          'phoneE164',
+          'enabled',
+          'updatedAt',
+          'updatedBy'
+        ])
+        && request.resource.data.schemaVersion == 1
+        && request.resource.data.displayName is string
+        && request.resource.data.displayName.size() > 0
+        && request.resource.data.displayName.size() <= 120
+        && isValidAlertRecipientPhone(request.resource.data.phoneE164)
+        && request.resource.data.enabled is bool
+        && request.resource.data.updatedAt is timestamp
+        && request.resource.data.updatedBy == request.auth.uid
+        && (
+          !request.resource.data.keys().hasAny(['createdAt'])
+          || request.resource.data.createdAt is timestamp
+        )
+        && (
+          !request.resource.data.keys().hasAny(['createdBy'])
+          || request.resource.data.createdBy is string
+        );
+    }
+
+    function canCreateAlertRecipient(tenantId) {
+      return canWriteAlertRecipient(tenantId)
+        && isValidAlertRecipientDocument()
+        && request.resource.data.keys().hasAll(['createdBy'])
+        && request.resource.data.createdBy == request.auth.uid;
+    }
+
+    function canUpdateAlertRecipient(tenantId) {
+      return canWriteAlertRecipient(tenantId)
+        && isValidAlertRecipientDocument()
+        && (
+          !request.resource.data.keys().hasAny(['createdAt'])
+          || request.resource.data.createdAt == resource.data.createdAt
+        )
+        && (
+          !request.resource.data.keys().hasAny(['createdBy'])
+          || request.resource.data.createdBy == resource.data.createdBy
+        );
+    }
+
+    function canDeleteAlertRecipient(tenantId) {
+      return canWriteAlertRecipient(tenantId);
+    }
+
     function isMaintenanceCreate() {
       return request.resource.data.keys().hasOnly(['ui', 'updatedAt', 'updatedByUid'])
         && request.resource.data.ui.keys().hasOnly(['maintenance'])
@@ -383,6 +617,146 @@ service cloud.firestore {
       allow read: if hasUserContext();
       allow create, update: if isOwner();
       allow delete: if false;
+    }
+
+    // Etapa N7.1 §1/§2/§4/§16: global, not tenant-scoped design-time config
+    // (LayoutTemplate/CellLayoutPreset/CapabilityMetric/CapabilityIndicator/
+    // CapabilityProfile/BoardPreset) — same rationale and same read/write
+    // shape as `deviceTemplates` above: reusable across every tenant, read
+    // by any authenticated app user, write owner-only. Field-by-field
+    // validation intentionally stays at the top-level document shape (not
+    // a recursive re-implementation of each model's own constructor
+    // validation) — every one of these documents is only ever written
+    // through its matching Repository class
+    // (`lib/services/*_repository.dart`), never directly from a widget
+    // (N7.1 §4), so the model's own validating `fromMap`/constructor is
+    // what actually runs before any write is even attempted.
+    match /layoutTemplates/{templateId} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'columns', 'rows', 'schemaVersion', 'templateVersion',
+          'enabled', 'createdAt', 'updatedAt', 'internalUnitsPerCellX',
+          'internalUnitsPerCellY'
+        ])
+        && request.resource.data.id == templateId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.columns is int
+        && request.resource.data.rows is int
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.templateVersion is int
+        && request.resource.data.enabled is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    match /cellLayoutPresets/{presetId} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'widthCells', 'heightCells', 'schemaVersion',
+          'presetVersion', 'enabled', 'elements', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.id == presetId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.widthCells is int
+        && request.resource.data.heightCells is int
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.presetVersion is int
+        && request.resource.data.enabled is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    match /capabilityMetrics/{metricKey} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'key', 'label', 'shortLabel', 'defaultUnit', 'icon', 'displayType',
+          'decimals', 'statusBehavior', 'schemaVersion', 'enabled',
+          'recordVersion', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.key == metricKey
+        && request.resource.data.label is string
+        && request.resource.data.label.size() > 0
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.recordVersion is int
+        && request.resource.data.enabled is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    match /capabilityIndicators/{indicatorKey} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'key', 'label', 'defaultIcon', 'schemaVersion', 'enabled',
+          'recordVersion', 'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.key == indicatorKey
+        && request.resource.data.label is string
+        && request.resource.data.label.size() > 0
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.recordVersion is int
+        && request.resource.data.enabled is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    match /capabilityProfiles/{profileId} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'description', 'enabled', 'metricKeys',
+          'indicatorKeys', 'metricBindings', 'indicatorBindings',
+          'suggestedIndicatorsByMetric', 'profileVersion', 'createdAt',
+          'updatedAt'
+        ])
+        && request.resource.data.id == profileId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.enabled is bool
+        && request.resource.data.profileVersion is int
+        && request.resource.data.metricKeys is list
+        && request.resource.data.indicatorKeys is list
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if false;
+    }
+
+    // Unlike every other N7.1 global collection above, a BoardPreset can
+    // actually be deleted (N7.1 §10) — deleting it never cascades: a
+    // Device that already applied it keeps its own
+    // `tenants/{tenantId}/devices/{deviceId}/settings/boardConfig`
+    // document completely untouched (that document is a deep, independent
+    // copy — never a live reference into this collection).
+    match /boardPresets/{presetId} {
+      allow read: if hasUserContext();
+      allow create, update: if isOwner()
+        && request.resource.data.keys().hasOnly([
+          'id', 'name', 'description', 'layoutTemplateId', 'showTitleDefault',
+          'titleOverride', 'items', 'requiredMetricKeys', 'optionalMetricKeys',
+          'capabilityProfileId', 'schemaVersion', 'presetVersion', 'enabled',
+          'createdAt', 'updatedAt'
+        ])
+        && request.resource.data.id == presetId
+        && request.resource.data.name is string
+        && request.resource.data.name.size() > 0
+        && request.resource.data.layoutTemplateId is string
+        && request.resource.data.layoutTemplateId.size() > 0
+        && request.resource.data.items is list
+        && request.resource.data.schemaVersion is int
+        && request.resource.data.presetVersion is int
+        && request.resource.data.enabled is bool
+        && request.resource.data.createdAt is timestamp
+        && request.resource.data.updatedAt is timestamp;
+      allow delete: if isOwner();
     }
 
     function isValidPresenceDoc(uid) {
@@ -569,6 +943,21 @@ service cloud.firestore {
 
       allow delete: if false;
 
+      match /alertConfig/{alertId} {
+        allow get: if canReadAlertConfig(tenantId) && isKnownAlertId(alertId);
+        allow list: if canReadAlertConfig(tenantId);
+        allow create: if canCreateAlertConfig(tenantId, alertId);
+        allow update: if canUpdateAlertConfig(tenantId, alertId);
+        allow delete: if canDeleteAlertConfig(tenantId, alertId);
+      }
+
+      match /alertRecipients/{recipientId} {
+        allow get, list: if canReadTenant(tenantId);
+        allow create: if canCreateAlertRecipient(tenantId);
+        allow update: if canUpdateAlertRecipient(tenantId);
+        allow delete: if canDeleteAlertRecipient(tenantId);
+      }
+
       match /members/{uid} {
         // A tenant_admin can read all members in their own tenant.
         allow get: if (signedIn() && request.auth.uid == uid && isUserActiveTenant(tenantId))
@@ -658,6 +1047,21 @@ service cloud.firestore {
           && request.resource.data.updatedAt is timestamp;
 
         allow delete: if false;
+
+        match /alertConfig/{alertId} {
+          allow get: if canReadAlertConfig(tenantId) && isKnownAlertId(alertId);
+          allow list: if canReadAlertConfig(tenantId);
+          allow create: if canCreateAlertConfig(tenantId, alertId);
+          allow update: if canUpdateAlertConfig(tenantId, alertId);
+          allow delete: if canDeleteAlertConfig(tenantId, alertId);
+        }
+
+        match /alertRecipients/{recipientId} {
+          allow get, list: if canReadTenant(tenantId);
+          allow create: if canCreateAlertRecipient(tenantId);
+          allow update: if canUpdateAlertRecipient(tenantId);
+          allow delete: if canDeleteAlertRecipient(tenantId);
+        }
 
         // LEGACY ONLY:
         // This path is preserved exclusively for existing tenants.
@@ -861,6 +1265,21 @@ service cloud.firestore {
 
         allow delete: if false;
 
+        match /alertConfig/{alertId} {
+          allow get: if canReadAlertConfig(tenantId) && isKnownAlertId(alertId);
+          allow list: if canReadAlertConfig(tenantId);
+          allow create: if canCreateAlertConfig(tenantId, alertId);
+          allow update: if canUpdateAlertConfig(tenantId, alertId);
+          allow delete: if canDeleteAlertConfig(tenantId, alertId);
+        }
+
+        match /alertRecipients/{recipientId} {
+          allow get, list: if canReadTenant(tenantId);
+          allow create: if canCreateAlertRecipient(tenantId);
+          allow update: if canUpdateAlertRecipient(tenantId);
+          allow delete: if canDeleteAlertRecipient(tenantId);
+        }
+
         match /pigStats/pigs {
           allow read: if canReadTenant(tenantId);
           allow create, update: if (isTenantMember(tenantId) || isOwner())
@@ -912,6 +1331,22 @@ service cloud.firestore {
             && request.resource.data.createdAt is timestamp
             && request.resource.data.updatedAt is timestamp;
           allow update, delete: if false;
+        }
+
+        // Prompt_Historicos_Temperatura_Humedad_por_Device — hourly/daily
+        // temperature+humidity aggregates for this Device. Written only by
+        // the backend's own Google service account (IAM-authenticated,
+        // bypasses these rules entirely — same mechanism already used for
+        // runtimeEvents/doors above); reads follow the same tenant scope as
+        // every other subcollection here.
+        match /historyHourly/{periodId} {
+          allow read: if canReadTenant(tenantId);
+          allow create, update, delete: if false;
+        }
+
+        match /historyDaily/{periodId} {
+          allow read: if canReadTenant(tenantId);
+          allow create, update, delete: if false;
         }
 
         match /rooms/{roomId} {
@@ -970,6 +1405,21 @@ service cloud.firestore {
 
           allow delete: if false;
 
+          match /alertConfig/{alertId} {
+            allow get: if canReadAlertConfig(tenantId) && isKnownAlertId(alertId);
+            allow list: if canReadAlertConfig(tenantId);
+            allow create: if canCreateAlertConfig(tenantId, alertId);
+            allow update: if canUpdateAlertConfig(tenantId, alertId);
+            allow delete: if canDeleteAlertConfig(tenantId, alertId);
+          }
+
+          match /alertRecipients/{recipientId} {
+            allow get, list: if canReadTenant(tenantId);
+            allow create: if canCreateAlertRecipient(tenantId);
+            allow update: if canUpdateAlertRecipient(tenantId);
+            allow delete: if canDeleteAlertRecipient(tenantId);
+          }
+
           match /pigStats/pigs {
             allow read: if canReadTenant(tenantId);
             allow create, update: if (isTenantMember(tenantId) || isOwner())
@@ -1027,6 +1477,7 @@ service cloud.firestore {
             allow update, delete: if false;
           }
         }
+
       }
     }
 
@@ -1092,6 +1543,95 @@ service cloud.firestore {
       allow read: if canReadTenant(tenantId);
       allow create: if isTenantMember(tenantId) || isOwner();
       allow update, delete: if false;
+    }
+
+    // Etapa N7.1 §3/§8/§9/§16: the Device's own board configuration — its
+    // assigned `capabilityProfileId` plus its independent
+    // BoardContentLayout (schema-2), including `sourceBoardPresetId`/
+    // `sourceBoardPresetVersion` trazability only (never a live reference:
+    // editing/deleting a `boardPresets` document never touches this one).
+    // Read: any tenant member/owner/Valke technician, same as every other
+    // Device-scoped collection. Write: owner or tenant_admin of THIS
+    // tenant only (§16) — never a global permission.
+    //
+    // A fully-qualified top-level `match` (Firestore Rules supports
+    // multi-segment match paths regardless of textual position in the
+    // file; rule evaluation is never order-dependent), placed at the very
+    // end of this file rather than grouped with N7.1's other new
+    // collections or physically nested inside the core devices
+    // collection's own match block: several existing regression tests
+    // (`test/tenant_management_page_test.dart`,
+    // `test/agro_structural_schema_test.dart`) locate OTHER collections'
+    // rule text via plain, order-dependent substring search (the first/
+    // next occurrence of a literal path in the file) — this block's own
+    // path happens to share a textual prefix with two of those anchors,
+    // so placing it anywhere before them risks becoming the match those
+    // searches find instead of the real one. Anchoring it after every
+    // other `match` in the file sidesteps that category of collision
+    // entirely, without touching any pre-existing test.
+    //
+    // `items`' internal shape (each entry's `id`/`type`/`placement`/
+    // `content` keys, and every content-type variant's own fields) is
+    // deliberately NOT re-validated field-by-field here — Firestore Rules
+    // has no supported per-element list predicate for this, and that shape
+    // is already enforced client-side by `BoardContentItem.fromMap`'s
+    // throwing constructor (never reachable without going through it
+    // first) and by `BoardContentValidator` before an apply/save is ever
+    // attempted (N7.1 §8/§11). Rules here focus on what actually needs
+    // server-side enforcement: tenant scoping, role, and the top-level
+    // document shape.
+    match /tenants/{tenantId}/devices/{deviceId}/settings/boardConfig {
+      function isValidBoardConfigDocument() {
+        return request.resource.data.keys().hasOnly([
+            'deviceId', 'layoutTemplateId', 'showTitle', 'titleOverride',
+            'schemaVersion', 'layoutVersion', 'items', 'createdAt',
+            'updatedAt', 'capabilityProfileId', 'sourceBoardPresetId',
+            'sourceBoardPresetVersion'
+          ])
+          && request.resource.data.keys().hasAll([
+            'deviceId', 'layoutTemplateId', 'schemaVersion',
+            'layoutVersion', 'items', 'createdAt', 'updatedAt'
+          ])
+          && request.resource.data.deviceId == deviceId
+          && request.resource.data.layoutTemplateId is string
+          && request.resource.data.layoutTemplateId.size() > 0
+          && request.resource.data.schemaVersion is int
+          && request.resource.data.layoutVersion is int
+          && request.resource.data.layoutVersion > 0
+          && request.resource.data.items is list
+          && request.resource.data.createdAt is timestamp
+          && request.resource.data.updatedAt is timestamp
+          && (
+            !('showTitle' in request.resource.data)
+            || request.resource.data.showTitle is bool
+          )
+          && (
+            !('titleOverride' in request.resource.data)
+            || request.resource.data.titleOverride == null
+            || (request.resource.data.titleOverride is string
+                && request.resource.data.titleOverride.size() > 0)
+          )
+          && (
+            !('capabilityProfileId' in request.resource.data)
+            || request.resource.data.capabilityProfileId == null
+            || request.resource.data.capabilityProfileId is string
+          )
+          && (
+            !('sourceBoardPresetId' in request.resource.data)
+            || request.resource.data.sourceBoardPresetId == null
+            || request.resource.data.sourceBoardPresetId is string
+          )
+          && (
+            !('sourceBoardPresetVersion' in request.resource.data)
+            || request.resource.data.sourceBoardPresetVersion == null
+            || request.resource.data.sourceBoardPresetVersion is int
+          );
+      }
+
+      allow read: if canReadTenant(tenantId);
+      allow create, update: if (isOwner() || isTenantAdmin(tenantId))
+        && isValidBoardConfigDocument();
+      allow delete: if false;
     }
   }
 }

@@ -601,6 +601,7 @@ class CachedAlertThresholds {
     required this.temperatureMin,
     required this.temperatureMax,
     required this.temperatureSensorFailureMin,
+    required this.humidityInteriorMin,
     required this.humidityRedMinExclusive,
     required this.dewPointMarginRedMaxInclusive,
     required this.filterPressureMax,
@@ -632,6 +633,10 @@ class CachedAlertThresholds {
           'sensorFailure',
           'min',
         ],
+      ]),
+      humidityInteriorMin: _readDouble(raw, <List<String>>[
+        <String>['munters', muntersId, 'humidityInterior', 'min'],
+        const <String>['munters', 'munters1', 'humidityInterior', 'min'],
       ]),
       humidityRedMinExclusive: _readDouble(raw, <List<String>>[
         <String>[
@@ -675,6 +680,15 @@ class CachedAlertThresholds {
   final double? temperatureMin;
   final double? temperatureMax;
   final double? temperatureSensorFailureMin;
+
+  /// Piso de humedad interior — Etapa: "Humedad interior baja" (pedido del
+  /// usuario 2026-09-08). Antes de este cambio, este campo (`humidityInterior.min`
+  /// en Firestore) se leía en el modelo de configuración de Flutter para
+  /// pintar el gauge visual, pero NINGÚN evaluador de alertas lo usaba —
+  /// era un campo muerto para alertas. Ahora `HighHumidityEvaluator` (que
+  /// pasa a cubrir ambos sentidos, igual que `TemperatureInteriorEvaluator`)
+  /// lo usa como umbral real de disparo de "Humedad interior" baja.
+  final double? humidityInteriorMin;
   final double? humidityRedMinExclusive;
   final double? dewPointMarginRedMaxInclusive;
   final double? filterPressureMax;

@@ -23,8 +23,10 @@ class TemperatureHistoryRepository {
     required String siteId,
     required String plcId,
     int limit = 24,
+    DateTime? before,
   }) async {
-    final String cacheKey = 'hourly|$tenantId|$siteId|$plcId|$limit';
+    final String cacheKey =
+        'hourly|$tenantId|$siteId|$plcId|$limit|${before?.toIso8601String() ?? ''}';
     final _CacheEntry<List<TemperatureHourlyPoint>>? cached =
         _hourlyCache[cacheKey];
     if (cached != null && !cached.isExpired) {
@@ -43,9 +45,16 @@ class TemperatureHistoryRepository {
       '[Firestore] temperature hourly history read started path=$path',
     );
 
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+    Query<Map<String, dynamic>> query = firestore
         .collection(path)
-        .orderBy('timestampHourStart', descending: true)
+        .orderBy('timestampHourStart', descending: true);
+    if (before != null) {
+      query = query.where(
+        'timestampHourStart',
+        isLessThan: Timestamp.fromDate(before),
+      );
+    }
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query
         .limit(limit)
         .get();
 
@@ -75,8 +84,11 @@ class TemperatureHistoryRepository {
     required String siteId,
     required String plcId,
     int limit = 30,
+    String? beforeDateKey,
+    String? fromDateKeyInclusive,
   }) async {
-    final String cacheKey = 'daily|$tenantId|$siteId|$plcId|$limit';
+    final String cacheKey =
+        'daily|$tenantId|$siteId|$plcId|$limit|${beforeDateKey ?? ''}|${fromDateKeyInclusive ?? ''}';
     final _CacheEntry<List<TemperatureDailyPoint>>? cached =
         _dailyCache[cacheKey];
     if (cached != null && !cached.isExpired) {
@@ -93,9 +105,22 @@ class TemperatureHistoryRepository {
     );
     debugPrint('[Firestore] temperature daily history read started path=$path');
 
-    final QuerySnapshot<Map<String, dynamic>> snapshot = await firestore
+    // Etapa 2/2: a two-sided range (fromDateKeyInclusive + beforeDateKey)
+    // scopes the query to exactly one ART calendar month — still a single
+    // ordered range filter on `dateKey`, no composite index needed.
+    Query<Map<String, dynamic>> query = firestore
         .collection(path)
-        .orderBy('dateKey', descending: true)
+        .orderBy('dateKey', descending: true);
+    if (beforeDateKey != null) {
+      query = query.where('dateKey', isLessThan: beforeDateKey);
+    }
+    if (fromDateKeyInclusive != null) {
+      query = query.where(
+        'dateKey',
+        isGreaterThanOrEqualTo: fromDateKeyInclusive,
+      );
+    }
+    final QuerySnapshot<Map<String, dynamic>> snapshot = await query
         .limit(limit)
         .get();
 

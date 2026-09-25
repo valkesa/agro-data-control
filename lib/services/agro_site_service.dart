@@ -238,7 +238,7 @@ Map<String, Object?> buildAgroSiteUpdatePayload({
     'name': name,
     'description': description,
     'enabled': enabled,
-    if (provisioningStatus != null) 'provisioningStatus': provisioningStatus,
+    'provisioningStatus': ?provisioningStatus,
     'updatedAt': FieldValue.serverTimestamp(),
   };
 }

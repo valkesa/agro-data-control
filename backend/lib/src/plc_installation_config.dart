@@ -1,3 +1,5 @@
+import 'operational_alert_topology.dart';
+
 class PlcInstallationConfig {
   PlcInstallationConfig({
     required this.backendName,
@@ -13,6 +15,7 @@ class PlcInstallationConfig {
     required this.units,
     required this.temperatureHistories,
     required this.differentialPressureHistories,
+    required this.deviceEnvironmentHistories,
     required this.doorOpenings,
     required this.runtimeEvents,
     this.routerHost,
@@ -69,6 +72,14 @@ class PlcInstallationConfig {
         fallbackSiteId: fallbackSiteId,
         temperatureHistories: temperatureHistories,
       ),
+      deviceEnvironmentHistories: _parseDeviceEnvironmentHistories(
+        json,
+        fallbackTenantId: fallbackTenantId,
+        fallbackSiteId: fallbackSiteId,
+        fallbackPlcId: fallbackPlcId,
+        fallbackSourceUnitKey: defaultSourceUnitKey,
+        unitAliases: unitAliases,
+      ),
       doorOpenings: DoorOpeningsConfig.fromJson(
         json['doorOpenings'] as Map<String, dynamic>?,
         fallbackTenantId: fallbackTenantId,
@@ -100,6 +111,7 @@ class PlcInstallationConfig {
   final Map<String, UnitConfig> units;
   final List<TemperatureHistoryConfig> temperatureHistories;
   final List<DifferentialPressureHistoryConfig> differentialPressureHistories;
+  final List<DeviceEnvironmentHistoryConfig> deviceEnvironmentHistories;
   final DoorOpeningsConfig doorOpenings;
   final RuntimeEventsConfig runtimeEvents;
   final String? routerHost;
@@ -247,6 +259,79 @@ class TemperatureHistoryConfig {
   final String firestoreServiceAccountPath;
 }
 
+/// Prompt_Historicos_Temperatura_Humedad_por_Device — one entry per real
+/// Device (`tenants/{tenantId}/devices/{deviceId}`, the modern schema, never
+/// the legacy `sites/{siteId}/plcs/{plcId}` path). Unlike
+/// [TemperatureHistoryConfig] (which writes under the legacy `plcId` path
+/// and only tracks temperature), this identifies a Device by its real
+/// `deviceId` and tracks temperature *and* humidity together in the same
+/// hourly/daily documents — see `device_environment_history_service.dart`.
+class DeviceEnvironmentHistoryConfig {
+  DeviceEnvironmentHistoryConfig({
+    required this.enabled,
+    required this.temperatureSourcePath,
+    required this.humiditySourcePath,
+    required this.tenantId,
+    required this.siteId,
+    required this.deviceId,
+    required this.firestoreProjectId,
+    required this.firestoreDatabaseId,
+    required this.firestoreServiceAccountPath,
+    required this.checkpointDirectoryPath,
+  });
+
+  factory DeviceEnvironmentHistoryConfig.fromJson(
+    Map<String, dynamic>? json, {
+    required String fallbackTenantId,
+    required String fallbackSiteId,
+    required String fallbackDeviceId,
+    required String fallbackSourceUnitKey,
+  }) {
+    return DeviceEnvironmentHistoryConfig(
+      enabled: json?['enabled'] as bool? ?? true,
+      temperatureSourcePath:
+          json?['temperatureSource'] as String? ??
+          '$fallbackSourceUnitKey.tempInterior',
+      humiditySourcePath:
+          json?['humiditySource'] as String? ??
+          '$fallbackSourceUnitKey.humInterior',
+      tenantId:
+          _sanitizeSegment(
+            (json?['tenantId'] ?? json?['clientId']) as String?,
+          ) ??
+          fallbackTenantId,
+      siteId: _sanitizeSegment(json?['siteId'] as String?) ?? fallbackSiteId,
+      deviceId:
+          _sanitizeSegment(json?['deviceId'] as String?) ?? fallbackDeviceId,
+      firestoreProjectId: json?['firestoreProjectId'] as String?,
+      firestoreDatabaseId:
+          json?['firestoreDatabaseId'] as String? ?? '(default)',
+      firestoreServiceAccountPath:
+          json?['firestoreServiceAccountPath'] as String? ?? '',
+      checkpointDirectoryPath:
+          json?['checkpointDirectoryPath'] as String? ?? '',
+    );
+  }
+
+  final bool enabled;
+  final String temperatureSourcePath;
+  final String humiditySourcePath;
+  final String tenantId;
+  final String siteId;
+  final String deviceId;
+  final String? firestoreProjectId;
+  final String firestoreDatabaseId;
+
+  /// Ruta al archivo JSON del Service Account de Google.
+  final String firestoreServiceAccountPath;
+
+  /// Directorio local donde persistir el checkpoint de la hora en curso
+  /// (§9 — sobrevivir a reinicios sin perder toda una hora). Vacío por
+  /// defecto: en ese caso el servicio no hace checkpoint y se comporta como
+  /// [TemperatureHistoryService] hoy (acumulador puramente en memoria).
+  final String checkpointDirectoryPath;
+}
+
 class DoorOpeningsConfig {
   DoorOpeningsConfig({
     required this.enabled,
@@ -329,6 +414,7 @@ class RuntimeEventsConfig {
     required this.firestoreDatabaseId,
     required this.firestoreServiceAccountPath,
     required this.hbGapThresholdMs,
+    this.topologyMode = AlertTopologyMode.legacy,
   });
 
   factory RuntimeEventsConfig.fromJson(
@@ -366,6 +452,7 @@ class RuntimeEventsConfig {
           json?['firestoreServiceAccountPath'] as String? ?? '',
       hbGapThresholdMs:
           json?['hbGapThresholdMs'] as int? ?? defaultGapThresholdMs,
+      topologyMode: AlertTopologyMode.fromWireName(json?['topologyMode']),
     );
   }
 
@@ -379,6 +466,7 @@ class RuntimeEventsConfig {
   // Firestore document is created (gap marker). Otherwise the previous doc is
   // overwritten in-place (deduplication). Defaults to 3 × pollingIntervalMs.
   final int hbGapThresholdMs;
+  final AlertTopologyMode topologyMode;
 
   /// Ruta al archivo JSON del Service Account de Google.
   final String firestoreServiceAccountPath;
@@ -577,6 +665,49 @@ List<TemperatureHistoryConfig> _parseTemperatureHistories(
       fallbackTenantId: fallbackTenantId,
       fallbackSiteId: fallbackSiteId,
       fallbackPlcId: fallbackPlcId,
+      fallbackSourceUnitKey: fallbackSourceUnitKey,
+    ),
+  ];
+}
+
+List<DeviceEnvironmentHistoryConfig> _parseDeviceEnvironmentHistories(
+  Map<String, dynamic> json, {
+  required String fallbackTenantId,
+  required String fallbackSiteId,
+  required String fallbackPlcId,
+  required String fallbackSourceUnitKey,
+  required Map<String, List<String>> unitAliases,
+}) {
+  // Prefer the modern `deviceId` a unit already aliases to (e.g.
+  // `munters1` -> `plc-genetica-sala1`) over the legacy `plcId` slug — this
+  // is the real `tenants/{tenantId}/devices/{deviceId}` identity, never the
+  // legacy `sites/{siteId}/plcs/{plcId}` one (§6/§7).
+  final List<String>? aliasesForUnit = unitAliases[fallbackSourceUnitKey];
+  final String fallbackDeviceId =
+      (aliasesForUnit != null && aliasesForUnit.isNotEmpty)
+      ? aliasesForUnit.first
+      : fallbackPlcId;
+
+  final Object? list = json['deviceEnvironmentHistories'];
+  if (list is List && list.isNotEmpty) {
+    return list
+        .map(
+          (Object? e) => DeviceEnvironmentHistoryConfig.fromJson(
+            e as Map<String, dynamic>?,
+            fallbackTenantId: fallbackTenantId,
+            fallbackSiteId: fallbackSiteId,
+            fallbackDeviceId: fallbackDeviceId,
+            fallbackSourceUnitKey: fallbackSourceUnitKey,
+          ),
+        )
+        .toList();
+  }
+  return <DeviceEnvironmentHistoryConfig>[
+    DeviceEnvironmentHistoryConfig.fromJson(
+      json['deviceEnvironmentHistory'] as Map<String, dynamic>?,
+      fallbackTenantId: fallbackTenantId,
+      fallbackSiteId: fallbackSiteId,
+      fallbackDeviceId: fallbackDeviceId,
       fallbackSourceUnitKey: fallbackSourceUnitKey,
     ),
   ];

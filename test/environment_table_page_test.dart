@@ -582,7 +582,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const Key('device-table-section-Arco de desinfección')),
+        find.byKey(const Key('device-table-section-Arco Desinfección')),
         findsOneWidget,
       );
       expect(find.text('Sala1'), findsOneWidget);
@@ -595,7 +595,7 @@ void main() {
         findsNothing,
       );
       expect(
-        find.byKey(const Key('device-table-section-Arco de desinfección')),
+        find.byKey(const Key('device-table-section-Arco Desinfección')),
         findsNothing,
       );
       expect(find.text('Munters 1'), findsOneWidget);

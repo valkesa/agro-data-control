@@ -33,10 +33,13 @@ void _testApplyUnitAliasesProjectsSourceOntoAlias() {
     'munters1': <String, Object?>{'tempInterior': 21.5, 'plcOnline': true},
     'munters2': <String, Object?>{'tempInterior': 19.0, 'plcOnline': false},
   };
-  final Map<String, Object?> result = applyUnitAliases(unitsJson, <String, List<String>>{
-    'munters1': <String>['plc-genetica-sala1'],
-    'munters2': <String>['plc-genetica-sala2'],
-  });
+  final Map<String, Object?> result = applyUnitAliases(
+    unitsJson,
+    <String, List<String>>{
+      'munters1': <String>['plc-genetica-sala1'],
+      'munters2': <String>['plc-genetica-sala2'],
+    },
+  );
 
   _expect(
     result.length == 4,
@@ -79,9 +82,12 @@ void _testApplyUnitAliasesSkipsMissingSourceKey() {
   final Map<String, Object?> unitsJson = <String, Object?>{
     'munters1': <String, Object?>{'tempInterior': 21.5},
   };
-  final Map<String, Object?> result = applyUnitAliases(unitsJson, <String, List<String>>{
-    'munters-never-configured': <String>['plc-genetica-laboratorio'],
-  });
+  final Map<String, Object?> result = applyUnitAliases(
+    unitsJson,
+    <String, List<String>>{
+      'munters-never-configured': <String>['plc-genetica-laboratorio'],
+    },
+  );
   _expect(
     !result.containsKey('plc-genetica-laboratorio'),
     'an alias whose source key is absent from unitsJson must not fabricate '
@@ -94,9 +100,12 @@ void _testApplyUnitAliasesSkipsMissingSourceKey() {
 void _testApplyUnitAliasesProducesIndependentCopies() {
   final Map<String, Object?> source = <String, Object?>{'tempInterior': 21.5};
   final Map<String, Object?> unitsJson = <String, Object?>{'munters1': source};
-  final Map<String, Object?> result = applyUnitAliases(unitsJson, <String, List<String>>{
-    'munters1': <String>['plc-genetica-sala1'],
-  });
+  final Map<String, Object?> result = applyUnitAliases(
+    unitsJson,
+    <String, List<String>>{
+      'munters1': <String>['plc-genetica-sala1'],
+    },
+  );
   _expect(
     !identical(result['plc-genetica-sala1'], source),
     'alias must be a distinct Map instance, not the same reference as the '
@@ -265,6 +274,7 @@ Future<void> _testEndToEndAliasNeverReachesDoorOpeningsUnitKeys() async {
       units: config.units,
       temperatureHistories: config.temperatureHistories,
       differentialPressureHistories: config.differentialPressureHistories,
+      deviceEnvironmentHistories: config.deviceEnvironmentHistories,
       doorOpenings: DoorOpeningsConfig(
         enabled: true,
         tenantId: 'test-tenant',
@@ -378,6 +388,7 @@ PlcInstallationConfig _buildConfig(
       ),
     ],
     differentialPressureHistories: const <DifferentialPressureHistoryConfig>[],
+    deviceEnvironmentHistories: const <DeviceEnvironmentHistoryConfig>[],
     doorOpenings: DoorOpeningsConfig(
       enabled: false,
       tenantId: 'test-tenant',

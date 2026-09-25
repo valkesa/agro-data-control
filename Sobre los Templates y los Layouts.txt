@@ -1,0 +1,20 @@
+LayoutTemplate
+6x1 / 6x2 / 6x3 / 6x4 / 8x4...
+→ geometría solamente
+
+
+DeviceMetricCatalog
+Temperatura / HR / Fan / puertas...
+→ qué puede mostrar ese Device
+
+
+BoardPreset
+"Maternidad estándar"
+"Sala clima estándar"
+"Arco estándar"
+→ configuración reutilizable para arrancar
+
+
+DeviceBoardLayout
+Sala1 de The Gene Pig
+→ configuración real y editable de ese Device

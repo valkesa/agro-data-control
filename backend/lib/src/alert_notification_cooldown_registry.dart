@@ -37,13 +37,13 @@ class AlertNotificationCooldownKey {
 }
 
 class AlertNotificationCooldownRegistry {
-  final Map<AlertNotificationCooldownKey, DateTime> _lastSentAt =
-      <AlertNotificationCooldownKey, DateTime>{};
+  final Map<AlertNotificationCooldownKey, _CooldownEntry> _entries =
+      <AlertNotificationCooldownKey, _CooldownEntry>{};
 
-  int get size => _lastSentAt.length;
+  int get size => _entries.length;
 
   DateTime? lastSentAt(AlertInstanceKey key) {
-    return _lastSentAt[AlertNotificationCooldownKey.fromAlertKey(key)];
+    return _entries[AlertNotificationCooldownKey.fromAlertKey(key)]?.at;
   }
 
   bool canSend({
@@ -51,20 +51,49 @@ class AlertNotificationCooldownRegistry {
     required DateTime now,
     required Duration cooldown,
   }) {
-    final DateTime? previous =
-        _lastSentAt[AlertNotificationCooldownKey.fromAlertKey(key)];
+    final _CooldownEntry? previous =
+        _entries[AlertNotificationCooldownKey.fromAlertKey(key)];
     if (previous == null) {
       return true;
     }
-    return !now.difference(previous).isNegative &&
-        now.difference(previous) >= cooldown;
+    return !now.difference(previous.at).isNegative &&
+        now.difference(previous.at) >= cooldown;
+  }
+
+  void markPending({
+    required AlertInstanceKey key,
+    required DateTime queuedAt,
+  }) {
+    _entries[AlertNotificationCooldownKey.fromAlertKey(key)] = _CooldownEntry(
+      at: queuedAt.toUtc(),
+      confirmedSent: false,
+    );
   }
 
   void markSent({required AlertInstanceKey key, required DateTime sentAt}) {
-    _lastSentAt[AlertNotificationCooldownKey.fromAlertKey(key)] = sentAt;
+    _entries[AlertNotificationCooldownKey.fromAlertKey(key)] = _CooldownEntry(
+      at: sentAt.toUtc(),
+      confirmedSent: true,
+    );
+  }
+
+  void releasePending(AlertInstanceKey key) {
+    final AlertNotificationCooldownKey cooldownKey =
+        AlertNotificationCooldownKey.fromAlertKey(key);
+    final _CooldownEntry? entry = _entries[cooldownKey];
+    if (entry != null && !entry.confirmedSent) {
+      _entries.remove(cooldownKey);
+    }
   }
 
   void clearAll() {
-    _lastSentAt.clear();
+    _entries.clear();
   }
+}
+
+class _CooldownEntry {
+  const _CooldownEntry({required this.at, required this.confirmedSent});
+
+  final DateTime at;
+  final bool confirmedSent;
 }

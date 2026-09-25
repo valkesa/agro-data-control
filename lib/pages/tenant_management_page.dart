@@ -14,6 +14,7 @@ import '../services/agro_site_service.dart';
 import '../services/agro_tenant_service.dart';
 import '../services/firestore_error_messages.dart';
 import '../services/structural_id_helpers.dart';
+import 'device_board_config_page.dart';
 
 /// Status filter for the tenant list — operates purely in memory over the
 /// already-fetched list, never triggers another Firestore read.
@@ -1581,6 +1582,22 @@ class _DeviceTileState extends State<_DeviceTile> {
                 padding: EdgeInsets.only(right: 6),
                 child: _Badge(label: 'Deshabilitado', color: Color(0xFF6B7280)),
               ),
+            IconButton(
+              key: const ValueKey('device-tile-board-config'),
+              tooltip: 'Configuración de Board',
+              iconSize: 18,
+              visualDensity: VisualDensity.compact,
+              onPressed: () => Navigator.of(context).push<void>(
+                MaterialPageRoute(
+                  builder: (context) => DeviceBoardConfigPage(
+                    isOwner: true,
+                    tenantId: widget.tenantId,
+                    device: device,
+                  ),
+                ),
+              ),
+              icon: const Icon(Icons.dashboard_customize_outlined),
+            ),
             IconButton(
               tooltip: 'Editar device',
               iconSize: 18,

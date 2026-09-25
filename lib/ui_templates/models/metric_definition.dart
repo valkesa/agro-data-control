@@ -73,6 +73,43 @@ class MetricDefinition {
   final MetricTransform transform;
   final MetricStatusBehavior statusBehavior;
 
+  /// N6.5 admin editor convenience — reconstructs through the validating
+  /// constructor, so an edited field can never bypass it. `shortLabel`/
+  /// `valueLabelSourceField` use a sentinel default (never a real value in
+  /// this codebase) so `null` can mean "clear the field" instead of always
+  /// meaning "keep the current one".
+  static const _unset = Object();
+
+  MetricDefinition copyWith({
+    String? key,
+    String? label,
+    Object? shortLabel = _unset,
+    String? unit,
+    String? icon,
+    String? sourceField,
+    Object? valueLabelSourceField = _unset,
+    MetricDisplayType? displayType,
+    int? decimals,
+    MetricTransform? transform,
+    MetricStatusBehavior? statusBehavior,
+  }) => MetricDefinition(
+    key: key ?? this.key,
+    label: label ?? this.label,
+    shortLabel: identical(shortLabel, _unset)
+        ? this.shortLabel
+        : shortLabel as String?,
+    unit: unit ?? this.unit,
+    icon: icon ?? this.icon,
+    sourceField: sourceField ?? this.sourceField,
+    valueLabelSourceField: identical(valueLabelSourceField, _unset)
+        ? this.valueLabelSourceField
+        : valueLabelSourceField as String?,
+    displayType: displayType ?? this.displayType,
+    decimals: decimals ?? this.decimals,
+    transform: transform ?? this.transform,
+    statusBehavior: statusBehavior ?? this.statusBehavior,
+  );
+
   Map<String, Object?> toMap() {
     return <String, Object?>{
       'key': key,

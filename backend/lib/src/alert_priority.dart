@@ -55,7 +55,7 @@ class AlertMetadataRegistry {
       code: 'sensor_failure',
       order: 3,
       severity: AlertSeverity.critical,
-      defaultLabel: 'Falla sensor',
+      defaultLabel: 'Falla sensor Temp. Interior',
     ),
     AlertMetadata(
       type: AlertType.temperatureInterior,
@@ -90,7 +90,7 @@ class AlertMetadataRegistry {
       code: 'high_humidity',
       order: 8,
       severity: AlertSeverity.medium,
-      defaultLabel: 'Humedad interior alta',
+      defaultLabel: 'Humedad interior',
     ),
     AlertMetadata(
       type: AlertType.dewPointRisk,

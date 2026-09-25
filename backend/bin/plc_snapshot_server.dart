@@ -4,11 +4,15 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:agro_data_control_backend/src/alert_runtime.dart';
+import 'package:agro_data_control_backend/src/alert_models.dart';
+import 'package:agro_data_control_backend/src/alert_recipient_validation.dart';
 import 'package:agro_data_control_backend/src/alert_settings_cache.dart';
 import 'package:agro_data_control_backend/src/alert_notifications.dart';
 import 'package:agro_data_control_backend/src/firebase_custom_claims_service.dart';
+import 'package:agro_data_control_backend/src/hierarchical_alert_recipients.dart';
 import 'package:agro_data_control_backend/src/firebase_request_auth.dart';
 import 'package:agro_data_control_backend/src/firestore_alert_settings_loader.dart';
+import 'package:agro_data_control_backend/src/operational_alert_topology.dart';
 import 'package:agro_data_control_backend/src/plc_installation_config.dart';
 import 'package:agro_data_control_backend/src/presence_registry.dart';
 import 'package:agro_data_control_backend/src/room_wash_authorization.dart';
@@ -41,20 +45,95 @@ Future<void> main(List<String> args) async {
     ),
   );
   final WhatsAppService whatsAppService = WhatsAppService();
+  final OperationalTopologyCache topologyCache = OperationalTopologyCache(
+    tenantId: config.runtimeEvents.tenantId,
+    siteId: config.runtimeEvents.siteId,
+    mode: config.runtimeEvents.topologyMode,
+    loader: FirestoreOperationalTopologyLoader(
+      projectId:
+          config.runtimeEvents.firestoreProjectId ??
+          Platform.environment['FIRESTORE_PROJECT_ID'] ??
+          '',
+      databaseId: config.runtimeEvents.firestoreDatabaseId,
+      serviceAccountJsonPath: config.runtimeEvents.firestoreServiceAccountPath,
+    ),
+  );
+  unawaited(topologyCache.refresh());
   const WhatsAppAlertRecipientsConfig alertRecipientsConfig =
       WhatsAppAlertRecipientsConfig();
-  final NotificationBatchManager notificationBatchManager =
-      NotificationBatchManager(
-        processor: AlertNotificationProcessor(
-          recipientsConfig: alertRecipientsConfig,
-          sender: AlertNotificationSender(whatsAppService: whatsAppService),
-          clientName: config.clientName,
-          siteName: config.siteName,
-          builder: NotificationBatchBuilder(
-            templateBuilder: WhatsAppTemplateBuilder.fromEnvironment(),
+
+  // Etapa B6.3 — modo de resolución de recipients (legacy por default,
+  // nunca activado a ciegas). `ALERT_RECIPIENT_VALIDATE_TENANT`, si está
+  // seteada, exige coincidencia exacta con el tenant real de este proceso
+  // antes de permitir `validate`/`hierarchical` — así un valor incorrecto
+  // de `ALERT_RECIPIENT_MODE` en el service file de otro tenant (p.ej. La
+  // Payana) no puede activar nada por accidente.
+  final AlertRecipientModeConfig recipientModeConfig =
+      AlertRecipientModeConfig.fromEnvironment();
+  final String effectiveRecipientMode = recipientModeConfig.effectiveModeFor(
+    config.runtimeEvents.tenantId,
+  );
+  final AlertRecipientValidationTracker recipientValidationTracker =
+      AlertRecipientValidationTracker();
+  final AlertRecipientProvider alertRecipientProvider =
+      effectiveRecipientMode == 'legacy'
+      ? LegacyAlertRecipientProvider(recipientsConfig: alertRecipientsConfig)
+      : HierarchicalAlertRecipientProvider(
+          mode: effectiveRecipientMode == 'validate'
+              ? AlertRecipientProviderMode.validate
+              : AlertRecipientProviderMode.hierarchical,
+          legacyConfig: alertRecipientsConfig,
+          cache: HierarchicalAlertRecipientsCache(
+            loader: FirestoreHierarchicalAlertRecipientLoader(
+              projectId:
+                  config.runtimeEvents.firestoreProjectId ??
+                  Platform.environment['FIRESTORE_PROJECT_ID'] ??
+                  '',
+              databaseId: config.runtimeEvents.firestoreDatabaseId,
+              serviceAccountJsonPath:
+                  config.runtimeEvents.firestoreServiceAccountPath,
+            ),
           ),
-        ),
-      );
+          validationTracker: recipientValidationTracker,
+        );
+  _logHttp(
+    'alert recipient provider mode=$effectiveRecipientMode requested=${recipientModeConfig.requestedMode} '
+    'validateTenant=${recipientModeConfig.validateTenantId ?? ''} tenantId=${config.runtimeEvents.tenantId}',
+  );
+
+  final NotificationBatchManager
+  notificationBatchManager = NotificationBatchManager(
+    processor: AlertNotificationProcessor(
+      recipientsConfig: alertRecipientsConfig,
+      recipientProvider: alertRecipientProvider,
+      sender: AlertNotificationSender(whatsAppService: whatsAppService),
+      clientName: config.clientName,
+      siteName: config.siteName,
+      builder: NotificationBatchBuilder(
+        templateBuilder: WhatsAppTemplateBuilder.fromEnvironment(),
+      ),
+    ),
+    onProcessed:
+        (PendingNotificationBatch batch, NotificationBatchSendResult result) {
+          if (result.successCount > 0) {
+            for (final EvaluatedAlert alert in batch.alerts) {
+              alertRuntime.notificationCooldownRegistry.markSent(
+                key: alert.key,
+                sentAt: result.sentAt,
+              );
+            }
+            return;
+          }
+          for (final EvaluatedAlert alert in batch.alerts) {
+            alertRuntime.notificationCooldownRegistry.releasePending(alert.key);
+          }
+        },
+    onFailed: (PendingNotificationBatch batch, Object error) {
+      for (final EvaluatedAlert alert in batch.alerts) {
+        alertRuntime.notificationCooldownRegistry.releasePending(alert.key);
+      }
+    },
+  );
   final AlertProcessingCoordinator alertProcessingCoordinator =
       AlertProcessingCoordinator(
         tenantId: config.runtimeEvents.tenantId,
@@ -126,6 +205,9 @@ Future<void> main(List<String> args) async {
       presenceRegistry,
       alertRuntime,
       customClaimsService,
+      topologyCache,
+      recipientValidationTracker,
+      effectiveRecipientMode,
     );
   }
 
@@ -154,6 +236,9 @@ Future<void> _handleRequest(
   PresenceRegistry presenceRegistry,
   AlertRuntime alertRuntime,
   FirebaseCustomClaimsService customClaimsService,
+  OperationalTopologyCache topologyCache,
+  AlertRecipientValidationTracker recipientValidationTracker,
+  String effectiveRecipientMode,
 ) async {
   final Stopwatch stopwatch = Stopwatch()..start();
   final String path = request.uri.path;
@@ -172,6 +257,9 @@ Future<void> _handleRequest(
       presenceRegistry,
       alertRuntime,
       customClaimsService,
+      topologyCache,
+      recipientValidationTracker,
+      effectiveRecipientMode,
     ).timeout(_httpHandlerTimeout);
   } on TimeoutException catch (error, stackTrace) {
     _logHttp('timeout path=$path operation=request_handler error=$error');
@@ -209,6 +297,9 @@ Future<void> _handleRequestInternal(
   PresenceRegistry presenceRegistry,
   AlertRuntime alertRuntime,
   FirebaseCustomClaimsService customClaimsService,
+  OperationalTopologyCache topologyCache,
+  AlertRecipientValidationTracker recipientValidationTracker,
+  String effectiveRecipientMode,
 ) async {
   _writeCorsHeaders(request.response);
 
@@ -286,7 +377,14 @@ Future<void> _handleRequestInternal(
   }
 
   if (request.method == 'GET' && path == '/health') {
-    final Map<String, Object?> health = runtime.healthJson();
+    final Map<String, Object?> health = Map<String, Object?>.from(
+      runtime.healthJson(),
+    );
+    health['alertTopology'] = topologyCache.healthJson();
+    health['alertRecipientsValidation'] = recipientValidationTracker.healthJson(
+      mode: effectiveRecipientMode,
+      tenantId: runtime.config.runtimeEvents.tenantId,
+    );
     await _writeJson(
       request.response,
       health,
@@ -340,6 +438,15 @@ Future<void> _handleRequestInternal(
     return;
   }
 
+  if (request.method == 'POST' && _isAlertTopologyRefreshPath(path)) {
+    await _handleAlertTopologyRefreshRequest(
+      request,
+      authService,
+      topologyCache,
+    );
+    return;
+  }
+
   if (request.method == 'PUT' && _isAlertSettingsCachePath(path)) {
     await _handleAlertSettingsCacheRequest(request, authService, alertRuntime);
     return;
@@ -378,6 +485,11 @@ bool _isOperationalEventPath(String path) {
 bool _isAlertSettingsCachePath(String path) {
   return path == '/api/alerts/settings-cache' ||
       path == '/alerts/settings-cache';
+}
+
+bool _isAlertTopologyRefreshPath(String path) {
+  return path == '/api/alerts/topology-cache/refresh' ||
+      path == '/alerts/topology-cache/refresh';
 }
 
 bool _isRoomWashCachePath(String path) {
@@ -423,10 +535,10 @@ Future<void> _handleAlertSettingsCacheRequest(
     }, statusCode: error.statusCode);
     return;
   }
-  if (user.role != 'owner' && user.role != 'admin') {
+  if (user.role != 'owner' && user.role != 'tenant_admin') {
     await _writeJson(request.response, <String, Object?>{
       'ok': false,
-      'error': 'Forbidden: owner or admin role required',
+      'error': 'Forbidden: owner or tenant_admin role required',
     }, statusCode: HttpStatus.forbidden);
     return;
   }
@@ -481,6 +593,41 @@ Future<void> _handleAlertSettingsCacheRequest(
     'siteId': siteId,
     'source': cached.source,
     'loadedAt': cached.loadedAt.toIso8601String(),
+  });
+}
+
+Future<void> _handleAlertTopologyRefreshRequest(
+  HttpRequest request,
+  FirebaseRequestAuthService authService,
+  OperationalTopologyCache topologyCache,
+) async {
+  AuthenticatedBackendUser requester;
+  try {
+    requester = await authService.requireOwnerOrAdmin(request);
+  } on BackendAuthException catch (error) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': error.message,
+      'details': error.details?.toString() ?? 'auth_failed',
+    }, statusCode: error.statusCode);
+    return;
+  }
+  if (!canRefreshAlertTopology(requester.role)) {
+    await _writeJson(request.response, <String, Object?>{
+      'ok': false,
+      'error': 'Forbidden: owner role required',
+    }, statusCode: HttpStatus.forbidden);
+    return;
+  }
+
+  final OperationalAlertTopology topology = await topologyCache.refresh();
+  _logHttp(
+    'alert topology refresh requested uid=${requester.uid} tenant=${topology.tenantId} site=${topology.siteId} source=${topologyCache.activeSource.name}',
+  );
+  await _writeJson(request.response, <String, Object?>{
+    'ok': true,
+    'success': true,
+    'alertTopology': topologyCache.healthJson(),
   });
 }
 

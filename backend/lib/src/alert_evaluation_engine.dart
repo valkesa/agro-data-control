@@ -371,6 +371,12 @@ class HighDifferentialPressureEvaluator extends AlertEvaluator {
   }
 }
 
+/// "Humedad interior" — cubre ambos sentidos (baja y alta), igual patrón
+/// que `TemperatureInteriorEvaluator`. Antes de 2026-09-08 solo evaluaba el
+/// lado alto (`humidityRedMinExclusive`); el lado bajo
+/// (`humidityInteriorMin`, ya guardado en Firestore desde siempre pero
+/// nunca leído por ningún evaluador) no disparaba nada. Pedido explícito
+/// del usuario: agregar la alerta real de humedad baja usando ese valor.
 class HighHumidityEvaluator extends AlertEvaluator {
   const HighHumidityEvaluator();
 
@@ -381,30 +387,47 @@ class HighHumidityEvaluator extends AlertEvaluator {
   EvaluatedAlert? evaluate(AlertEvaluationContext context) {
     final CachedAlertToggle toggle = context.settings.alerts.highHumidity;
     final double? rawHumidity = _finiteDouble(context.snapshot['humInterior']);
-    final double? redMinExclusive = context.thresholds.humidityRedMinExclusive;
-    if (!toggle.enabled ||
-        rawHumidity == null ||
-        redMinExclusive == null ||
-        !redMinExclusive.isFinite) {
+    if (!toggle.enabled || rawHumidity == null) {
       return null;
     }
     final double humidity = rawHumidity.clamp(0, 100).toDouble();
     final bool withinWashWindow = context.roomWashStatus.withinWashWindow;
-    if (withinWashWindow || humidity <= redMinExclusive) {
+    if (withinWashWindow) {
       return null;
     }
-    return EvaluatedAlert(
-      key: context.identity.key(type),
-      type: type,
-      isActive: true,
-      sendWhatsapp: toggle.sendWhatsapp,
-      measuredValue: humidity,
-      thresholdValue: redMinExclusive,
-      thresholdKind: AlertThresholdKind.maximum,
-      unit: '%',
-      evaluatedAt: context.evaluatedAt,
-      configVersion: context.settings.configVersion,
-    );
+    final double? minimum = context.thresholds.humidityInteriorMin;
+    if (minimum != null && minimum.isFinite && humidity < minimum) {
+      return EvaluatedAlert(
+        key: context.identity.key(type),
+        type: type,
+        isActive: true,
+        sendWhatsapp: toggle.sendWhatsapp,
+        measuredValue: humidity,
+        thresholdValue: minimum,
+        thresholdKind: AlertThresholdKind.minimum,
+        unit: '%',
+        evaluatedAt: context.evaluatedAt,
+        configVersion: context.settings.configVersion,
+      );
+    }
+    final double? redMinExclusive = context.thresholds.humidityRedMinExclusive;
+    if (redMinExclusive != null &&
+        redMinExclusive.isFinite &&
+        humidity > redMinExclusive) {
+      return EvaluatedAlert(
+        key: context.identity.key(type),
+        type: type,
+        isActive: true,
+        sendWhatsapp: toggle.sendWhatsapp,
+        measuredValue: humidity,
+        thresholdValue: redMinExclusive,
+        thresholdKind: AlertThresholdKind.maximum,
+        unit: '%',
+        evaluatedAt: context.evaluatedAt,
+        configVersion: context.settings.configVersion,
+      );
+    }
+    return null;
   }
 }
 

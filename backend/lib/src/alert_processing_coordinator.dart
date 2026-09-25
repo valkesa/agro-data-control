@@ -168,20 +168,21 @@ class AlertProcessingCoordinator {
     // _doorAlertsReadyForWhatsapp. Every other alert type keeps the original
     // edge-triggered behavior: only a fresh transitionBatch.activated makes
     // it to WhatsApp.
-    final List<EvaluatedAlert> whatsappEligible = <EvaluatedAlert>[
-      ...transitionBatch.activated.where(
-        (EvaluatedAlert alert) =>
-            alert.sendWhatsapp && !_isDoorAlertType(alert.type),
-      ),
-      ..._doorAlertsReadyForWhatsapp(
-        evaluatedAlerts: evaluatedAlerts,
-        evaluatedAt: evaluatedAt,
-        settings: settings,
-      ),
-    ]..sort(
-      (EvaluatedAlert a, EvaluatedAlert b) =>
-          settings!.alerts.compareAlertTypes(a.type, b.type),
-    );
+    final List<EvaluatedAlert> whatsappEligible =
+        <EvaluatedAlert>[
+          ...transitionBatch.activated.where(
+            (EvaluatedAlert alert) =>
+                alert.sendWhatsapp && !_isDoorAlertType(alert.type),
+          ),
+          ..._doorAlertsReadyForWhatsapp(
+            evaluatedAlerts: evaluatedAlerts,
+            evaluatedAt: evaluatedAt,
+            settings: settings,
+          ),
+        ]..sort(
+          (EvaluatedAlert a, EvaluatedAlert b) =>
+              settings!.alerts.compareAlertTypes(a.type, b.type),
+        );
     final List<EvaluatedAlert> whatsAppCandidates = <EvaluatedAlert>[];
     for (final EvaluatedAlert alert in whatsappEligible) {
       final Duration cooldown = runtime.config.cooldownFor(alert.type);
@@ -197,9 +198,9 @@ class AlertProcessingCoordinator {
         );
         continue;
       }
-      runtime.notificationCooldownRegistry.markSent(
+      runtime.notificationCooldownRegistry.markPending(
         key: alert.key,
-        sentAt: evaluatedAt,
+        queuedAt: evaluatedAt,
       );
       whatsAppCandidates.add(alert);
     }

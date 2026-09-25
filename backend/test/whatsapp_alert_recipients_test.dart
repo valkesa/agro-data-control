@@ -119,6 +119,35 @@ void main() {
     'returns configured site recipients without global recipients',
   );
 
+  final List<AlertRecipient> laboratorioRecipients = config.siteRecipientsFor(
+    tenantId: 'the-gene-pig',
+    siteId: 'las-heras',
+  );
+  _expect(
+    laboratorioRecipients.length == 3 &&
+        laboratorioRecipients.any(
+          (AlertRecipient r) =>
+              r.contactName == 'Enzo' && r.normalizedPhone == '5491123040959',
+        ) &&
+        laboratorioRecipients.any(
+          (AlertRecipient r) =>
+              r.contactName == 'Mauro' && r.normalizedPhone == '5492227516703',
+        ) &&
+        laboratorioRecipients.any(
+          (AlertRecipient r) =>
+              r.contactName == 'Nicolás Rivas' &&
+              r.normalizedPhone == '5491169384562',
+        ),
+    'Enzo, Mauro and Nicolás Rivas resolve as the-gene-pig/las-heras site recipients',
+  );
+  _expect(
+    config
+            .recipientsFor(tenantId: 'the-gene-pig', siteId: 'las-heras')
+            .length ==
+        5,
+    'the-gene-pig/las-heras receives 2 global owners plus Enzo, Mauro and Nicolás Rivas',
+  );
+
   final Map<String, Object?> ownerWithoutTenant =
       buildWhatsAppAlertRecipientsResponse(
         recipientsConfig: config,

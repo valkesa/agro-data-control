@@ -935,6 +935,70 @@ void _testHumidityEvaluator() {
     ),
     'humidity at wash window boundary can activate',
   );
+
+  // Humedad interior baja (pedido del usuario 2026-09-08): mismo AlertType
+  // `highHumidity`, ahora cubre ambos sentidos igual que temperatureInterior.
+  _expect(
+    _hasAlert(
+      AlertType.highHumidity,
+      _engineAlerts(
+        settings: _settings(humidityMin: 30),
+        unitJson: _unit(humInterior: 29),
+      ),
+    ),
+    'humidity under humidityInteriorMin activates as minimum',
+  );
+  final EvaluatedAlert lowHumidity = _engineAlerts(
+    settings: _settings(humidityMin: 30),
+    unitJson: _unit(humInterior: 29),
+  ).firstWhere((EvaluatedAlert alert) => alert.type == AlertType.highHumidity);
+  _expect(
+    lowHumidity.thresholdKind == AlertThresholdKind.minimum &&
+        lowHumidity.thresholdValue == 30,
+    'low humidity alert reports minimum threshold kind and value',
+  );
+  _expect(
+    !_hasAlert(
+      AlertType.highHumidity,
+      _engineAlerts(
+        settings: _settings(humidityMin: 30),
+        unitJson: _unit(humInterior: 30),
+      ),
+    ),
+    'humidity equal to humidityInteriorMin does not activate',
+  );
+  _expect(
+    !_hasAlert(
+      AlertType.highHumidity,
+      _engineAlerts(
+        settings: _settings(),
+        unitJson: _unit(humInterior: 5),
+      ),
+    ),
+    'without a configured humidityInteriorMin, low humidity never activates',
+  );
+  _expect(
+    !_hasAlert(
+      AlertType.highHumidity,
+      _engineAlerts(
+        runtime: (() {
+          final AlertRuntime r = _runtimeWithSettings(
+            _settings(humidityMin: 30),
+          );
+          r.roomWashRegistry.registerWash(
+            tenantId: 'tenant-a',
+            siteId: 'site-a',
+            roomId: 'room_1',
+            washedAt: DateTime.utc(2026, 1, 1, 10),
+          );
+          return r;
+        })(),
+        unitJson: _unit(humInterior: 10),
+        evaluatedAt: DateTime.utc(2026, 1, 1, 11, 59),
+      ),
+    ),
+    'low humidity inside wash window does not activate either',
+  );
 }
 
 void _testDewPointEvaluator() {
@@ -1148,6 +1212,7 @@ CachedAlertSettings _settings({
   double tempMin = 15,
   double? munters2TempMin,
   double tempMax = 30,
+  double? humidityMin,
   double humidityRed = 95,
   double dewPointRed = 1,
   double pressureMax = 30,
@@ -1160,6 +1225,7 @@ CachedAlertSettings _settings({
       tempMin: tempMin,
       munters2TempMin: munters2TempMin,
       tempMax: tempMax,
+      humidityMin: humidityMin,
       humidityRed: humidityRed,
       dewPointRed: dewPointRed,
       pressureMax: pressureMax,
@@ -1174,6 +1240,7 @@ Map<String, Object?> _settingsRaw({
   double tempMin = 15,
   double? munters2TempMin,
   double tempMax = 30,
+  double? humidityMin,
   double humidityRed = 95,
   double dewPointRed = 1,
   double pressureMax = 30,
@@ -1193,6 +1260,7 @@ Map<String, Object?> _settingsRaw({
       'munters1': <String, Object?>{
         'tempInterior': <String, Object?>{'min': tempMin, 'max': tempMax},
         'humidityInterior': <String, Object?>{
+          if (humidityMin != null) 'min': humidityMin,
           'alarm': <String, Object?>{'redMinExclusive': humidityRed},
         },
         'dewPointMargin': <String, Object?>{

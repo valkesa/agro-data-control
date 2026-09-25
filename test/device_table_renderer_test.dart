@@ -77,7 +77,7 @@ void main() {
       ]);
 
       expect(
-        find.byKey(const Key('device-table-section-Arco de desinfección')),
+        find.byKey(const Key('device-table-section-Arco Desinfección')),
         findsOneWidget,
       );
       expect(
@@ -87,6 +87,70 @@ void main() {
         findsOneWidget,
       );
     });
+
+    testWidgets(
+      'Arco section title renders the accented name without clipping',
+      (WidgetTester tester) async {
+        await tester.binding.setSurfaceSize(const Size(390, 900));
+        addTearDown(() => tester.binding.setSurfaceSize(null));
+
+        await _pump(tester, <DeviceTableEntry>[
+          DeviceTableEntry(
+            template: getTemplateById('disinfection_arch')!,
+            deviceData: _munters(name: 'Arco Desinfección'),
+            title: 'Arco Desinfección',
+          ),
+        ]);
+
+        final Finder sectionTitle = find.byKey(
+          const Key('device-table-section-title-Arco Desinfección'),
+        );
+        expect(sectionTitle, findsOneWidget);
+        expect(find.bySemanticsLabel('Arco Desinfección'), findsWidgets);
+        expect(find.text('Arco Desinfeccio\u0301n'), findsOneWidget);
+        expect(
+          tester.getSize(sectionTitle).width,
+          greaterThan(140),
+          reason:
+              'El titulo de seccion debe tener ancho de seccion, no quedar '
+              'recortado como si fuera una celda angosta.',
+        );
+      },
+    );
+
+    testWidgets(
+      'Arco section title is normalized even when a remote template has the old label',
+      (WidgetTester tester) async {
+        final DeviceTemplate local = getTemplateById('disinfection_arch')!;
+        final DeviceTemplate remoteOldLabel = DeviceTemplate(
+          id: local.id,
+          name: local.name,
+          boardPreset: local.boardPreset,
+          metrics: local.metrics,
+          indicators: local.indicators,
+          boardSlots: local.boardSlots,
+          tableSection: 'Arco de desinfección',
+          tableColumns: local.tableColumns,
+        );
+
+        await _pump(tester, <DeviceTableEntry>[
+          DeviceTableEntry(
+            template: remoteOldLabel,
+            deviceData: _munters(name: 'Arco Desinfección'),
+            title: 'Arco Desinfección',
+          ),
+        ]);
+
+        expect(
+          find.byKey(const Key('device-table-section-Arco Desinfección')),
+          findsOneWidget,
+        );
+        expect(
+          find.byKey(const Key('device-table-section-Arco de desinfección')),
+          findsNothing,
+        );
+      },
+    );
 
     testWidgets('all three sections coexist with distinct column sets', (
       WidgetTester tester,
@@ -118,7 +182,7 @@ void main() {
         findsOneWidget,
       );
       expect(
-        find.byKey(const Key('device-table-section-Arco de desinfección')),
+        find.byKey(const Key('device-table-section-Arco Desinfección')),
         findsOneWidget,
       );
 
@@ -1002,7 +1066,7 @@ void main() {
           findsOneWidget,
         );
         expect(
-          find.byKey(const Key('device-table-section-Arco de desinfección')),
+          find.byKey(const Key('device-table-section-Arco Desinfección')),
           findsOneWidget,
         );
         expect(find.text('Sala1'), findsOneWidget);
@@ -1050,7 +1114,7 @@ void main() {
           findsNothing,
         );
         expect(
-          find.byKey(const Key('device-table-section-Arco de desinfección')),
+          find.byKey(const Key('device-table-section-Arco Desinfección')),
           findsNothing,
         );
         for (int i = 1; i <= 8; i++) {

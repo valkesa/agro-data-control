@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:agro_data_control_backend/src/door_openings_tracker.dart';
+import 'package:agro_data_control_backend/src/device_environment_history_service.dart';
 import 'package:agro_data_control_backend/src/differential_pressure_history_service.dart';
+import 'package:agro_data_control_backend/src/firestore_device_environment_history_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_differential_pressure_history_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_door_openings_repository.dart';
 import 'package:agro_data_control_backend/src/firestore_runtime_events_repository.dart';
@@ -51,6 +53,17 @@ class SnapshotRuntime {
               ),
         )
         .toList();
+    _deviceEnvironmentHistoryServices = config.deviceEnvironmentHistories
+        .map(
+          (DeviceEnvironmentHistoryConfig historyConfig) =>
+              DeviceEnvironmentHistoryService(
+                config: historyConfig,
+                repository: FirestoreDeviceEnvironmentHistoryRepository(
+                  config: historyConfig,
+                ),
+              ),
+        )
+        .toList();
     final DoorOpeningsConfig doorConfig = config.doorOpenings;
     _doorOpeningsTracker = DoorOpeningsTracker(
       config: doorConfig,
@@ -80,6 +93,8 @@ class SnapshotRuntime {
   late final List<TemperatureHistoryService> _temperatureHistoryServices;
   late final List<DifferentialPressureHistoryService>
   _differentialPressureHistoryServices;
+  late final List<DeviceEnvironmentHistoryService>
+  _deviceEnvironmentHistoryServices;
   late final DoorOpeningsTracker _doorOpeningsTracker;
   late final RuntimeTrackerService _runtimeTrackerService;
 
@@ -108,6 +123,10 @@ class SnapshotRuntime {
     }
     for (final DifferentialPressureHistoryService service
         in _differentialPressureHistoryServices) {
+      await service.dispose();
+    }
+    for (final DeviceEnvironmentHistoryService service
+        in _deviceEnvironmentHistoryServices) {
       await service.dispose();
     }
     await _doorOpeningsTracker.dispose();
@@ -229,6 +248,13 @@ class SnapshotRuntime {
       }
       for (final DifferentialPressureHistoryService service
           in _differentialPressureHistoryServices) {
+        service.handleSnapshot(
+          unitsJson: unitsJson,
+          observedAtUtc: pollStartedAt,
+        );
+      }
+      for (final DeviceEnvironmentHistoryService service
+          in _deviceEnvironmentHistoryServices) {
         service.handleSnapshot(
           unitsJson: unitsJson,
           observedAtUtc: pollStartedAt,

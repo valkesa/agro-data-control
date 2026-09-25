@@ -107,7 +107,7 @@ List<_TableSection> _groupIntoSections(List<DeviceTableEntry> entries) {
   final Map<String, _TableSection> byName = <String, _TableSection>{};
   final List<_TableSection> ordered = <_TableSection>[];
   for (final DeviceTableEntry entry in entries) {
-    final String sectionName = entry.template.tableSection;
+    final String sectionName = _sectionNameForEntry(entry);
     _TableSection? section = byName[sectionName];
     if (section == null) {
       final List<TableColumn> columns =
@@ -135,6 +135,13 @@ List<_TableSection> _groupIntoSections(List<DeviceTableEntry> entries) {
     section.entries.add(entry);
   }
   return ordered;
+}
+
+String _sectionNameForEntry(DeviceTableEntry entry) {
+  if (entry.template.id == 'disinfection_arch') {
+    return 'Arco Desinfección';
+  }
+  return entry.template.tableSection;
 }
 
 class _EntryGroup {
@@ -200,13 +207,13 @@ class _TableSectionView extends StatelessWidget {
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 0, 4, 6),
           child: Text(
-            section.name,
+            _displayTableSectionName(section.name),
             key: Key('device-table-section-title-${section.name}'),
+            semanticsLabel: section.name,
             style: const TextStyle(
               color: Color(0xFFCBD5E1),
               fontSize: 13,
-              fontWeight: FontWeight.w800,
-              letterSpacing: 0.3,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ),
@@ -343,6 +350,14 @@ class _TableSectionView extends StatelessWidget {
       ],
     );
   }
+}
+
+String _displayTableSectionName(String name) {
+  // Flutter Web can drop the precomposed lowercase o-acute glyph in this
+  // small table-section label while the same text renders correctly in
+  // regular data cells. Keep the semantic/business value untouched and only
+  // decompose the visual text so the browser paints the base "o" plus accent.
+  return name.replaceAll('\u00F3', 'o\u0301').replaceAll('\u00D3', 'O\u0301');
 }
 
 class _HeaderCell extends StatelessWidget {

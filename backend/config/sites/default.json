@@ -32,6 +32,32 @@
       "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json"
     }
   ],
+  "deviceEnvironmentHistories": [
+    {
+      "enabled": true,
+      "temperatureSource": "munters1.tempInterior",
+      "humiditySource": "munters1.humInterior",
+      "tenantId": "the-gene-pig",
+      "siteId": "las-heras",
+      "deviceId": "plc-genetica-sala1",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json",
+      "checkpointDirectoryPath": "/srv/agrodata/backend/state"
+    },
+    {
+      "enabled": true,
+      "temperatureSource": "munters2.tempInterior",
+      "humiditySource": "munters2.humInterior",
+      "tenantId": "the-gene-pig",
+      "siteId": "las-heras",
+      "deviceId": "plc-genetica-sala2",
+      "firestoreProjectId": "agro-data-control",
+      "firestoreDatabaseId": "(default)",
+      "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json",
+      "checkpointDirectoryPath": "/srv/agrodata/backend/state"
+    }
+  ],
   "differentialPressureHistories": [
     {
       "enabled": true,
@@ -91,7 +117,7 @@
   "runtimeEvents": {
     "enabled": true,
     "tenantId": "the-gene-pig",
-    "siteId": "genetica-1",
+    "siteId": "las-heras",
     "firestoreProjectId": "agro-data-control",
     "firestoreDatabaseId": "(default)",
     "firestoreServiceAccountPath": "/srv/agrodata/backend/config/service-account.json",

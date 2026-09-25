@@ -194,4 +194,94 @@ class FirestorePaths {
 
   static String deviceTemplateDoc(String templateId) =>
       'deviceTemplates/$templateId';
+
+  // Etapa B5: hierarchical alert configuration/recipients, matching the
+  // backend paths from Etapa B4/B4.5 (`backend/firestore.rules`,
+  // `AlertConfigFirestoreDocument`, `AlertRecipientFirestoreDocument`).
+  // Never write under `/plcs` for these — see Etapa B4 §A.
+  static String tenantAlertConfigCollection(String tenantId) =>
+      'tenants/$tenantId/alertConfig';
+
+  static String siteAlertConfigCollection(String tenantId, String siteId) =>
+      'tenants/$tenantId/sites/$siteId/alertConfig';
+
+  static String deviceAlertConfigCollection(String tenantId, String deviceId) =>
+      'tenants/$tenantId/devices/$deviceId/alertConfig';
+
+  static String roomAlertConfigCollection(
+    String tenantId,
+    String deviceId,
+    String roomId,
+  ) => 'tenants/$tenantId/devices/$deviceId/rooms/$roomId/alertConfig';
+
+  static String tenantAlertRecipientsCollection(String tenantId) =>
+      'tenants/$tenantId/alertRecipients';
+
+  static String siteAlertRecipientsCollection(String tenantId, String siteId) =>
+      'tenants/$tenantId/sites/$siteId/alertRecipients';
+
+  static String deviceAlertRecipientsCollection(
+    String tenantId,
+    String deviceId,
+  ) => 'tenants/$tenantId/devices/$deviceId/alertRecipients';
+
+  static String roomAlertRecipientsCollection(
+    String tenantId,
+    String deviceId,
+    String roomId,
+  ) => 'tenants/$tenantId/devices/$deviceId/rooms/$roomId/alertRecipients';
+
+  // Etapa N7.1: global, not tenant-scoped — same rationale as
+  // `deviceTemplatesCollection` (Etapa 6A): LayoutTemplate/CellLayoutPreset/
+  // CapabilityMetric/CapabilityIndicator/CapabilityProfile/BoardPreset are
+  // reusable design-time configuration shared across every tenant, never
+  // data that varies per tenant. IDs are caller-chosen slugs
+  // (`normalizeStructuralId`), never Firestore auto-IDs — same convention
+  // as every structural collection in this file. Do not nest these under
+  // `/tenants/{tenantId}` — see N7.1 §1/§2.
+  static String layoutTemplatesCollection() => 'layoutTemplates';
+
+  static String layoutTemplateDoc(String templateId) =>
+      'layoutTemplates/$templateId';
+
+  static String cellLayoutPresetsCollection() => 'cellLayoutPresets';
+
+  static String cellLayoutPresetDoc(String presetId) =>
+      'cellLayoutPresets/$presetId';
+
+  static String capabilityMetricsCollection() => 'capabilityMetrics';
+
+  static String capabilityMetricDoc(String metricKey) =>
+      'capabilityMetrics/$metricKey';
+
+  static String capabilityIndicatorsCollection() => 'capabilityIndicators';
+
+  static String capabilityIndicatorDoc(String indicatorKey) =>
+      'capabilityIndicators/$indicatorKey';
+
+  static String capabilityProfilesCollection() => 'capabilityProfiles';
+
+  static String capabilityProfileDoc(String profileId) =>
+      'capabilityProfiles/$profileId';
+
+  // Unlike the other N7.1 global collections above, a BoardPreset can
+  // actually be deleted (N7.1 §10) — never physically deleting is a
+  // deliberate exception in this file, not the default.
+  static String boardPresetsCollection() => 'boardPresets';
+
+  static String boardPresetDoc(String presetId) => 'boardPresets/$presetId';
+
+  // Etapa N7.1 §3/§8/§9: per-Device board configuration — deliberately its
+  // own singleton doc under a `settings`-style subcollection (mirrors
+  // `controlDashboardSettings`/`plcElectricalConsumptionSettings` above),
+  // NOT a new field on `devices/{deviceId}` itself. This keeps every N7.1
+  // write scoped to a brand new path with its own rules block, so the
+  // already-in-production `devices/{deviceId}` document/rules are never
+  // touched by this etapa (N7.1 §18 "no tocar producción legacy todavía").
+  // Holds: capabilityProfileId + the persisted DeviceBoardLayout (schema-2
+  // `BoardContentLayout` shape, including `sourceBoardPresetId`/
+  // `sourceBoardPresetVersion` trazability) as ONE document, so opening
+  // "Configuración de Board" for a Device costs exactly one read (N7.1 §5).
+  static String deviceBoardConfigDoc(String tenantId, String deviceId) =>
+      'tenants/$tenantId/devices/$deviceId/settings/boardConfig';
 }

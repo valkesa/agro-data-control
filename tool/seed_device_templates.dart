@@ -1,3 +1,5 @@
+// ignore_for_file: avoid_print
+//
 // Etapa 6A — seeds the 3 local DeviceTemplates (room_climate,
 // laboratory_basic, disinfection_arch) into Firestore's `deviceTemplates`
 // collection, so DeviceTemplateRegistry has something to load once the app
@@ -214,14 +216,16 @@ Future<void> _putDoc(
   );
   final HttpClientRequest request = await client.openUrl('PATCH', uri);
   request.headers.set('Authorization', 'Bearer $accessToken');
-  request.headers.set('Content-Type', 'application/json');
-  request.write(
-    jsonEncode({
-      'fields': {
-        for (final MapEntry<String, Object?> entry in fields.entries)
-          entry.key: _encodeFirestoreValue(entry.value),
-      },
-    }),
+  request.headers.set('Content-Type', 'application/json; charset=utf-8');
+  request.add(
+    utf8.encode(
+      jsonEncode({
+        'fields': {
+          for (final MapEntry<String, Object?> entry in fields.entries)
+            entry.key: _encodeFirestoreValue(entry.value),
+        },
+      }),
+    ),
   );
   final HttpClientResponse response = await request.close();
   final String body = await response.transform(utf8.decoder).join();

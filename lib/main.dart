@@ -26,11 +26,17 @@ import 'models/plc_unit_diagnostics.dart';
 import 'models/room_wash_event.dart';
 import 'models/unit_visibility_settings.dart';
 import 'models/water_shortage_summary.dart';
+import 'pages/alerts/hierarchical_alert_settings_page.dart';
 import 'pages/comparison_page.dart';
+import 'services/device_environment_history_repository.dart';
 import 'pages/dashboard_page.dart';
 import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
 import 'pages/template_management_page.dart';
+import 'board_presets/board_presets_page.dart';
+import 'board_preview/board_editor_page.dart';
+import 'board_preview/board_preview_page.dart';
+import 'device_capabilities/capability_admin_page.dart';
 import 'pages/tenant_management_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
@@ -481,6 +487,11 @@ class _AgroDataShellState extends State<AgroDataShell> {
       const AgroDeviceRoomService();
   final PressMagnifierController _magnifierController =
       PressMagnifierController();
+  // Shared across TABLERO and Detalle so opening the same Device/granularity
+  // from either surface reuses the same session cache instead of two cold
+  // ones (Prompt_Graficos_Etapa_1_de_2_Mejoras_UI §15).
+  final DeviceEnvironmentHistoryRepository _environmentHistory =
+      DeviceEnvironmentHistoryRepository();
   String _selectedTab = 'environmentOverview';
   DashboardSnapshot _snapshot = DashboardSnapshot.placeholder();
   Timer? _refreshTimer;
@@ -1222,6 +1233,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
         case _SettingsMenuAction.alertSettings:
           await _openAlertSettings();
           continue;
+        case _SettingsMenuAction.hierarchicalAlertSettings:
+          await _openHierarchicalAlertSettings();
+          continue;
         case _SettingsMenuAction.rangeSettings:
           await _openRangeSettings();
           continue;
@@ -1276,6 +1290,55 @@ class _AgroDataShellState extends State<AgroDataShell> {
           ).push(
             MaterialPageRoute(
               builder: (context) => const TenantManagementPage(),
+            ),
+          );
+          await _reloadActiveSiteAfterTenantManagement();
+          continue;
+        case _SettingsMenuAction.boardPreview:
+          if (_userRole != UserAppRole.owner) continue;
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  BoardPreviewPage(isOwner: _userRole == UserAppRole.owner),
+            ),
+          );
+          continue;
+        case _SettingsMenuAction.boardEditor:
+          if (_userRole != UserAppRole.owner) continue;
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  BoardEditorPage(isOwner: _userRole == UserAppRole.owner),
+            ),
+          );
+          continue;
+        case _SettingsMenuAction.boardPresets:
+          if (_userRole != UserAppRole.owner) continue;
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  BoardPresetsPage(isOwner: _userRole == UserAppRole.owner),
+            ),
+          );
+          continue;
+        case _SettingsMenuAction.metricCatalogsAdmin:
+          if (_userRole != UserAppRole.owner) continue;
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (_) =>
+                  CapabilityAdminPage(isOwner: _userRole == UserAppRole.owner),
             ),
           );
           continue;
@@ -1385,6 +1448,33 @@ class _AgroDataShellState extends State<AgroDataShell> {
     }
 
     await _saveAlertSettings(bootstrap: bootstrap, updated: updated);
+  }
+
+  /// Etapa B5 — pantalla real (no diálogo) de configuración jerárquica de
+  /// Alertas. Convive con `_openAlertSettings()` (legacy site-scoped, sin
+  /// tocar — Etapa B5 §31/Restricciones).
+  Future<void> _openHierarchicalAlertSettings() async {
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    if (!mounted) {
+      return;
+    }
+    final String? tenantId = bootstrap.effectiveTenantId;
+    if (tenantId == null) {
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (context) => HierarchicalAlertSettingsPage(
+          currentUserUid: widget.user.uid,
+          userRole: _userRole,
+          initialTenantId: tenantId,
+          initialSiteId: _activeSiteId ?? bootstrap.siteId,
+          editableTenantId: bootstrap.membership.role == UserAppRole.tenantAdmin
+              ? bootstrap.membership.tenantId
+              : null,
+        ),
+      ),
+    );
   }
 
   Future<void> _openFilterSettings() async {
@@ -2142,9 +2232,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   Future<void> _openWhatsAppTest() async {
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     if (!mounted) return;
-    final bool canUse =
-        bootstrap.userContext.role == UserAppRole.owner ||
-        bootstrap.userContext.role == UserAppRole.tenantAdmin;
+    final bool canUse = bootstrap.userContext.role == UserAppRole.owner;
     if (!canUse) return;
 
     await showDialog<void>(
@@ -2421,6 +2509,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
       _configSubscription = null;
       _stopLiveSnapshotPollingForNonOperationalSite();
     }
+  }
+
+  Future<void> _reloadActiveSiteAfterTenantManagement() async {
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _activeSiteId;
+    if (!mounted || tenantId == null || siteId == null || siteId.isEmpty) {
+      return;
+    }
+
+    _agroDeviceService.invalidateCache(tenantId: tenantId, siteId: siteId);
+    _agroDeviceRoomService.invalidateCache(tenantId: tenantId);
+    await _switchSite(siteId);
   }
 
   Future<void> _refreshLiveSnapshot() async {
@@ -3278,6 +3378,14 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             ],
                             labels: [for (final e in entries) e.displayName],
                             plcIds: [for (final _ in entries) null],
+                            // Real Sites/Sectors/Devices id per entry — the
+                            // dynamic-Devices path (this branch) never had a
+                            // legacy plcId to give (see plcIds above), which
+                            // was the root cause of history access working
+                            // from genetica-1 but not from las-heras. See
+                            // EnvironmentOverviewPage.deviceIds and
+                            // Prompt_Fix_Etapa_1_de_2_Accesos_Historicos_en_Las_Heras.
+                            deviceIds: [for (final e in entries) e.device.id],
                             deviceNames: [
                               for (final e in entries) e.device.name,
                             ],
@@ -3298,6 +3406,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             rangeSettings: _rangeSettings,
                             showSnapshotPulse: _showSnapshotPulse,
                             snapshotStale: _snapshotStale,
+                            environmentHistoryRepository: _environmentHistory,
                           );
                         }
                         const DeviceTemplateResolver templateResolver =
@@ -3343,6 +3452,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           rangeSettings: _rangeSettings,
                           showSnapshotPulse: _showSnapshotPulse,
                           snapshotStale: _snapshotStale,
+                          environmentHistoryRepository: _environmentHistory,
                         );
                       }
 
@@ -3506,6 +3616,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                                     templateResolver: templateResolver,
                                   )
                                 : const <CerdasControlEntry>[],
+                            environmentHistoryRepository: _environmentHistory,
                           ),
                         );
                       }
@@ -4463,6 +4574,7 @@ class _StaleSnapshotBanner extends StatelessWidget {
 enum _SettingsMenuAction {
   changePassword,
   alertSettings,
+  hierarchicalAlertSettings,
   rangeSettings,
   filterSettings,
   debugFilterIcons,
@@ -4477,6 +4589,10 @@ enum _SettingsMenuAction {
   manageUsers,
   manageTenants,
   manageTemplates,
+  boardPreview,
+  boardEditor,
+  boardPresets,
+  metricCatalogsAdmin,
   doorOpeningsCleanup,
   rolesHelp,
   rolesCompare,
@@ -4602,6 +4718,24 @@ class _SettingsMenuDialog extends StatelessWidget {
                     FilledButton.tonal(
                       onPressed: () => Navigator.of(
                         context,
+                      ).pop(_SettingsMenuAction.hierarchicalAlertSettings),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.account_tree_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Alertas (jerárquico)'),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
                       ).pop(_SettingsMenuAction.magnifierSettings),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 42),
@@ -4709,8 +4843,7 @@ class _SettingsMenuDialog extends StatelessWidget {
                   ],
                 ],
               ),
-              if (userRole == UserAppRole.owner ||
-                  userRole == UserAppRole.tenantAdmin) ...[
+              if (canAccessTemplatesUi(userRole)) ...[
                 const SizedBox(height: 18),
                 const _SettingsMenuSectionTitle('Notificaciones'),
                 const SizedBox(height: 8),
@@ -4731,6 +4864,9 @@ class _SettingsMenuDialog extends StatelessWidget {
                     ],
                   ),
                 ),
+              ],
+              if (userRole == UserAppRole.owner ||
+                  userRole == UserAppRole.tenantAdmin) ...[
                 const SizedBox(height: 18),
                 const _SettingsMenuSectionTitle('Ayuda'),
                 const SizedBox(height: 8),
@@ -4829,6 +4965,34 @@ class _SettingsMenuDialog extends StatelessWidget {
                           Text('Templates UI'),
                         ],
                       ),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.boardPreview),
+                      child: const Text('Board Preview'),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.boardEditor),
+                      child: const Text('Board Editor'),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.boardPresets),
+                      child: const Text('Board Presets'),
+                    ),
+                    const SizedBox(height: 8),
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.metricCatalogsAdmin),
+                      child: const Text('Capacidades'),
                     ),
                     const SizedBox(height: 8),
                     FilledButton.tonal(
@@ -5080,6 +5244,11 @@ class _WhatsAppTestDialogState extends State<_WhatsAppTestDialog> {
       ],
     );
   }
+}
+
+@visibleForTesting
+bool canAccessTemplatesUi(String? userRole) {
+  return userRole == UserAppRole.owner;
 }
 
 class _RolesCompareDialog extends StatelessWidget {

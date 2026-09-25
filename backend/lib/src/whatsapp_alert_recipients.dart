@@ -57,6 +57,9 @@ class WhatsAppAlertRecipientsConfig {
 
   static const List<AlertRecipient> _recipients = <AlertRecipient>[
     // ===== Destinatarios globales =====
+    // Gerardo y Demián son los owners de Valke: deben ver las alertas de
+    // todos los tenants/sites, no solo de uno — por eso van con scope
+    // `global` en vez de `tenantSite`.
     AlertRecipient(
       scope: AlertRecipientScope.global,
       contactName: 'Gerardo',
@@ -68,7 +71,56 @@ class WhatsAppAlertRecipientsConfig {
       phone: '5491130740079',
     ),
 
-    // ===== Cliente especifico =====
+    // ===== The Gene Pig — todo el tenant =====
+    // Nicolás Rivas es uno de los dueños de The Gene Pig: debe recibir
+    // TODAS las alertas del tenant, no acotado a un Device. El modelo
+    // legacy no tiene un scope "tenant, todos los sites" — pero hoy
+    // 'las-heras' es el único site real y habilitado de este tenant
+    // ('genetica-1' es el site legacy sin datos activos, ver
+    // project_alerts_system_pending_fixes memory), asi que scope
+    // `tenantSite` acotado a las-heras ya cubre "todo el tenant" en la
+    // practica. Cuando el sistema jerarquico (Etapa B4.5/B5) este
+    // conectado a produccion, migrar a un recipient real de scope Tenant
+    // en Firestore (`tenants/the-gene-pig/alertRecipients/...`) para que
+    // cubra automaticamente cualquier site futuro sin tocar este archivo.
+    AlertRecipient(
+      scope: AlertRecipientScope.tenantSite,
+      tenantId: 'the-gene-pig',
+      siteId: 'las-heras',
+      clientName: 'Gene Pig',
+      siteName: 'Las Heras',
+      contactName: 'Nicolás Rivas',
+      phone: '5491169384562',
+    ),
+
+    // ===== The Gene Pig / Las Heras — Laboratorio =====
+    // Enzo y Mauro son del Laboratorio del site Las Heras (tenant
+    // the-gene-pig). Hoy el modelo legacy solo soporta scope por
+    // tenant/site (no hay concepto de Device), asi que quedan acotados a
+    // todo el site. Cuando el sistema jerarquico de la Etapa B2
+    // (HierarchicalAlertRecipient/alertRecipients por Device en Firestore)
+    // este conectado a produccion, migrar estos dos a scope Device
+    // "Laboratorio" especificamente en vez de todo el Site.
+    AlertRecipient(
+      scope: AlertRecipientScope.tenantSite,
+      tenantId: 'the-gene-pig',
+      siteId: 'las-heras',
+      clientName: 'Gene Pig',
+      siteName: 'Las Heras',
+      contactName: 'Enzo',
+      phone: '5491123040959',
+    ),
+    AlertRecipient(
+      scope: AlertRecipientScope.tenantSite,
+      tenantId: 'the-gene-pig',
+      siteId: 'las-heras',
+      clientName: 'Gene Pig',
+      siteName: 'Las Heras',
+      contactName: 'Mauro',
+      phone: '5492227516703',
+    ),
+
+    // ===== Cliente especifico (legacy, tenantId roto — ver informe) =====
     AlertRecipient(
       scope: AlertRecipientScope.tenantSite,
       tenantId: 'the_good_pig',

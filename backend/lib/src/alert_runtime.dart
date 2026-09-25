@@ -2,6 +2,7 @@ import 'active_alerts_registry.dart';
 import 'alert_notification_cooldown_registry.dart';
 import 'alert_runtime_config.dart';
 import 'alert_settings_cache.dart';
+import 'hierarchical_alert_settings.dart';
 import 'room_wash_registry.dart';
 import 'snapshot_evaluation_policy.dart';
 
@@ -12,6 +13,7 @@ class AlertRuntime {
     ActiveAlertsRegistry? activeAlertsRegistry,
     AlertNotificationCooldownRegistry? notificationCooldownRegistry,
     SnapshotEvaluationPolicy? snapshotEvaluationPolicy,
+    HierarchicalAlertSettingsCache? hierarchicalAlertSettingsCache,
     AlertRuntimeConfig config = const AlertRuntimeConfig(),
   }) : settingsCache = settingsCache ?? AlertSettingsCache(),
        roomWashRegistry = roomWashRegistry ?? RoomWashRegistry(),
@@ -20,6 +22,7 @@ class AlertRuntime {
            notificationCooldownRegistry ?? AlertNotificationCooldownRegistry(),
        snapshotEvaluationPolicy =
            snapshotEvaluationPolicy ?? const SnapshotEvaluationPolicy(),
+       hierarchicalAlertSettingsCache = hierarchicalAlertSettingsCache,
        config = config;
 
   final AlertSettingsCache settingsCache;
@@ -27,6 +30,7 @@ class AlertRuntime {
   final ActiveAlertsRegistry activeAlertsRegistry;
   final AlertNotificationCooldownRegistry notificationCooldownRegistry;
   final SnapshotEvaluationPolicy snapshotEvaluationPolicy;
+  final HierarchicalAlertSettingsCache? hierarchicalAlertSettingsCache;
   final AlertRuntimeConfig config;
 
   AlertRuntimeMetrics snapshotMetrics({DateTime? capturedAt}) {
@@ -37,6 +41,7 @@ class AlertRuntime {
       cooldownEntries: notificationCooldownRegistry.size,
       settingsLoadFailuresCurrent: settingsCache.failureCount,
       settingsBackoffEntries: settingsCache.backoffEntryCount,
+      alertConfigCache: hierarchicalAlertSettingsCache?.healthJson(),
       capturedAt: capturedAt ?? DateTime.now().toUtc(),
     );
   }
@@ -51,6 +56,7 @@ class AlertRuntimeMetrics {
     required this.settingsLoadFailuresCurrent,
     required this.settingsBackoffEntries,
     required this.capturedAt,
+    this.alertConfigCache,
   });
 
   final int settingsCacheEntries;
@@ -60,4 +66,5 @@ class AlertRuntimeMetrics {
   final int settingsLoadFailuresCurrent;
   final int settingsBackoffEntries;
   final DateTime capturedAt;
+  final Map<String, Object?>? alertConfigCache;
 }

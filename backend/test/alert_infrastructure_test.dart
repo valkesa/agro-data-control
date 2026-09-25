@@ -17,6 +17,7 @@ Future<void> main() async {
   _testDewPoint();
   _testSnapshotPolicy();
   _testNotificationCooldownKeyIgnoresHardwareIdentity();
+  _testNotificationCooldownPendingReservation();
   _testAlertRuntimeMetrics();
   _testRoomWashAuthorization();
 }
@@ -51,6 +52,47 @@ void _testNotificationCooldownKeyIgnoresHardwareIdentity() {
       cooldown: const Duration(minutes: 10),
     ),
     'cooldown blocks same tenant/site/room/alert despite hardware change',
+  );
+}
+
+void _testNotificationCooldownPendingReservation() {
+  final AlertNotificationCooldownRegistry registry =
+      AlertNotificationCooldownRegistry();
+  final EvaluatedAlert alert = _alert();
+  final DateTime queuedAt = DateTime.utc(2026, 1, 1, 10);
+  registry.markPending(key: alert.key, queuedAt: queuedAt);
+
+  _expect(
+    !registry.canSend(
+      key: alert.key,
+      now: queuedAt.add(const Duration(minutes: 1)),
+      cooldown: const Duration(minutes: 10),
+    ),
+    'pending cooldown reservation blocks duplicate sends',
+  );
+
+  registry.releasePending(alert.key);
+  _expect(
+    registry.canSend(
+      key: alert.key,
+      now: queuedAt.add(const Duration(minutes: 1)),
+      cooldown: const Duration(minutes: 10),
+    ),
+    'failed pending cooldown reservation can be retried',
+  );
+
+  registry.markSent(
+    key: alert.key,
+    sentAt: queuedAt.add(const Duration(minutes: 2)),
+  );
+  registry.releasePending(alert.key);
+  _expect(
+    !registry.canSend(
+      key: alert.key,
+      now: queuedAt.add(const Duration(minutes: 3)),
+      cooldown: const Duration(minutes: 10),
+    ),
+    'confirmed cooldown is not released as pending',
   );
 }
 

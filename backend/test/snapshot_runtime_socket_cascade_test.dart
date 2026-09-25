@@ -226,6 +226,7 @@ PlcInstallationConfig _buildConfig(int port) {
       ),
     ],
     differentialPressureHistories: const <DifferentialPressureHistoryConfig>[],
+    deviceEnvironmentHistories: const <DeviceEnvironmentHistoryConfig>[],
     doorOpenings: DoorOpeningsConfig(
       enabled: false,
       tenantId: 'test-tenant',

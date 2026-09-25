@@ -16,9 +16,11 @@ import 'dart:io';
 
 import 'package:agro_data_control/models/agro_device_type_catalog.dart';
 import 'package:agro_data_control/models/agro_tenant.dart';
+import 'package:agro_data_control/main.dart' as app;
 import 'package:agro_data_control/pages/tenant_management_page.dart';
 import 'package:agro_data_control/services/agro_device_provisioning_service.dart';
 import 'package:agro_data_control/services/firestore_error_messages.dart';
+import 'package:agro_data_control/services/user_management_service.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -194,21 +196,75 @@ void main() {
       },
     );
 
-    test('el boton "Templates UI" vive dentro del bloque owner-only', () {
-      final int ownerBlockStart = mainSource.indexOf(
-        'if (userRole == UserAppRole.owner)',
+    test(
+      'gate de acceso a "Templates UI" permite owner y niega tenant_admin',
+      () {
+        expect(app.canAccessTemplatesUi(UserAppRole.owner), isTrue);
+        expect(app.canAccessTemplatesUi(UserAppRole.tenantAdmin), isFalse);
+        expect(app.canAccessTemplatesUi(UserAppRole.tenantOperator), isFalse);
+        expect(app.canAccessTemplatesUi(UserAppRole.valkeTechnician), isFalse);
+        expect(app.canAccessTemplatesUi(null), isFalse);
+      },
+    );
+
+    test('el boton "Templates UI" vive dentro del gate owner-only', () {
+      final int ownerGateStart = mainSource.indexOf(
+        'if (canAccessTemplatesUi(userRole))',
       );
       final int manageTemplatesPop = mainSource.indexOf(
         '_SettingsMenuAction.manageTemplates',
-        ownerBlockStart,
+        ownerGateStart,
       );
-      expect(ownerBlockStart, greaterThan(-1));
+      expect(ownerGateStart, greaterThan(-1));
       expect(
         manageTemplatesPop,
-        greaterThan(ownerBlockStart),
+        greaterThan(ownerGateStart),
         reason: 'el editor de templates debe seguir expuesto solo para owner',
       );
     });
+
+    test(
+      'al volver de Gestion de clientes se recarga el site activo del tablero',
+      () {
+        final int manageTenantsCase = mainSource.indexOf(
+          'case _SettingsMenuAction.manageTenants:',
+        );
+        final int continueIndex = mainSource.indexOf(
+          'continue;',
+          manageTenantsCase,
+        );
+        final String caseBody = mainSource.substring(
+          manageTenantsCase,
+          continueIndex,
+        );
+
+        expect(caseBody, contains('TenantManagementPage()'));
+        expect(
+          caseBody,
+          contains('_reloadActiveSiteAfterTenantManagement()'),
+          reason:
+              'Gestion de clientes puede cambiar sortOrder de Devices; al '
+              'volver, Tablero debe invalidar cache y reconstruir _devices.',
+        );
+        expect(
+          mainSource,
+          contains('Future<void> _reloadActiveSiteAfterTenantManagement()'),
+        );
+        expect(
+          mainSource,
+          contains(
+            '_agroDeviceService.invalidateCache(tenantId: tenantId, siteId: siteId)',
+          ),
+        );
+        expect(
+          mainSource,
+          contains(
+            '_agroDeviceRoomService.invalidateCache(tenantId: tenantId)',
+          ),
+        );
+        expect(mainSource, contains('await _switchSite(siteId)'));
+      },
+    );
 
     test('Etapa 4: gestion de rooms existe pero solo se carga bajo demanda '
         '(ver el grupo "Etapa 4" para el detalle)', () {

@@ -357,7 +357,7 @@ DeviceTemplate _disinfectionArchTemplate() {
       _slot('vehiclesTotalDaily', 2, BoardSlotSize.medium),
       _slot('disinfectantLevel', 3, BoardSlotSize.medium),
     ],
-    tableSection: 'Arco de desinfección',
+    tableSection: 'Arco Desinfección',
     tableColumns: <TableColumn>[
       _column('equipment', 0, TemplateTableColumnWidth.large),
       _column('vehiclesDisinfectedDaily', 1, TemplateTableColumnWidth.medium),

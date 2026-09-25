@@ -26,6 +26,24 @@ const TextStyle _cardTitleTextStyle = TextStyle(
   fontWeight: FontWeight.w800,
 );
 
+/// A small, generic tap action a caller can attach to one metric slot by its
+/// [MetricDefinition.key] (via [DeviceBoardRenderer.metricActions]) — e.g. a
+/// history-chart shortcut on `tempInterior`/`humedadInterior`. The renderer
+/// only ever matches this by key; it has no idea what "history" or
+/// "temperature" mean, so a new action type never requires touching this
+/// file. `onTap` receives the slot tile's own [BuildContext] (valid at tap
+/// time) rather than one captured earlier by the caller.
+class BoardSlotAction {
+  const BoardSlotAction({
+    required this.icon,
+    required this.tooltip,
+    required this.onTap,
+  });
+  final IconData icon;
+  final String tooltip;
+  final void Function(BuildContext context) onTap;
+}
+
 class DeviceBoardRenderer extends StatelessWidget {
   const DeviceBoardRenderer({
     super.key,
@@ -36,6 +54,7 @@ class DeviceBoardRenderer extends StatelessWidget {
     this.rangeSettings = const DashboardRangeSettings.defaults(),
     this.showSnapshotPulse = false,
     this.snapshotStale = false,
+    this.metricActions,
   });
 
   final DeviceTemplate template;
@@ -45,6 +64,10 @@ class DeviceBoardRenderer extends StatelessWidget {
   final DashboardRangeSettings rangeSettings;
   final bool showSnapshotPulse;
   final bool snapshotStale;
+
+  /// Keyed by [MetricDefinition.key] (e.g. `'tempInterior'`), not by any
+  /// tenant/Device identity — see [BoardSlotAction].
+  final Map<String, BoardSlotAction>? metricActions;
 
   @override
   Widget build(BuildContext context) {
@@ -95,6 +118,7 @@ class DeviceBoardRenderer extends StatelessWidget {
               rangeSettings: rangeSettings,
               showSnapshotPulse: showSnapshotPulse,
               snapshotStale: snapshotStale,
+              metricActions: metricActions,
             )
           : _FlowBoardPresetLayout(
               title: title ?? template.name,
@@ -105,6 +129,7 @@ class DeviceBoardRenderer extends StatelessWidget {
               resolver: resolver,
               geometry: geometry,
               rangeSettings: rangeSettings,
+              metricActions: metricActions,
             ),
     );
 
@@ -137,6 +162,7 @@ class _FlowBoardPresetLayout extends StatelessWidget {
     required this.resolver,
     required this.geometry,
     required this.rangeSettings,
+    this.metricActions,
   });
 
   final String title;
@@ -147,6 +173,7 @@ class _FlowBoardPresetLayout extends StatelessWidget {
   final TemplateDataResolver resolver;
   final _BoardPresetGeometry geometry;
   final DashboardRangeSettings rangeSettings;
+  final Map<String, BoardSlotAction>? metricActions;
 
   @override
   Widget build(BuildContext context) {
@@ -177,6 +204,7 @@ class _FlowBoardPresetLayout extends StatelessWidget {
                   resolver: resolver,
                   geometry: geometry,
                   rangeSettings: rangeSettings,
+                  action: metricActions?[slots[i].metricKey],
                 ),
                 if (i != slots.length - 1) SizedBox(width: geometry.gap),
               ],
@@ -197,6 +225,7 @@ class _FlowBoardPresetLayout extends StatelessWidget {
                   resolver: resolver,
                   geometry: geometry,
                   rangeSettings: rangeSettings,
+                  action: metricActions?[slot.metricKey],
                 ),
             ],
           ),
@@ -217,6 +246,7 @@ class _LargeBoardPresetLayout extends StatelessWidget {
     required this.rangeSettings,
     required this.showSnapshotPulse,
     required this.snapshotStale,
+    this.metricActions,
   });
 
   final List<BoardSlot> slots;
@@ -229,6 +259,7 @@ class _LargeBoardPresetLayout extends StatelessWidget {
   final DashboardRangeSettings rangeSettings;
   final bool showSnapshotPulse;
   final bool snapshotStale;
+  final Map<String, BoardSlotAction>? metricActions;
 
   @override
   Widget build(BuildContext context) {
@@ -348,6 +379,7 @@ class _LargeBoardPresetLayout extends StatelessWidget {
       displayValueOverride: slot.metricKey == 'deviceName' ? displayName : null,
       visualSize: position <= 5 ? slot.size : BoardSlotSize.small,
       rangeSettings: rangeSettings,
+      action: metricActions?[slot.metricKey],
     );
   }
 
@@ -553,6 +585,7 @@ class _DeviceBoardSlotTile extends StatelessWidget {
     required this.rangeSettings,
     this.fillParent = false,
     this.displayValueOverride,
+    this.action,
     BoardSlotSize? visualSize,
   }) : visualSize = visualSize ?? slot.size;
 
@@ -566,6 +599,10 @@ class _DeviceBoardSlotTile extends StatelessWidget {
   final bool fillParent;
   final Object? displayValueOverride;
   final BoardSlotSize visualSize;
+
+  /// Set by the caller via [DeviceBoardRenderer.metricActions] keyed by
+  /// [MetricDefinition.key] — this tile never knows what the action means.
+  final BoardSlotAction? action;
 
   @override
   Widget build(BuildContext context) {
@@ -737,17 +774,31 @@ class _DeviceBoardSlotTile extends StatelessWidget {
       ),
       child: child,
     );
+    final BoardSlotAction? slotAction = action;
+    final Widget framed = slotAction == null
+        ? frame
+        : Stack(
+            clipBehavior: Clip.none,
+            children: <Widget>[
+              frame,
+              Positioned(
+                top: 4,
+                right: 4,
+                child: _BoardSlotActionButton(action: slotAction),
+              ),
+            ],
+          );
     if (fillParent) {
       return SizedBox.expand(
         key: Key('device-board-slot-position-${slot.position}'),
-        child: frame,
+        child: framed,
       );
     }
     return SizedBox(
       key: Key('device-board-slot-position-${slot.position}'),
       width: geometry.widthFor(visualSize),
       height: geometry.heightFor(visualSize),
-      child: frame,
+      child: framed,
     );
   }
 
@@ -768,6 +819,33 @@ class _DeviceBoardSlotTile extends StatelessWidget {
     }
     return resolved;
   }
+}
+
+/// Small discreet badge for a [BoardSlotAction], rendered inside the metric
+/// slot's own box (not floating over the whole card) — see
+/// Prompt_Fix_Etapa_1_de_2_Accesos_Historicos_en_Las_Heras §4.
+class _BoardSlotActionButton extends StatelessWidget {
+  const _BoardSlotActionButton({required this.action});
+  final BoardSlotAction action;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: action.tooltip,
+    child: InkWell(
+      borderRadius: BorderRadius.circular(6),
+      onTap: () => action.onTap(context),
+      child: Container(
+        width: 20,
+        height: 20,
+        decoration: BoxDecoration(
+          color: const Color(0xCC0F172A),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF3A4A61)),
+        ),
+        child: Icon(action.icon, size: 12, color: const Color(0xFFCBD5E1)),
+      ),
+    ),
+  );
 }
 
 class _MetricValue extends StatelessWidget {
