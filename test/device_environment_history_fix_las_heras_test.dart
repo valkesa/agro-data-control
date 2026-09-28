@@ -36,7 +36,18 @@ class CountingRepository extends DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMode m,
-    int limit,
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
+    calls.add(s.deviceId);
+    return const [];
+  }
+
+  // The widget loads Horario by ART day now, never via load() directly.
+  @override
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope s,
+    EnvironmentHistoryDay day,
   ) async {
     calls.add(s.deviceId);
     return const [];

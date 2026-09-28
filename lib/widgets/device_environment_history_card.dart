@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:fl_chart/fl_chart.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import '../services/device_environment_history_repository.dart';
 
@@ -19,11 +20,36 @@ const _monthAbbreviations = [
   'DIC',
 ];
 
+/// Selected-state color for every ChoiceChip in this card — relying on color
+/// alone (no checkmark icon) to signal selection, per the user's request.
+const _selectedGreen = Color(0xFF22C55E);
+
 /// One ART calendar month already fetched for Diario, with its points.
 class _MonthState {
   const _MonthState(this.month, this.points);
   final EnvironmentHistoryMonth month;
   final List<EnvironmentHistoryPoint> points;
+}
+
+/// One ART calendar day already fetched for Horario, with its points.
+class _DayState {
+  const _DayState(this.day, this.points);
+  final EnvironmentHistoryDay day;
+  final List<EnvironmentHistoryPoint> points;
+}
+
+/// Allows click-and-drag horizontal scrolling with a mouse (not just
+/// touch/trackpad/stylus) — Flutter's default `ScrollBehavior` omits mouse
+/// from `dragDevices` since a mouse drag usually means "select text", but
+/// there's no selectable text inside these charts.
+class _DragScrollBehavior extends MaterialScrollBehavior {
+  @override
+  Set<PointerDeviceKind> get dragDevices => const {
+    PointerDeviceKind.touch,
+    PointerDeviceKind.mouse,
+    PointerDeviceKind.trackpad,
+    PointerDeviceKind.stylus,
+  };
 }
 
 class DeviceEnvironmentHistoryCard extends StatefulWidget {
@@ -35,9 +61,7 @@ class DeviceEnvironmentHistoryCard extends StatefulWidget {
     required this.visible,
     this.initialMetric = EnvironmentHistoryMetric.temperature,
     this.initialMode = EnvironmentHistoryMode.hourly,
-    this.initialLoadedMonths,
-    this.isExpandedInstance = false,
-    this.chartHeight = 200,
+    this.chartHeight = 440,
   });
   final DeviceEnvironmentHistoryRepository repository;
   final String? tenantId, unitId;
@@ -45,16 +69,10 @@ class DeviceEnvironmentHistoryCard extends StatefulWidget {
   final EnvironmentHistoryMetric initialMetric;
   final EnvironmentHistoryMode initialMode;
 
-  /// Etapa 2/2: months already loaded elsewhere (Diario only), seeded when
-  /// opening the expanded dialog so it starts with the SAME dataset instead
-  /// of resetting to just the current month. Rehydrated via
-  /// [DeviceEnvironmentHistoryRepository.fetchMonth], which resolves from
-  /// cache — 0 new reads (see `_openExpanded`).
-  final List<EnvironmentHistoryMonth>? initialLoadedMonths;
-
-  /// True only for the copy rendered inside the "ampliar" dialog — hides its
-  /// own expand button so tapping it can't nest another dialog on top.
-  final bool isExpandedInstance;
+  /// Default is the card's own "ampliado" size — there is no separate
+  /// expand button/dialog any more, the card always renders at full detail.
+  /// Callers embedding it inside their own compact popup (see
+  /// `comparison_page.dart`) pass a smaller explicit value.
   final double chartHeight;
 
   @override
@@ -63,15 +81,28 @@ class DeviceEnvironmentHistoryCard extends StatefulWidget {
 
 class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   static const double _dayWidth = 26;
+  static const double _hourWidth = 22;
 
   late EnvironmentHistoryMetric _metric = widget.initialMetric;
   late EnvironmentHistoryMode _mode = widget.initialMode;
 
-  // Horario: unchanged single-Future flow (fixed "latest 24" window).
-  Future<List<EnvironmentHistoryPoint>>? _hourlyFuture;
+  DeviceDisplayNames? _displayNames;
+  bool _loadingDisplayNames = false;
 
-  // Diario: Etapa 2/2 month pagination. Ascending by month; concatenating
-  // each month's already-ascending points yields one ascending series.
+  // Horario: day pagination, mirroring Diario's month pagination below.
+  // Ascending by day; concatenating each day's already-ascending points
+  // yields one ascending series. Opens with just today's ART day — loading
+  // more history is always an explicit "Día anterior" tap, never automatic.
+  List<_DayState> _hourlyDays = [];
+  bool _hourlyLoadingInitial = false;
+  bool _hourlyLoadingPrevious = false;
+  String? _hourlyInitialError;
+  String? _hourlyPreviousError;
+  bool _hourlyNoMoreBefore = false;
+  final ScrollController _hourlyScrollController = ScrollController();
+
+  // Diario: month pagination. Ascending by month; concatenating each
+  // month's already-ascending points yields one ascending series.
   List<_MonthState> _dailyMonths = [];
   bool _dailyLoadingInitial = false;
   bool _dailyLoadingPrevious = false;
@@ -89,14 +120,7 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   @override
   void initState() {
     super.initState();
-    final seedMonths = widget.initialLoadedMonths;
-    if (_mode == EnvironmentHistoryMode.daily &&
-        seedMonths != null &&
-        seedMonths.isNotEmpty) {
-      _rehydrateMonths(seedMonths);
-    } else if (widget.visible) {
-      _ensureLoaded();
-    }
+    if (widget.visible) _ensureLoaded();
   }
 
   @override
@@ -105,40 +129,135 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     if (old.tenantId != widget.tenantId ||
         old.unitId != widget.unitId ||
         old.repository != widget.repository) {
-      _hourlyFuture = null;
+      _hourlyDays = [];
+      _hourlyNoMoreBefore = false;
+      _hourlyInitialError = null;
+      _hourlyPreviousError = null;
       _dailyMonths = [];
       _noMoreBefore = false;
       _dailyInitialError = null;
       _dailyPreviousError = null;
+      _displayNames = null;
+      _loadingDisplayNames = false;
     }
     if (widget.visible) _ensureLoaded();
   }
 
   @override
   void dispose() {
+    _hourlyScrollController.dispose();
     _dailyScrollController.dispose();
     super.dispose();
   }
 
   void _ensureLoaded() {
+    if (_displayNames == null && !_loadingDisplayNames) _loadDisplayNames();
     if (_mode == EnvironmentHistoryMode.hourly) {
-      if (_hourlyFuture == null) _loadHourly();
+      if (_hourlyDays.isEmpty && !_hourlyLoadingInitial) _loadInitialHourly();
     } else if (_dailyMonths.isEmpty && !_dailyLoadingInitial) {
       _loadInitialMonth();
     }
   }
 
-  void _loadHourly() {
+  void _loadDisplayNames() {
     final tenant = widget.tenantId;
     final unit = widget.unitId;
+    if (tenant == null || unit == null) return;
     final repo = widget.repository;
+    _loadingDisplayNames = true;
+    repo
+        .resolve(tenant, unit)
+        .then((scope) => repo.resolveDisplayNames(tenant, scope, unit))
+        .then((names) {
+          if (!mounted) return;
+          setState(() {
+            _displayNames = names;
+            _loadingDisplayNames = false;
+          });
+        })
+        .catchError((Object _) {
+          _loadingDisplayNames = false;
+        });
+  }
+
+  EnvironmentHistoryDay _currentArtDay() {
+    final art = DateTime.now().toUtc().subtract(const Duration(hours: 3));
+    return EnvironmentHistoryDay(art.year, art.month, art.day);
+  }
+
+  void _loadInitialHourly() {
+    final tenant = widget.tenantId;
+    final unit = widget.unitId;
+    if (tenant == null || unit == null) {
+      setState(() => _hourlyInitialError = 'No se pudo cargar el histórico');
+      return;
+    }
+    final repo = widget.repository;
+    final day = _currentArtDay();
     setState(() {
-      _hourlyFuture = tenant == null || unit == null
-          ? Future.error(StateError('Missing scope'))
-          : repo
-                .resolve(tenant, unit)
-                .then((scope) => repo.fetch(scope, EnvironmentHistoryMode.hourly));
+      _hourlyLoadingInitial = true;
+      _hourlyInitialError = null;
     });
+    repo
+        .resolve(tenant, unit)
+        .then((scope) => repo.fetchDay(scope, day))
+        .then((points) {
+          if (!mounted) return;
+          setState(() {
+            _hourlyDays = [_DayState(day, points)];
+            _hourlyLoadingInitial = false;
+          });
+          _jumpScrollToEnd(_hourlyScrollController);
+        })
+        .catchError((Object _) {
+          if (!mounted) return;
+          setState(() {
+            _hourlyLoadingInitial = false;
+            _hourlyInitialError = 'No se pudo cargar el histórico';
+          });
+        });
+  }
+
+  void _loadPreviousHourly() {
+    if (_hourlyLoadingPrevious || _hourlyNoMoreBefore || _hourlyDays.isEmpty) {
+      return;
+    }
+    final tenant = widget.tenantId;
+    final unit = widget.unitId;
+    if (tenant == null || unit == null) return;
+    final repo = widget.repository;
+    final target = _hourlyDays.first.day.previous;
+    setState(() {
+      _hourlyLoadingPrevious = true;
+      _hourlyPreviousError = null;
+    });
+    repo
+        .resolve(tenant, unit)
+        .then((scope) => repo.fetchDay(scope, target))
+        .then((points) {
+          if (!mounted) return;
+          setState(() {
+            _hourlyLoadingPrevious = false;
+            if (points.isEmpty) {
+              _hourlyNoMoreBefore = true;
+            } else {
+              _hourlyDays = [_DayState(target, points), ..._hourlyDays];
+            }
+          });
+          if (points.isNotEmpty) {
+            _preserveScrollAfterPrepend(
+              _hourlyScrollController,
+              points.length * _hourWidth,
+            );
+          }
+        })
+        .catchError((Object _) {
+          if (!mounted) return;
+          setState(() {
+            _hourlyLoadingPrevious = false;
+            _hourlyPreviousError = 'No se pudo cargar el período anterior';
+          });
+        });
   }
 
   EnvironmentHistoryMonth _currentArtMonth() {
@@ -168,39 +287,7 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
             _dailyMonths = [_MonthState(month, points)];
             _dailyLoadingInitial = false;
           });
-          _jumpScrollToEnd();
-        })
-        .catchError((Object _) {
-          if (!mounted) return;
-          setState(() {
-            _dailyLoadingInitial = false;
-            _dailyInitialError = 'No se pudo cargar el histórico';
-          });
-        });
-  }
-
-  void _rehydrateMonths(List<EnvironmentHistoryMonth> months) {
-    final tenant = widget.tenantId;
-    final unit = widget.unitId;
-    if (tenant == null || unit == null) return;
-    final repo = widget.repository;
-    setState(() => _dailyLoadingInitial = true);
-    repo
-        .resolve(tenant, unit)
-        .then((scope) async {
-          final results = <_MonthState>[];
-          for (final m in months) {
-            results.add(_MonthState(m, await repo.fetchMonth(scope, m)));
-          }
-          return results;
-        })
-        .then((results) {
-          if (!mounted) return;
-          setState(() {
-            _dailyMonths = results;
-            _dailyLoadingInitial = false;
-          });
-          _jumpScrollToEnd();
+          _jumpScrollToEnd(_dailyScrollController);
         })
         .catchError((Object _) {
           if (!mounted) return;
@@ -235,7 +322,12 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
               _dailyMonths = [_MonthState(target, points), ..._dailyMonths];
             }
           });
-          if (points.isNotEmpty) _preserveScrollAfterPrepend(points.length);
+          if (points.isNotEmpty) {
+            _preserveScrollAfterPrepend(
+              _dailyScrollController,
+              points.length * _dayWidth,
+            );
+          }
         })
         .catchError((Object _) {
           if (!mounted) return;
@@ -246,91 +338,22 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         });
   }
 
-  void _jumpScrollToEnd() {
+  void _jumpScrollToEnd(ScrollController controller) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_dailyScrollController.hasClients) return;
-      _dailyScrollController.jumpTo(
-        _dailyScrollController.position.maxScrollExtent,
-      );
+      if (!mounted || !controller.hasClients) return;
+      controller.jumpTo(controller.position.maxScrollExtent);
     });
   }
 
-  void _preserveScrollAfterPrepend(int addedDays) {
-    final addedWidth = addedDays * _dayWidth;
+  void _preserveScrollAfterPrepend(ScrollController controller, double addedWidth) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !_dailyScrollController.hasClients) return;
-      final target = (_dailyScrollController.offset + addedWidth).clamp(
+      if (!mounted || !controller.hasClients) return;
+      final target = (controller.offset + addedWidth).clamp(
         0.0,
-        _dailyScrollController.position.maxScrollExtent,
+        controller.position.maxScrollExtent,
       );
-      _dailyScrollController.jumpTo(target);
+      controller.jumpTo(target);
     });
-  }
-
-  /// Etapa 2/2 §12-13: opens the SAME widget/repository in a bigger dialog,
-  /// seeded with the current mode/metric/loaded-months so it starts already
-  /// caught up — every fetch it issues on init is a cache hit (0 new reads).
-  void _openExpanded(BuildContext context) {
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => Dialog(
-        backgroundColor: const Color(0xFF0F172A),
-        insetPadding: const EdgeInsets.all(24),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 1100, maxHeight: 720),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    const Expanded(
-                      child: Text(
-                        'Histórico ampliado',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 15,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: 'Cerrar',
-                      icon: const Icon(
-                        Icons.close,
-                        color: Colors.white70,
-                        size: 20,
-                      ),
-                      onPressed: () => Navigator.of(dialogContext).pop(),
-                    ),
-                  ],
-                ),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: DeviceEnvironmentHistoryCard(
-                      repository: widget.repository,
-                      tenantId: widget.tenantId,
-                      unitId: widget.unitId,
-                      visible: true,
-                      initialMetric: _metric,
-                      initialMode: _mode,
-                      initialLoadedMonths: _mode == EnvironmentHistoryMode.daily
-                          ? _dailyMonths.map((m) => m.month).toList()
-                          : null,
-                      isExpandedInstance: true,
-                      chartHeight: 440,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
   @override
@@ -346,6 +369,23 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
       ),
       child: Column(
         children: [
+          if (_displayNames case final names?)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  names.roomName != null
+                      ? '${names.deviceName} · ${names.roomName}'
+                      : names.deviceName,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ),
           Row(
             children: [
               Wrap(
@@ -355,6 +395,7 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
                     EnvironmentHistoryMetric.temperature,
                     Icons.thermostat,
                     'Temperatura',
+                    suffixLabel: 'in',
                   ),
                   _metricChip(
                     EnvironmentHistoryMetric.humidity,
@@ -368,23 +409,6 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
                   ),
                 ],
               ),
-              const Spacer(),
-              if (!widget.isExpandedInstance)
-                Tooltip(
-                  message: 'Ampliar',
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(6),
-                    onTap: () => _openExpanded(context),
-                    child: const Padding(
-                      padding: EdgeInsets.all(4),
-                      child: Icon(
-                        Icons.open_in_full,
-                        size: 16,
-                        color: Color(0xFFCBD5E1),
-                      ),
-                    ),
-                  ),
-                ),
             ],
           ),
           Wrap(
@@ -396,6 +420,8 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
                     m == EnvironmentHistoryMode.hourly ? 'Horario' : 'Diario',
                   ),
                   selected: _mode == m,
+                  showCheckmark: false,
+                  selectedColor: _selectedGreen,
                   onSelected: (_) {
                     if (_mode != m) {
                       setState(() {
@@ -407,7 +433,26 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
                 ),
             ],
           ),
-          if (_mode == EnvironmentHistoryMode.daily) _monthNavigationHeader(),
+          if (_mode == EnvironmentHistoryMode.daily)
+            _periodNavigationHeader(
+              loading: _dailyLoadingPrevious,
+              noMoreBefore: _noMoreBefore,
+              hasData: _dailyMonths.isNotEmpty,
+              error: _dailyPreviousError,
+              onLoadPrevious: _loadPreviousMonth,
+              rangeLabel: _monthRangeLabel(),
+              buttonLabel: 'Mes anterior',
+            )
+          else
+            _periodNavigationHeader(
+              loading: _hourlyLoadingPrevious,
+              noMoreBefore: _hourlyNoMoreBefore,
+              hasData: _hourlyDays.isNotEmpty,
+              error: _hourlyPreviousError,
+              onLoadPrevious: _loadPreviousHourly,
+              rangeLabel: _hourlyRangeLabel(),
+              buttonLabel: 'Día anterior',
+            ),
           const SizedBox(height: 12),
           _legend(),
           _buildBody(),
@@ -416,7 +461,15 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     );
   }
 
-  Widget _monthNavigationHeader() {
+  Widget _periodNavigationHeader({
+    required bool loading,
+    required bool noMoreBefore,
+    required bool hasData,
+    required String? error,
+    required VoidCallback onLoadPrevious,
+    required String rangeLabel,
+    required String buttonLabel,
+  }) {
     const labelStyle = TextStyle(fontSize: 12);
     return Padding(
       padding: const EdgeInsets.only(top: 6),
@@ -426,47 +479,44 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
           Row(
             children: [
               Tooltip(
-                message: _noMoreBefore
+                message: noMoreBefore
                     ? 'No hay períodos anteriores disponibles'
-                    : 'Cargar mes anterior',
+                    : 'Cargar período anterior',
                 child: TextButton.icon(
-                  onPressed:
-                      (_dailyLoadingPrevious ||
-                          _noMoreBefore ||
-                          _dailyMonths.isEmpty)
+                  onPressed: (loading || noMoreBefore || !hasData)
                       ? null
-                      : _loadPreviousMonth,
-                  icon: _dailyLoadingPrevious
+                      : onLoadPrevious,
+                  icon: loading
                       ? const SizedBox(
                           width: 14,
                           height: 14,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.chevron_left, size: 16),
-                  label: const Text('Mes anterior', style: labelStyle),
+                  label: Text(buttonLabel, style: labelStyle),
                 ),
               ),
               const SizedBox(width: 8),
               Text(
-                _monthRangeLabel(),
+                rangeLabel,
                 style: const TextStyle(color: Colors.white60, fontSize: 12),
               ),
             ],
           ),
-          if (_dailyPreviousError != null)
+          if (error != null)
             Padding(
               padding: const EdgeInsets.only(left: 4, top: 2),
               child: Row(
                 children: [
                   Text(
-                    _dailyPreviousError!,
+                    error,
                     style: const TextStyle(
                       color: Color(0xFFF87171),
                       fontSize: 11,
                     ),
                   ),
                   TextButton(
-                    onPressed: _loadPreviousMonth,
+                    onPressed: onLoadPrevious,
                     child: const Text(
                       'Reintentar',
                       style: TextStyle(fontSize: 11),
@@ -492,23 +542,30 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     return '${label(first)} ${first.year}–${label(last)} ${last.year}';
   }
 
+  String _hourlyRangeLabel() {
+    if (_hourlyDays.isEmpty) return '';
+    final first = _hourlyDays.first.day;
+    final last = _hourlyDays.last.day;
+    String d(EnvironmentHistoryDay a) =>
+        '${a.day.toString().padLeft(2, '0')}/${a.month.toString().padLeft(2, '0')}';
+    return first == last ? d(first) : '${d(first)}–${d(last)}';
+  }
+
   Widget _buildBody() {
     if (_mode == EnvironmentHistoryMode.hourly) {
-      return FutureBuilder<List<EnvironmentHistoryPoint>>(
-        future: _hourlyFuture,
-        builder: (context, snap) {
-          if (snap.connectionState != ConnectionState.done) {
-            return const Padding(
-              padding: EdgeInsets.all(20),
-              child: CircularProgressIndicator(),
-            );
-          }
-          if (snap.hasError) {
-            return _errorRetry('No se pudo cargar el histórico', _loadHourly);
-          }
-          return _renderChartArea(snap.data ?? [], scrollable: false);
-        },
-      );
+      if (_hourlyLoadingInitial) {
+        return const Padding(
+          padding: EdgeInsets.all(20),
+          child: CircularProgressIndicator(),
+        );
+      }
+      if (_hourlyInitialError != null) {
+        return _errorRetry(_hourlyInitialError!, _loadInitialHourly);
+      }
+      final points = <EnvironmentHistoryPoint>[
+        for (final d in _hourlyDays) ...d.points,
+      ];
+      return _renderChartArea(points, _hourWidth);
     }
     if (_dailyLoadingInitial) {
       return const Padding(
@@ -522,7 +579,7 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     final points = <EnvironmentHistoryPoint>[
       for (final m in _dailyMonths) ...m.points,
     ];
-    return _renderChartArea(points, scrollable: true);
+    return _renderChartArea(points, _dayWidth);
   }
 
   Widget _errorRetry(String message, VoidCallback onRetry) => Column(
@@ -532,13 +589,11 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     ],
   );
 
-  Widget _renderChartArea(
-    List<EnvironmentHistoryPoint> points, {
-    required bool scrollable,
-  }) {
+  Widget _renderChartArea(List<EnvironmentHistoryPoint> points, double unitWidth) {
     final hasTemp = points.any((p) => p.temperature.value != null);
     final hasHum = points.any((p) => p.humidity.value != null);
-    final hasAny = _metric == EnvironmentHistoryMetric.both
+    final isDual = _metric == EnvironmentHistoryMetric.both;
+    final hasAny = isDual
         ? hasTemp || hasHum
         : points.any((p) => p.stats(_metric).value != null);
     if (!hasAny) {
@@ -547,46 +602,101 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         child: Text('Sin datos históricos'),
       );
     }
-    final chart = _metric == EnvironmentHistoryMetric.both
+    final chart = isDual
         ? _buildDualChart(points, hasTemp: hasTemp, hasHum: hasHum)
         : _buildSingleChart(points, _metric);
-    if (!scrollable) {
-      return SizedBox(height: widget.chartHeight, child: chart);
-    }
-    // Etapa 2/2 §8-9: width grows with the loaded window instead of
-    // compressing days — the SingleChildScrollView absorbs the growth, each
-    // day keeps a legible fixed pixel width.
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = math.max(
-          constraints.maxWidth,
-          points.length * _dayWidth,
-        );
-        return SingleChildScrollView(
-          controller: _dailyScrollController,
-          scrollDirection: Axis.horizontal,
-          child: SizedBox(
-            width: width,
-            height: widget.chartHeight,
-            child: chart,
+    final isDaily = _mode == EnvironmentHistoryMode.daily;
+    final controller = isDaily ? _dailyScrollController : _hourlyScrollController;
+
+    // Pinned Y axis/axes (Etapa "eje fijo"): built as separate, non-scrolled
+    // LineCharts sharing the exact same minY/maxY/bottom-reserved-size as
+    // the real (scrolled) chart, so their tick labels land at identical
+    // pixel rows — the standard fl_chart trick for a sticky axis, since a
+    // single LineChartData has no way to keep just its axis fixed while its
+    // plot area scrolls. Only vertical geometry (height, top/bottom
+    // reservedSize) needs to match between the two widgets; left/right
+    // reservedSize never affects the Y mapping.
+    final leftSpec = isDual
+        ? _dualLeftAxisSpec(points, hasTemp: hasTemp)
+        : _singleAxisSpec(points, _metric);
+    final rightSpec = isDual && (hasHum || !hasTemp) ? _dualRightAxisSpec() : null;
+
+    // Each point keeps a minimum fixed pixel width so it never gets
+    // unreadably cramped, but when the container is wider than the loaded
+    // data needs, the chart takes the FULL available width instead (fl_chart
+    // then spaces the points out evenly to fill it) — only a narrower
+    // container falls back to the data-driven width, wrapped in horizontal
+    // scroll. Loading more history is never automatic; only "Día
+    // anterior"/"Mes anterior" does that.
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          width: leftSpec.reservedSize,
+          height: widget.chartHeight,
+          child: _pinnedAxis(leftSpec, bottomReservedSize: _bottomReservedSize),
+        ),
+        Expanded(
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final width = math.max(constraints.maxWidth, points.length * unitWidth);
+              return ScrollConfiguration(
+                behavior: _DragScrollBehavior(),
+                child: SingleChildScrollView(
+                  controller: controller,
+                  scrollDirection: Axis.horizontal,
+                  child: SizedBox(
+                    width: width,
+                    height: widget.chartHeight,
+                    child: chart,
+                  ),
+                ),
+              );
+            },
           ),
-        );
-      },
+        ),
+        if (rightSpec != null)
+          SizedBox(
+            width: rightSpec.reservedSize,
+            height: widget.chartHeight,
+            child: _pinnedAxis(
+              rightSpec,
+              bottomReservedSize: _bottomReservedSize,
+              onRight: true,
+            ),
+          ),
+      ],
     );
   }
 
-  Widget _metricChip(EnvironmentHistoryMetric m, IconData icon, String label) {
+  Widget _metricChip(
+    EnvironmentHistoryMetric m,
+    IconData icon,
+    String label, {
+    String? suffixLabel,
+  }) {
     final selected = _metric == m;
+    final iconColor = selected ? Colors.black87 : Colors.white70;
     return Tooltip(
       message: label,
       child: ChoiceChip(
-        label: Icon(
-          icon,
-          size: 16,
-          color: selected ? Colors.black87 : Colors.white70,
+        label: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: iconColor),
+            if (suffixLabel != null) ...[
+              const SizedBox(width: 2),
+              Text(
+                suffixLabel,
+                style: TextStyle(fontSize: 9, color: iconColor),
+              ),
+            ],
+          ],
         ),
         labelPadding: const EdgeInsets.symmetric(horizontal: 2),
         selected: selected,
+        showCheckmark: false,
+        selectedColor: _selectedGreen,
         onSelected: (_) => setState(() => _metric = m),
       ),
     );
@@ -604,14 +714,25 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     if (_metric == EnvironmentHistoryMetric.both) {
       return Padding(
         padding: const EdgeInsets.only(bottom: 4),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            _legendDot(Colors.orangeAccent),
-            const Text('Temperatura interior', style: style),
-            const SizedBox(width: 12),
-            _legendDot(Colors.cyanAccent),
-            const Text('Humedad interior', style: style),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _legendDot(Colors.orangeAccent),
+                const Text('Temperatura interior', style: style),
+              ],
+            ),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _legendDot(Colors.cyanAccent),
+                const Text('Humedad interior', style: style),
+              ],
+            ),
           ],
         ),
       );
@@ -637,15 +758,226 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         FlSpot.nullSpot,
   ];
 
+  List<FlSpot> _boundSpotsFor(
+    List<EnvironmentHistoryPoint> points,
+    EnvironmentHistoryMetric metric, {
+    required bool useMax,
+  }) => [
+    for (var i = 0; i < points.length; i++)
+      if ((useMax ? points[i].stats(metric).max : points[i].stats(metric).min)
+          case final double value)
+        FlSpot(i.toDouble(), value)
+      else
+        FlSpot.nullSpot,
+  ];
+
+  /// Diario-only: an avg line plus two invisible min/max lines whose area is
+  /// shaded via `betweenBarsData`, showing the day's thermal range. Horario
+  /// keeps a single visible line, unchanged.
+  ({List<LineChartBarData> bars, List<BetweenBarsData> betweenBars}) _seriesFor(
+    List<EnvironmentHistoryPoint> points,
+    EnvironmentHistoryMetric metric,
+    Color color,
+  ) {
+    final avgBar = LineChartBarData(
+      spots: _spotsFor(points, metric),
+      color: color,
+      isCurved: false,
+      barWidth: 2,
+      dotData: const FlDotData(show: true),
+    );
+    if (_mode != EnvironmentHistoryMode.daily) {
+      return (bars: [avgBar], betweenBars: const []);
+    }
+    final minBar = LineChartBarData(
+      spots: _boundSpotsFor(points, metric, useMax: false),
+      color: color,
+      show: false,
+      dotData: const FlDotData(show: false),
+    );
+    final maxBar = LineChartBarData(
+      spots: _boundSpotsFor(points, metric, useMax: true),
+      color: color,
+      show: false,
+      dotData: const FlDotData(show: false),
+    );
+    return (
+      bars: [avgBar, minBar, maxBar],
+      betweenBars: [
+        BetweenBarsData(fromIndex: 1, toIndex: 2, color: color.withValues(alpha: 0.15)),
+      ],
+    );
+  }
+
+  /// Y bounds wide enough for both the average line and (in Diario) the
+  /// min/max band, so the shaded area never gets clipped by the chart.
+  ({double minY, double maxY}) _yRangeFor(
+    List<EnvironmentHistoryPoint> points,
+    EnvironmentHistoryMetric metric, {
+    required double fallbackMin,
+    required double fallbackMax,
+  }) {
+    final avgValues = points
+        .map((p) => p.stats(metric).value)
+        .whereType<double>()
+        .toList();
+    if (avgValues.isEmpty) return (minY: fallbackMin, maxY: fallbackMax);
+    final extremes = _mode == EnvironmentHistoryMode.daily
+        ? points
+              .expand((p) => [p.stats(metric).min, p.stats(metric).max])
+              .whereType<double>()
+              .toList()
+        : const <double>[];
+    final all = [...avgValues, ...extremes]..sort();
+    return (minY: all.first.floorToDouble() - 1, maxY: all.last.ceilToDouble() + 1);
+  }
+
+  /// Bottom-axis reserved height — shared between the real (scrolled) chart
+  /// and every pinned axis column, since they must match for the Y-value
+  /// pixel mapping to line up (see `_pinnedAxis`'s doc comment).
+  double get _bottomReservedSize => _mode == EnvironmentHistoryMode.daily ? 28 : 30;
+
+  /// One pinned Y axis's definition — everything `_pinnedAxis` needs to
+  /// render tick labels that land on the same pixel rows as the real
+  /// (scrolled) chart's gridlines.
+  ({
+    double minY,
+    double maxY,
+    double interval,
+    double reservedSize,
+    Widget Function(double, TitleMeta) titleBuilder,
+  })
+  _singleAxisSpec(
+    List<EnvironmentHistoryPoint> points,
+    EnvironmentHistoryMetric metric,
+  ) {
+    final humidity = metric == EnvironmentHistoryMetric.humidity;
+    final suffix = humidity ? '%' : '°C';
+    final yRange = humidity
+        ? (minY: 0.0, maxY: 100.0)
+        : _yRangeFor(points, metric, fallbackMin: 0, fallbackMax: 1);
+    return (
+      minY: yRange.minY,
+      maxY: yRange.maxY,
+      interval: humidity ? 20 : 1,
+      reservedSize: 48,
+      titleBuilder: (v, _) => Text(
+        '${v.toStringAsFixed(0)}$suffix',
+        style: const TextStyle(fontSize: 10, color: Colors.white70),
+      ),
+    );
+  }
+
+  ({
+    double minY,
+    double maxY,
+    double interval,
+    double reservedSize,
+    Widget Function(double, TitleMeta) titleBuilder,
+  })
+  _dualLeftAxisSpec(List<EnvironmentHistoryPoint> points, {required bool hasTemp}) {
+    final yRange = hasTemp
+        ? _yRangeFor(
+            points,
+            EnvironmentHistoryMetric.temperature,
+            fallbackMin: 0,
+            fallbackMax: 1,
+          )
+        : (minY: 0.0, maxY: 1.0);
+    return (
+      minY: yRange.minY,
+      maxY: yRange.maxY,
+      interval: 1,
+      reservedSize: 40,
+      titleBuilder: (v, _) => Text(
+        '${v.toStringAsFixed(0)}°',
+        style: const TextStyle(fontSize: 10, color: Colors.orangeAccent),
+      ),
+    );
+  }
+
+  ({
+    double minY,
+    double maxY,
+    double interval,
+    double reservedSize,
+    Widget Function(double, TitleMeta) titleBuilder,
+  })
+  _dualRightAxisSpec() => (
+    minY: 0.0,
+    maxY: 100.0,
+    interval: 20.0,
+    reservedSize: 34,
+    titleBuilder: (v, _) => Text(
+      '${v.toStringAsFixed(0)}%',
+      style: const TextStyle(fontSize: 10, color: Colors.cyanAccent),
+    ),
+  );
+
+  /// A non-interactive, dataless [LineChart] that renders ONLY axis tick
+  /// labels — pinned outside the horizontal [SingleChildScrollView] so the
+  /// Y axis stays visible while the plot scrolls. Must share [minY]/[maxY],
+  /// overall height (`widget.chartHeight`, applied by the caller) and
+  /// [bottomReservedSize] with the real chart: those are exactly the
+  /// parameters that determine where a Y value lands vertically: horizontal
+  /// (left/right) reservedSize never affects that mapping, so it's the only
+  /// thing safe to let differ between this narrow pinned column and the
+  /// wide scrolled chart.
+  Widget _pinnedAxis(
+    ({
+      double minY,
+      double maxY,
+      double interval,
+      double reservedSize,
+      Widget Function(double, TitleMeta) titleBuilder,
+    })
+    spec, {
+    required double bottomReservedSize,
+    bool onRight = false,
+  }) {
+    final sideTitles = SideTitles(
+      showTitles: true,
+      reservedSize: spec.reservedSize,
+      interval: spec.interval,
+      getTitlesWidget: spec.titleBuilder,
+    );
+    return LineChart(
+      LineChartData(
+        minX: 0,
+        maxX: 1,
+        minY: spec.minY,
+        maxY: spec.maxY,
+        lineBarsData: const [],
+        borderData: FlBorderData(show: false),
+        gridData: const FlGridData(show: false),
+        lineTouchData: const LineTouchData(enabled: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(showTitles: false, reservedSize: bottomReservedSize),
+          ),
+          leftTitles: onRight
+              ? const AxisTitles(sideTitles: SideTitles(showTitles: false))
+              : AxisTitles(sideTitles: sideTitles),
+          rightTitles: onRight
+              ? AxisTitles(sideTitles: sideTitles)
+              : const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        ),
+      ),
+    );
+  }
+
   /// Shared by single- and dual-axis charts so Horario/Diario labeling never
-  /// drifts between modes. Horario keeps its previous (unchanged) behaviour;
-  /// Diario shows all days + month markers regardless of how many months
-  /// are loaded (Etapa 1 §5/§6, extended in Etapa 2 to multi-month series).
+  /// drifts between modes. Diario shows all days + month markers regardless
+  /// of how many months are loaded. Horario shows 2-digit, colon-free hours
+  /// (`05`, `13`) plus a day marker once it spans more than one ART day —
+  /// every point gets its own label since the fixed per-point pixel width
+  /// (`_hourWidth`/`_dayWidth`) already guarantees adequate spacing.
   SideTitles _bottomTitles(List<EnvironmentHistoryPoint> points) {
     if (_mode == EnvironmentHistoryMode.daily) {
       return SideTitles(
         showTitles: true,
-        reservedSize: 28,
+        reservedSize: _bottomReservedSize,
         interval: 1,
         getTitlesWidget: (v, _) {
           final i = v.toInt();
@@ -687,22 +1019,49 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     }
     return SideTitles(
       showTitles: true,
-      reservedSize: 24,
-      interval: points.length > 6 ? (points.length / 4).ceilToDouble() : 1,
+      reservedSize: _bottomReservedSize,
+      interval: 1,
       getTitlesWidget: (v, _) {
         final i = v.toInt();
         if (v != i || i < 0 || i >= points.length) {
           return const SizedBox.shrink();
         }
         final art = points[i].start.toUtc().subtract(const Duration(hours: 3));
-        return Text(
-          '${art.hour}:00',
-          style: const TextStyle(fontSize: 10, color: Colors.white70),
+        final DateTime? prevArt = i == 0
+            ? null
+            : points[i - 1].start.toUtc().subtract(const Duration(hours: 3));
+        final dayChanged =
+            prevArt == null ||
+            prevArt.day != art.day ||
+            prevArt.month != art.month ||
+            prevArt.year != art.year;
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: 11,
+              child: dayChanged
+                  ? Text(
+                      '${art.day.toString().padLeft(2, '0')}/${art.month.toString().padLeft(2, '0')}',
+                      style: const TextStyle(
+                        fontSize: 8,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.white70,
+                      ),
+                    )
+                  : null,
+            ),
+            Text(
+              art.hour.toString().padLeft(2, '0'),
+              style: const TextStyle(fontSize: 10, color: Colors.white70),
+            ),
+          ],
         );
       },
     );
   }
 
+  /// Horario: just the hour and the average value, nothing else.
   LineTooltipItem _tooltipItem(
     EnvironmentHistoryPoint p,
     String suffix,
@@ -711,9 +1070,16 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     final s = p.stats(metric);
     final art = p.start.toUtc().subtract(const Duration(hours: 3));
     return LineTooltipItem(
-      '${art.day}/${art.month} ${art.hour}:00 ART\n'
-      'Prom: ${s.value?.toStringAsFixed(1)} $suffix\n'
-      'Min: ${s.min ?? "—"} · Max: ${s.max ?? "—"}\nMuestras: ${s.sampleCount}',
+      '${art.hour.toString().padLeft(2, '0')}: ${s.value?.toStringAsFixed(1) ?? "—"} $suffix',
+      const TextStyle(color: Colors.white, fontSize: 11),
+    );
+  }
+
+  /// Diario: just the date, no values.
+  LineTooltipItem _dateTooltipItem(EnvironmentHistoryPoint p) {
+    final art = p.start.toUtc().subtract(const Duration(hours: 3));
+    return LineTooltipItem(
+      '${art.day.toString().padLeft(2, '0')}/${art.month.toString().padLeft(2, '0')}/${art.year}',
       const TextStyle(color: Colors.white, fontSize: 11),
     );
   }
@@ -724,54 +1090,46 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   ) {
     final humidity = metric == EnvironmentHistoryMetric.humidity;
     final suffix = humidity ? '%' : '°C';
-    final values = points
-        .map((p) => p.stats(metric).value)
-        .whereType<double>()
-        .toList()
-      ..sort();
+    final isDaily = _mode == EnvironmentHistoryMode.daily;
+    final color = humidity ? Colors.cyanAccent : Colors.orangeAccent;
+    final series = _seriesFor(points, metric, color);
+    final yRange = humidity
+        ? (minY: 0.0, maxY: 100.0)
+        : _yRangeFor(points, metric, fallbackMin: 0, fallbackMax: 1);
     return LineChart(
       LineChartData(
         minX: _minX(points.length),
         maxX: _maxX(points.length),
-        minY: humidity ? 0 : values.first.floorToDouble() - 1,
-        maxY: humidity ? 100 : values.last.ceilToDouble() + 1,
+        minY: yRange.minY,
+        maxY: yRange.maxY,
         borderData: FlBorderData(show: false),
         gridData: FlGridData(
           getDrawingHorizontalLine: (_) =>
               const FlLine(color: Color(0xFF304156), strokeWidth: 0.5),
           drawVerticalLine: false,
         ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: _spotsFor(points, metric),
-            color: humidity ? Colors.cyanAccent : Colors.orangeAccent,
-            isCurved: false,
-            barWidth: 2,
-            dotData: const FlDotData(show: true),
-          ),
-        ],
+        lineBarsData: series.bars,
+        betweenBarsData: series.betweenBars,
         titlesData: FlTitlesData(
           topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 48,
-              interval: humidity ? 20 : 1,
-              getTitlesWidget: (v, _) => Text(
-                '${v.toStringAsFixed(0)}$suffix',
-                style: const TextStyle(fontSize: 10, color: Colors.white70),
-              ),
-            ),
-          ),
+          // Shown separately in a pinned column outside the horizontal
+          // scroll (see `_renderChartArea`/`_pinnedAxis`) so it stays
+          // visible while the plot scrolls — not rendered here any more.
+          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
           bottomTitles: AxisTitles(sideTitles: _bottomTitles(points)),
         ),
         lineTouchData: LineTouchData(
           touchTooltipData: LineTouchTooltipData(
             getTooltipItems: (spots) => spots
+                // Diario adds 2 extra (invisible) bars per _seriesFor for the
+                // min/max band; only the average bar (index 0) should ever
+                // produce a tooltip line.
+                .where((spot) => spot.barIndex == 0)
                 .map(
-                  (spot) =>
-                      _tooltipItem(points[spot.x.toInt()], suffix, metric),
+                  (spot) => isDaily
+                      ? _dateTooltipItem(points[spot.x.toInt()])
+                      : _tooltipItem(points[spot.x.toInt()], suffix, metric),
                 )
                 .toList(),
           ),
@@ -792,125 +1150,99 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     required bool hasTemp,
     required bool hasHum,
   }) {
-    final tempValues = points
-        .map((p) => p.temperature.value)
-        .whereType<double>()
-        .toList()
-      ..sort();
     final minX = _minX(points.length);
     final maxX = _maxX(points.length);
+    final isDaily = _mode == EnvironmentHistoryMode.daily;
     // Touch/tooltip lives on whichever chart actually has data to touch;
     // the other is IgnorePointer'd so taps always land on an interactive
-    // series. Tooltip content always combines both metrics regardless.
+    // series. Tooltip content combines both metrics in Horario; Diario
+    // shows only the date (see _dateTooltipItem).
     final touchOnTemp = hasTemp || !hasHum;
 
-    Widget tempChart({required bool interactive}) => LineChart(
-      LineChartData(
-        minX: minX,
-        maxX: maxX,
-        minY: hasTemp ? tempValues.first.floorToDouble() - 1 : 0,
-        maxY: hasTemp ? tempValues.last.ceilToDouble() + 1 : 1,
-        borderData: FlBorderData(show: false),
-        gridData: FlGridData(
-          getDrawingHorizontalLine: (_) =>
-              const FlLine(color: Color(0xFF304156), strokeWidth: 0.5),
-          drawVerticalLine: false,
-        ),
-        lineBarsData: [
-          LineChartBarData(
-            spots: _spotsFor(points, EnvironmentHistoryMetric.temperature),
-            color: Colors.orangeAccent,
-            isCurved: false,
-            barWidth: 2,
-            dotData: const FlDotData(show: true),
-          ),
-        ],
-        titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          leftTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 40,
-              interval: 1,
-              getTitlesWidget: (v, _) => Text(
-                '${v.toStringAsFixed(0)}°',
-                style: const TextStyle(fontSize: 10, color: Colors.orangeAccent),
-              ),
-            ),
-          ),
-          bottomTitles: AxisTitles(sideTitles: _bottomTitles(points)),
-        ),
-        lineTouchData: interactive
-            ? LineTouchData(
-                touchTooltipData: LineTouchTooltipData(
-                  getTooltipItems: (spots) => spots.map((spot) {
-                    final p = points[spot.x.toInt()];
-                    final art = p.start.toUtc().subtract(const Duration(hours: 3));
-                    return LineTooltipItem(
-                      '${art.day}/${art.month} ${art.hour}:00 ART\n'
-                      'Temperatura: ${p.temperature.value?.toStringAsFixed(1) ?? "—"} °C\n'
-                      'Humedad: ${p.humidity.value?.toStringAsFixed(1) ?? "—"} %',
-                      const TextStyle(color: Colors.white, fontSize: 11),
-                    );
-                  }).toList(),
-                ),
-              )
-            : const LineTouchData(enabled: false),
-      ),
+    LineTooltipItem dualTooltip(EnvironmentHistoryPoint p) {
+      final art = p.start.toUtc().subtract(const Duration(hours: 3));
+      return LineTooltipItem(
+        '${art.hour.toString().padLeft(2, '0')}\n'
+        'Temp: ${p.temperature.value?.toStringAsFixed(1) ?? "—"} °C\n'
+        'Hum: ${p.humidity.value?.toStringAsFixed(1) ?? "—"} %',
+        const TextStyle(color: Colors.white, fontSize: 11),
+      );
+    }
+
+    LineTouchTooltipData tooltipData() => LineTouchTooltipData(
+      getTooltipItems: (spots) => spots
+          .where((spot) => spot.barIndex == 0)
+          .map(
+            (spot) => isDaily
+                ? _dateTooltipItem(points[spot.x.toInt()])
+                : dualTooltip(points[spot.x.toInt()]),
+          )
+          .toList(),
     );
 
-    Widget humChart({required bool interactive}) => LineChart(
-      LineChartData(
-        minX: minX,
-        maxX: maxX,
-        minY: 0,
-        maxY: 100,
-        borderData: FlBorderData(show: false),
-        gridData: const FlGridData(show: false),
-        lineBarsData: [
-          LineChartBarData(
-            spots: _spotsFor(points, EnvironmentHistoryMetric.humidity),
-            color: Colors.cyanAccent,
-            isCurved: false,
-            barWidth: 2,
-            dotData: const FlDotData(show: true),
+    Widget tempChart({required bool interactive}) {
+      final series = _seriesFor(points, EnvironmentHistoryMetric.temperature, Colors.orangeAccent);
+      final yRange = hasTemp
+          ? _yRangeFor(
+              points,
+              EnvironmentHistoryMetric.temperature,
+              fallbackMin: 0,
+              fallbackMax: 1,
+            )
+          : (minY: 0.0, maxY: 1.0);
+      return LineChart(
+        LineChartData(
+          minX: minX,
+          maxX: maxX,
+          minY: yRange.minY,
+          maxY: yRange.maxY,
+          borderData: FlBorderData(show: false),
+          gridData: FlGridData(
+            getDrawingHorizontalLine: (_) =>
+                const FlLine(color: Color(0xFF304156), strokeWidth: 0.5),
+            drawVerticalLine: false,
           ),
-        ],
-        titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: AxisTitles(
-            sideTitles: SideTitles(
-              showTitles: true,
-              reservedSize: 34,
-              interval: 20,
-              getTitlesWidget: (v, _) => Text(
-                '${v.toStringAsFixed(0)}%',
-                style: const TextStyle(fontSize: 10, color: Colors.cyanAccent),
-              ),
-            ),
+          lineBarsData: series.bars,
+          betweenBarsData: series.betweenBars,
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            // Pinned separately outside the scroll — see _renderChartArea.
+            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(sideTitles: _bottomTitles(points)),
           ),
-          bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          lineTouchData: interactive
+              ? LineTouchData(touchTooltipData: tooltipData())
+              : const LineTouchData(enabled: false),
         ),
-        lineTouchData: interactive
-            ? LineTouchData(
-                touchTooltipData: LineTouchTooltipData(
-                  getTooltipItems: (spots) => spots.map((spot) {
-                    final p = points[spot.x.toInt()];
-                    final art = p.start.toUtc().subtract(const Duration(hours: 3));
-                    return LineTooltipItem(
-                      '${art.day}/${art.month} ${art.hour}:00 ART\n'
-                      'Temperatura: ${p.temperature.value?.toStringAsFixed(1) ?? "—"} °C\n'
-                      'Humedad: ${p.humidity.value?.toStringAsFixed(1) ?? "—"} %',
-                      const TextStyle(color: Colors.white, fontSize: 11),
-                    );
-                  }).toList(),
-                ),
-              )
-            : const LineTouchData(enabled: false),
-      ),
-    );
+      );
+    }
+
+    Widget humChart({required bool interactive}) {
+      final series = _seriesFor(points, EnvironmentHistoryMetric.humidity, Colors.cyanAccent);
+      return LineChart(
+        LineChartData(
+          minX: minX,
+          maxX: maxX,
+          minY: 0,
+          maxY: 100,
+          borderData: FlBorderData(show: false),
+          gridData: const FlGridData(show: false),
+          lineBarsData: series.bars,
+          betweenBarsData: series.betweenBars,
+          titlesData: FlTitlesData(
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            // Pinned separately outside the scroll — see _renderChartArea.
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          ),
+          lineTouchData: interactive
+              ? LineTouchData(touchTooltipData: tooltipData())
+              : const LineTouchData(enabled: false),
+        ),
+      );
+    }
 
     return Stack(
       children: [

@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/agro_device.dart';
+import '../models/agro_device_room.dart';
+import 'agro_device_room_service.dart';
 import 'agro_device_service.dart';
 import 'temperature_history_repository.dart';
 
@@ -17,6 +19,44 @@ class EnvironmentHistoryScope {
   const EnvironmentHistoryScope(this.tenantId, this.siteId, this.deviceId);
   final String tenantId, siteId, deviceId;
   String get key => '$tenantId/$siteId/$deviceId';
+}
+
+/// Human-readable labels for the card's header. [deviceName] is always
+/// present (falls back to the raw id if the Device doc has no `name`);
+/// [roomName] is only set when a distinct Room document actually matches
+/// this scope's unit — most Devices today (e.g. each Gene Pig Sala) expose
+/// no Room subcollection at all and are their own implicit Room, in which
+/// case the caller should just show [deviceName] once, not repeat it.
+class DeviceDisplayNames {
+  const DeviceDisplayNames(this.deviceName, this.roomName);
+  final String deviceName;
+  final String? roomName;
+}
+
+/// One ART calendar day (paginación por día — solo Horario, ver class docs
+/// de [DeviceEnvironmentHistoryRepository.fetchDay]).
+class EnvironmentHistoryDay {
+  const EnvironmentHistoryDay(this.year, this.month, this.day);
+  final int year;
+  final int month;
+  final int day;
+
+  EnvironmentHistoryDay get previous {
+    final d = DateTime.utc(year, month, day).subtract(const Duration(days: 1));
+    return EnvironmentHistoryDay(d.year, d.month, d.day);
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is EnvironmentHistoryDay &&
+      other.year == year &&
+      other.month == month &&
+      other.day == day;
+  @override
+  int get hashCode => Object.hash(year, month, day);
+  @override
+  String toString() =>
+      '$year-${month.toString().padLeft(2, '0')}-${day.toString().padLeft(2, '0')}';
 }
 
 /// One ART calendar month (Etapa 2/2 paginación por mes — solo Diario, ver
@@ -83,16 +123,20 @@ class DeviceEnvironmentHistoryRepository {
   DeviceEnvironmentHistoryRepository({
     FirebaseFirestore? firestore,
     AgroDeviceService devices = const AgroDeviceService(),
+    AgroDeviceRoomService rooms = const AgroDeviceRoomService(),
     TemperatureHistoryRepository? legacyTemperature,
   }) : _firestore = firestore,
        _devices = devices,
+       _rooms = rooms,
        _legacyTemperature =
            legacyTemperature ?? TemperatureHistoryRepository(firestore: firestore);
   final FirebaseFirestore? _firestore;
   final AgroDeviceService _devices;
+  final AgroDeviceRoomService _rooms;
   final TemperatureHistoryRepository _legacyTemperature;
   final _scopes = <String, Future<EnvironmentHistoryScope>>{};
   final _cache = <String, Future<List<EnvironmentHistoryPoint>>>{};
+  final _displayNames = <String, Future<DeviceDisplayNames>>{};
 
   // These aliases exist in backend/config/sites/default.json. Legacy Device
   // documents predate snapshotUnitKey; never infer identity from display names.
@@ -167,16 +211,73 @@ class DeviceEnvironmentHistoryRepository {
     }
   }
 
+  /// Device/Room display names for the card's header (never technical ids
+  /// when a real name is set). Cached per scope — same 0-extra-reads intent
+  /// as [resolve]'s own scope cache.
+  Future<DeviceDisplayNames> resolveDisplayNames(
+    String tenantId,
+    EnvironmentHistoryScope scope,
+    String unitId,
+  ) async {
+    final future = _displayNames.putIfAbsent(
+      scope.key,
+      () => _loadDisplayNames(tenantId, scope, unitId),
+    );
+    try {
+      return await future;
+    } catch (_) {
+      _displayNames.remove(scope.key);
+      rethrow;
+    }
+  }
+
+  Future<DeviceDisplayNames> _loadDisplayNames(
+    String tenantId,
+    EnvironmentHistoryScope scope,
+    String unitId,
+  ) async {
+    final device = await _devices.getById(
+      tenantId: tenantId,
+      deviceId: scope.deviceId,
+    );
+    final deviceName = device != null && device.name.trim().isNotEmpty
+        ? device.name
+        : scope.deviceId;
+    final rooms = await _rooms.listByDevice(
+      tenantId: tenantId,
+      deviceId: scope.deviceId,
+    );
+    AgroDeviceRoom? room;
+    for (final r in rooms) {
+      if (r.effectiveSnapshotUnitKey == unitId) {
+        room = r;
+        break;
+      }
+    }
+    final roomName = room != null && room.name.trim().isNotEmpty
+        ? room.name
+        : null;
+    return DeviceDisplayNames(
+      deviceName,
+      roomName != null && roomName != deviceName ? roomName : null,
+    );
+  }
+
   /// Orchestrates one cache miss: modern first, then only as much legacy
   /// temperature as needed to fill the window (see class docs). Override
   /// [loadModern] in tests to fake the modern Firestore read; inject a fake
   /// [TemperatureHistoryRepository] via the constructor for legacy.
+  ///
+  /// [beforeUtc], when set, bounds the window to periods strictly before
+  /// that instant instead of "the latest [limit]" — used by
+  /// [fetchHourlyPage] for Horario's backward pagination.
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope scope,
     EnvironmentHistoryMode mode,
-    int limit,
-  ) async {
-    final modern = await loadModern(scope, mode, limit);
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
+    final modern = await loadModern(scope, mode, limit, beforeUtc: beforeUtc);
     // Humidity only ever comes from the modern source (see class docs), so
     // the legacy bridge below only ever contributes temperature points for
     // periods modern doesn't have yet — never a second, colliding humidity.
@@ -186,7 +287,7 @@ class DeviceEnvironmentHistoryRepository {
     final needed = limit - modern.length;
     if (needed <= 0) return modern;
     final DateTime? oldestModern = modern.isEmpty
-        ? null
+        ? beforeUtc
         : modern.map((p) => p.start).reduce((a, b) => a.isBefore(b) ? a : b);
     final legacy = await _loadLegacyTemperature(
       unit,
@@ -213,18 +314,24 @@ class DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> loadModern(
     EnvironmentHistoryScope scope,
     EnvironmentHistoryMode mode,
-    int limit,
-  ) async {
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
     final collection = mode == EnvironmentHistoryMode.hourly
         ? 'historyHourly'
         : 'historyDaily';
-    final result = await (_firestore ?? FirebaseFirestore.instance)
+    Query<Map<String, dynamic>> query = (_firestore ?? FirebaseFirestore.instance)
         .collection(
           'tenants/${scope.tenantId}/devices/${scope.deviceId}/$collection',
         )
-        .orderBy('periodStart', descending: true)
-        .limit(limit)
-        .get();
+        .orderBy('periodStart', descending: true);
+    if (beforeUtc != null) {
+      query = query.where(
+        'periodStart',
+        isLessThan: Timestamp.fromDate(beforeUtc),
+      );
+    }
+    final result = await query.limit(limit).get();
     final points = <EnvironmentHistoryPoint>[];
     for (final doc in result.docs) {
       final d = doc.data();
@@ -294,12 +401,75 @@ class DeviceEnvironmentHistoryRepository {
   }
 
   // ---------------------------------------------------------------------
-  // Etapa 2/2 — paginación por mes (solo Diario; Horario mantiene fetch()
-  // sin cambios, ver §11 del prompt). Cada mes es una query genuinamente
-  // acotada (como mucho 31 días, nunca "toda la historia"), cacheada de
-  // forma independiente para que moverse entre meses ya pedidos cueste 0
-  // reads — el mismo mecanismo Future-cache que [fetch] ya usaba.
+  // Paginación por día (solo Horario) y por mes (solo Diario). Por default
+  // cada uno carga exactamente un período: el día ART en curso para
+  // Horario, el mes ART en curso para Diario — nunca más que eso sin que el
+  // usuario lo pida explícitamente ("Día anterior"/"Mes anterior"). Cada
+  // período es una query genuinamente acotada (como mucho 24 horas o 31
+  // días, nunca "toda la historia"), cacheada de forma independiente para
+  // que moverse entre períodos ya pedidos cueste 0 reads.
   // ---------------------------------------------------------------------
+
+  /// Fetches (or returns from cache) one ART calendar day of Horario,
+  /// already merged legacy+modern with modern precedence. Concurrent/
+  /// duplicate calls for the same scope+day share one in-flight Future.
+  Future<List<EnvironmentHistoryPoint>> fetchDay(
+    EnvironmentHistoryScope scope,
+    EnvironmentHistoryDay day,
+  ) async {
+    final key = '${scope.key}/hourly-day/$day';
+    final future = _cache.putIfAbsent(key, () => loadDay(scope, day));
+    try {
+      return await future;
+    } catch (_) {
+      _cache.remove(key);
+      rethrow;
+    }
+  }
+
+  /// Separate seam for instrumented tests, mirroring [loadMonth]. Reuses
+  /// the existing cursor-based [loadModern]/[_loadLegacyTemperature] (same
+  /// ones [load] already uses) with `beforeUtc` = the day's own end, then
+  /// filters to just that day — a day has at most 24 hourly points, so the
+  /// "top 24 before tomorrow" query is always guaranteed to include every
+  /// point that actually belongs to it, from both sources independently.
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope scope,
+    EnvironmentHistoryDay day,
+  ) async {
+    const hoursPerDay = 24;
+    final fromUtc = _artDayStartUtc(day.year, day.month, day.day);
+    final toUtc = fromUtc.add(const Duration(hours: hoursPerDay));
+    bool withinDay(EnvironmentHistoryPoint p) =>
+        !p.start.isBefore(fromUtc) && p.start.isBefore(toUtc);
+
+    final modernAll = await loadModern(
+      scope,
+      EnvironmentHistoryMode.hourly,
+      hoursPerDay,
+      beforeUtc: toUtc,
+    );
+    final modern = modernAll.where(withinDay).toList();
+    if (scope.tenantId != _legacyGenePigTenant || modern.length >= hoursPerDay) {
+      return modern;
+    }
+    final unit = _legacyGenePigAliasesByDevice[scope.deviceId];
+    if (unit == null) return modern;
+    final legacyAll = await _loadLegacyTemperature(
+      unit,
+      EnvironmentHistoryMode.hourly,
+      hoursPerDay,
+      toUtc,
+    );
+    final merged = <DateTime, EnvironmentHistoryPoint>{};
+    for (final p in legacyAll.where(withinDay)) {
+      merged[p.start] = p;
+    }
+    for (final p in modern) {
+      merged[p.start] = p; // modern gana ante solapamiento, igual que load().
+    }
+    return merged.values.toList()..sort((a, b) => a.start.compareTo(b.start));
+  }
 
   /// Fetches (or returns from cache) one ART calendar month of Diario,
   /// already merged legacy+modern with modern precedence — the widget never
@@ -412,6 +582,11 @@ class DeviceEnvironmentHistoryRepository {
 /// the previous/next month — [DateTime] normalizes that for us), expressed
 /// as the equivalent UTC instant (ART = UTC-3, so ART 00:00 = UTC 03:00).
 DateTime _artMonthStartUtc(int year, int month) => DateTime.utc(year, month, 1, 3);
+
+/// ART midnight of [year]/[month]/[day], expressed as the equivalent UTC
+/// instant — same convention as [_artMonthStartUtc], one calendar day
+/// instead of one calendar month.
+DateTime _artDayStartUtc(int year, int month, int day) => DateTime.utc(year, month, day, 3);
 
 int _daysInMonth(int year, int month) =>
     DateTime.utc(year, month + 1, 1).difference(DateTime.utc(year, month, 1)).inDays;

@@ -10,6 +10,13 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// Each chart mode now also renders 1-2 non-interactive, dataless LineCharts
+// pinned outside the horizontal scroll to keep the Y axis visible (see
+// device_environment_history_card.dart's `_pinnedAxis`). This finder ignores
+// those and matches only the "real" chart(s) that actually carry data.
+Finder dataCharts() =>
+    find.byWidgetPredicate((w) => w is LineChart && w.data.lineBarsData.isNotEmpty);
+
 AgroDevice device(int n) => AgroDevice.fromFirestore(
   'plc-genetica-sala$n',
   tenantId: 'the-gene-pig',
@@ -37,24 +44,51 @@ class CountingRepository extends DeviceEnvironmentHistoryRepository {
     ]);
   }
 
+  // Exercised directly by the "cache separates Site..." test below via
+  // `repo.fetch(...)` — the widget itself no longer calls `fetch()` for
+  // Horario (it loads by ART day via `loadDay`, overridden further down).
   @override
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMode m,
-    int limit,
-  ) async {
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
     calls.add('${s.key}/${m.name}/$limit');
     if (fail) throw StateError('offline');
     return points;
   }
 
   @override
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope s,
+    EnvironmentHistoryDay day,
+  ) async {
+    calls.add('${s.key}/hourly-day/$day');
+    if (fail) throw StateError('offline');
+    return points;
+  }
+
+  final _loadedMonths = <String>{};
+
+  @override
   Future<List<EnvironmentHistoryPoint>> loadMonth(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMonth month,
   ) async {
-    monthCalls.add('${s.key}/$month');
+    final key = '${s.key}/$month';
+    monthCalls.add(key);
     if (fail) throw StateError('offline');
+    // Like `load()` above: this fixture only ever represents ONE real month
+    // of history. The auto-backfill-to-width feature will probe further
+    // back automatically once it sees this single point doesn't fill the
+    // available width — treat any OTHER month as the floor, so that probe
+    // terminates after exactly one extra call instead of looping forever
+    // against a fixture that would otherwise return the same page forever.
+    if (_loadedMonths.isNotEmpty && !_loadedMonths.contains(key)) {
+      return const [];
+    }
+    _loadedMonths.add(key);
     return points;
   }
 }
@@ -107,6 +141,7 @@ void main() {
               tenantId: 'the-gene-pig',
               unitId: 'munters1',
               visible: visible,
+              chartHeight: 200,
             ),
           ),
         ),
@@ -118,16 +153,16 @@ void main() {
     expect(repo.calls, isEmpty);
     expect(repo.resolves, 0);
     await render(true);
-    expect(repo.calls.length, 1);
+    expect(repo.calls.length, 1); // solo el día ART en curso, sin auto-relleno
     expect(
-      repo.calls.single,
-      contains('las-heras/plc-genetica-sala1/hourly/24'),
+      repo.calls.first,
+      contains('las-heras/plc-genetica-sala1/hourly-day/'),
     );
     await t.tap(find.byTooltip('Humedad'));
     await t.pumpAndSettle();
     expect(repo.calls.length, 1);
     expect(find.text('Humedad interior'), findsOneWidget);
-    expect(find.byType(LineChart), findsOneWidget);
+    expect(dataCharts(), findsOneWidget);
     await t.tap(find.text('Diario'));
     await t.pumpAndSettle();
     expect(repo.calls.length, 1); // hourly cache untouched
@@ -159,6 +194,7 @@ void main() {
             tenantId: 'the-gene-pig',
             unitId: 'munters2',
             visible: true,
+            chartHeight: 200,
           ),
         ),
       ),
@@ -223,12 +259,13 @@ void main() {
             tenantId: 'the-gene-pig',
             unitId: 'munters1',
             visible: true,
+            chartHeight: 200,
           ),
         ),
       ),
     );
     await t.pumpAndSettle();
-    final chart = t.widget<LineChart>(find.byType(LineChart));
+    final chart = t.widget<LineChart>(dataCharts());
     expect(chart.data.lineBarsData.single.spots[1], FlSpot.nullSpot);
     expect(
       chart.data.lineBarsData.single.spots.where((p) => p.y == 0),

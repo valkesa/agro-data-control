@@ -137,6 +137,19 @@ class SnapshotRuntime {
 
   Map<String, Object?> healthJson() => _state.healthJson;
 
+  /// Per-Device diagnostics for the environmental history pipeline —
+  /// added after the 2026-09-25 incident where it silently wedged for ~19h
+  /// on both Salas while this endpoint's overall `healthy` stayed true the
+  /// whole time (that flag only reflects PLC/snapshot connectivity, a
+  /// different concern). See DeviceEnvironmentHistoryService.healthJson.
+  List<Map<String, Object?>> deviceEnvironmentHistoryHealthJson() =>
+      _deviceEnvironmentHistoryServices
+          .map((DeviceEnvironmentHistoryService s) => s.healthJson())
+          .toList();
+
+  bool get deviceEnvironmentHistoryDegraded => _deviceEnvironmentHistoryServices
+      .any((DeviceEnvironmentHistoryService s) => s.isStalled());
+
   Future<void> _runLoop() async {
     _logPlc(
       'runtime started pollingIntervalMs=${config.pollingIntervalMs} timeoutMs=${config.timeoutMs}',

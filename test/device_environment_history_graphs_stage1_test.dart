@@ -22,6 +22,13 @@ class _FakeCerdasRepository extends CerdasRepository {
 EnvironmentHistoryStats _stats(double v, {int count = 3}) =>
     EnvironmentHistoryStats(v, v - 1, v + 1, count);
 
+// Each chart mode now also renders 1-2 non-interactive, dataless LineCharts
+// pinned outside the horizontal scroll to keep the Y axis visible (see
+// device_environment_history_card.dart's `_pinnedAxis`). This finder ignores
+// those and matches only the "real" chart(s) that actually carry data.
+Finder dataCharts() =>
+    find.byWidgetPredicate((w) => w is LineChart && w.data.lineBarsData.isNotEmpty);
+
 class CountingRepository extends DeviceEnvironmentHistoryRepository {
   final calls = <String>[];
   final monthCalls = <String>[];
@@ -35,7 +42,22 @@ class CountingRepository extends DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMode m,
-    int limit,
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
+    calls.add(s.deviceId);
+    return pointsByUnit[s.deviceId] ?? const [];
+  }
+
+  // The widget loads Horario by ART day now (see loadDay below), never via
+  // load() directly — kept simple (no day filtering) since these tests are
+  // about UI behavior, not date-boundary logic, and filtering by the exact
+  // requested day would make fixtures dated relative to "today" go stale as
+  // real time passes.
+  @override
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope s,
+    EnvironmentHistoryDay day,
   ) async {
     calls.add(s.deviceId);
     return pointsByUnit[s.deviceId] ?? const [];
@@ -109,6 +131,7 @@ void main() {
               tenantId: 'the-gene-pig',
               unitId: 'munters1',
               visible: true,
+              chartHeight: 200,
             ),
           ),
         ),
@@ -144,18 +167,19 @@ void main() {
               tenantId: 'the-gene-pig',
               unitId: 'munters1',
               visible: true,
+              chartHeight: 200,
             ),
           ),
         ),
       );
       await t.pumpAndSettle();
       expect(repo.calls.length, 1);
-      expect(find.byType(LineChart), findsOneWidget); // single-metric mode
+      expect(dataCharts(), findsOneWidget); // single-metric mode
 
       await t.tap(find.byTooltip('Ambas'));
       await t.pumpAndSettle();
       expect(repo.calls.length, 1); // 0 extra reads
-      expect(find.byType(LineChart), findsNWidgets(2)); // temp base + hum overlay
+      expect(dataCharts(), findsNWidgets(2)); // temp base + hum overlay
       expect(find.text('Temperatura interior'), findsOneWidget);
       expect(find.text('Humedad interior'), findsOneWidget);
     });
@@ -180,6 +204,7 @@ void main() {
               unitId: 'munters1',
               visible: true,
               initialMetric: EnvironmentHistoryMetric.both,
+              chartHeight: 200,
             ),
           ),
         ),
@@ -187,7 +212,7 @@ void main() {
       await t.pumpAndSettle();
       // Renders (not "Sin datos históricos") because temperature is present.
       expect(find.text('Sin datos históricos'), findsNothing);
-      expect(find.byType(LineChart), findsOneWidget); // no humidity => no overlay chart
+      expect(dataCharts(), findsOneWidget); // no humidity => no overlay chart
     });
   });
 
@@ -209,12 +234,13 @@ void main() {
               unitId: 'munters1',
               visible: true,
               initialMetric: EnvironmentHistoryMetric.both,
+              chartHeight: 200,
             ),
           ),
         ),
       );
       await t.pumpAndSettle();
-      final charts = t.widgetList<LineChart>(find.byType(LineChart)).toList();
+      final charts = t.widgetList<LineChart>(dataCharts()).toList();
       expect(charts.length, 2);
       final maxYs = charts.map((c) => c.data.maxY).toList()..sort();
       // Temperature (~23 + margin) and humidity (fixed 0-100) must NOT
@@ -249,6 +275,7 @@ void main() {
                 tenantId: 'the-gene-pig',
                 unitId: 'munters1',
                 visible: true,
+                chartHeight: 200,
               ),
             ),
           ),
@@ -257,8 +284,9 @@ void main() {
       await t.pumpAndSettle();
       await t.tap(find.text('Diario'));
       await t.pumpAndSettle();
-      // Etapa 2/2: Diario abre solo con el mes ART actual (septiembre) — los
-      // días de agosto todavía no están cargados.
+      // Diario abre solo con el mes ART actual (septiembre) — los días de
+      // agosto todavía no están cargados; cargarlos requiere el tap manual
+      // de "Mes anterior" de abajo (no hay auto-relleno).
       expect(find.text('1'), findsOneWidget); // not '01'
       expect(find.text('01'), findsNothing);
       expect(find.text('2'), findsOneWidget);

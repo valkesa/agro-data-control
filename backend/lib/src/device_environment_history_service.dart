@@ -39,6 +39,47 @@ class DeviceEnvironmentHistoryService {
   List<DeviceEnvironmentDailyRecord> get pendingDailyPeriods =>
       List.unmodifiable(_pendingDaily);
 
+  // --- Diagnostics (incident 2026-09-25): /health stayed green for ~19h
+  // while this pipeline was silently wedged by an uncaught exception inside
+  // handleSnapshot's own catchError — nothing outside this class could see
+  // it. lastSampleSlot already told us the truth; it just wasn't exposed.
+  DateTime? get lastSampleSlot => _lastSampleSlot;
+  String? _lastProcessingError;
+  DateTime? _lastProcessingErrorAtUtc;
+  String? get lastProcessingError => _lastProcessingError;
+  DateTime? get lastProcessingErrorAtUtc => _lastProcessingErrorAtUtc;
+  // ART-labeled (see argentinaUtcOffset docs), same convention as
+  // lastSampleSlot, so the two are directly comparable without conversion.
+  DateTime? _lastFreshDataObservedLocal;
+
+  /// True only when the PLC keeps delivering fresh readings (so this is not
+  /// just "the PLC is offline", already visible elsewhere) AND accepted
+  /// samples have stopped advancing for longer than [threshold] — exactly
+  /// the 2026-09-25 incident's signature, previously invisible anywhere.
+  bool isStalled({Duration threshold = const Duration(hours: 2)}) {
+    final freshAt = _lastFreshDataObservedLocal;
+    final sampleAt = _lastSampleSlot;
+    // Never seen fresh data, or never accepted a sample yet (e.g. just
+    // started): not enough history to call this "stalled" one way or the
+    // other — avoid a false positive on startup.
+    if (freshAt == null || sampleAt == null) return false;
+    return freshAt.difference(sampleAt) > threshold;
+  }
+
+  Map<String, Object?> healthJson() => <String, Object?>{
+    'tenantId': config.tenantId,
+    'siteId': config.siteId,
+    'deviceId': config.deviceId,
+    'siteState': _siteState.name,
+    'durabilityDegraded': _durabilityDegraded,
+    'lastSampleSlot': _lastSampleSlot?.toIso8601String(),
+    'pendingHourlyCount': _pendingHourly.length,
+    'pendingDailyCount': _pendingDaily.length,
+    'lastProcessingError': _lastProcessingError,
+    'lastProcessingErrorAt': _lastProcessingErrorAtUtc?.toIso8601String(),
+    'stalled': isStalled(),
+  };
+
   /// Collision-free encoding of every effective identity component.
   String get checkpointPath {
     final dir = config.checkpointDirectoryPath.trim();
@@ -65,6 +106,8 @@ class DeviceEnvironmentHistoryService {
       Object error,
       StackTrace stack,
     ) {
+      _lastProcessingError = error.toString();
+      _lastProcessingErrorAtUtc = DateTime.now().toUtc();
       _log('processing error=$error');
     });
   }
@@ -75,6 +118,17 @@ class DeviceEnvironmentHistoryService {
     Map<String, Object?> units,
     DateTime observedUtc,
   ) async {
+    final local = observedUtc.toUtc().subtract(const Duration(hours: 3));
+    // Deliberately computed before recovery/durability/Site gating below —
+    // this must reflect "did the PLC deliver fresh data this poll" on its
+    // own, never entangled with whether the rest of the pipeline is
+    // actually able to act on it. That entanglement (freshness only ever
+    // observed deep inside the happy path) is exactly why the 2026-09-25
+    // incident had no visible signal for ~19h: every early return above
+    // this point also skipped noticing that fresh data kept arriving.
+    final tempFresh = _checkFreshness(units, config.temperatureSourcePath);
+    final humFresh = _checkFreshness(units, config.humiditySourcePath);
+    if (tempFresh.fresh || humFresh.fresh) _lastFreshDataObservedLocal = local;
     if (!_recovered) {
       // Load only; recovery must never write before Site verification.
       try {
@@ -96,7 +150,6 @@ class DeviceEnvironmentHistoryService {
     }
     await _retryPending();
     if (_durabilityDegraded || writesBlocked) return;
-    final local = observedUtc.toUtc().subtract(const Duration(hours: 3));
     final hour = _hourStart(local);
     // Out-of-order clocks/snapshots must not reopen a completed period.
     if (_currentHour != null && hour.isBefore(_currentHour!.hourStart)) return;
@@ -116,8 +169,6 @@ class DeviceEnvironmentHistoryService {
     if (slot == null ||
         (_lastSampleSlot != null && !slot.isAfter(_lastSampleSlot!)))
       return;
-    final tempFresh = _checkFreshness(units, config.temperatureSourcePath);
-    final humFresh = _checkFreshness(units, config.humiditySourcePath);
     final temp = tempFresh.fresh
         ? _extractDouble(units, config.temperatureSourcePath)
         : null;
@@ -373,6 +424,17 @@ const int schemaVersion = 1;
 /// H13 — bump if the local checkpoint file's own shape ever changes
 /// incompatibly (independent from the Firestore document `schemaVersion`).
 const int checkpointSchemaVersion = 3;
+
+/// Tolerance for float64 round-off in checkpoint validation (`sum/count`
+/// division can land a hair outside `[min, max]`, e.g. three identical
+/// 23.6 samples averaging to 23.600000000000005 — a real incident on
+/// 2026-09-25 where the OLD zero-tolerance `stats bounds` check rejected
+/// this on every single commit, permanently wedging both Salas' history
+/// pipeline silently for ~19h with /health still green). Applied
+/// consistently to every min/max/avg-vs-sum comparison in
+/// [_validateCheckpoint] — never to comparisons of two independently
+/// observed values (those have no shared rounding source to tolerate).
+const double _checkpointFloatEpsilon = 0.000001;
 
 /// §11 — Argentina has not observed DST since 2009 (Ley 25.155 effectively
 /// froze it at UTC-3 year-round), so a fixed offset is exact for every
@@ -840,7 +902,11 @@ void _validateCheckpoint(Map<String, dynamic> j) {
         number(m['avg']) && number(m['min']) && number(m['max']),
         'stats finite',
       );
-      require(m['min'] <= m['avg'] && m['avg'] <= m['max'], 'stats bounds');
+      require(
+        m['min'] - _checkpointFloatEpsilon <= m['avg'] &&
+            m['avg'] <= m['max'] + _checkpointFloatEpsilon,
+        'stats bounds',
+      );
     }
   }
 
@@ -864,7 +930,8 @@ void _validateCheckpoint(Map<String, dynamic> j) {
         final min = m['${prefix}Min'], max = m['${prefix}Max'];
         require(number(min) && number(max) && min <= max, 'accumulator bounds');
         require(
-          sum >= min * n - 0.000001 && sum <= max * n + 0.000001,
+          sum >= min * n - _checkpointFloatEpsilon &&
+              sum <= max * n + _checkpointFloatEpsilon,
           'accumulator sum',
         );
       }

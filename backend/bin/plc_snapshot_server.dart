@@ -385,6 +385,10 @@ Future<void> _handleRequestInternal(
       mode: effectiveRecipientMode,
       tenantId: runtime.config.runtimeEvents.tenantId,
     );
+    health['deviceEnvironmentHistory'] =
+        runtime.deviceEnvironmentHistoryHealthJson();
+    health['deviceEnvironmentHistoryDegraded'] =
+        runtime.deviceEnvironmentHistoryDegraded;
     await _writeJson(
       request.response,
       health,

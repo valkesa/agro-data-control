@@ -12,6 +12,13 @@ import 'package:flutter_test/flutter_test.dart';
 EnvironmentHistoryStats _stats(double v, {int count = 3}) =>
     EnvironmentHistoryStats(v, v - 1, v + 1, count);
 
+// Each chart mode now also renders 1-2 non-interactive, dataless LineCharts
+// pinned outside the horizontal scroll to keep the Y axis visible (see
+// device_environment_history_card.dart's `_pinnedAxis`). This finder ignores
+// those and matches only the "real" chart(s) that actually carry data.
+Finder dataCharts() =>
+    find.byWidgetPredicate((w) => w is LineChart && w.data.lineBarsData.isNotEmpty);
+
 List<EnvironmentHistoryPoint> _monthPoints(
   int year,
   int month,
@@ -42,7 +49,14 @@ class CountingRepository extends DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMode m,
-    int limit,
+    int limit, {
+    DateTime? beforeUtc,
+  }) async => const []; // Horario no es objeto de estos tests.
+
+  @override
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope s,
+    EnvironmentHistoryDay day,
   ) async => const []; // Horario no es objeto de estos tests.
 
   @override
@@ -72,7 +86,14 @@ class _GatedRepository extends DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> load(
     EnvironmentHistoryScope s,
     EnvironmentHistoryMode m,
-    int limit,
+    int limit, {
+    DateTime? beforeUtc,
+  }) async => const [];
+
+  @override
+  Future<List<EnvironmentHistoryPoint>> loadDay(
+    EnvironmentHistoryScope s,
+    EnvironmentHistoryDay day,
   ) async => const [];
 
   @override
@@ -98,6 +119,15 @@ void main() {
   final previous = current.previous;
   final twoBack = previous.previous;
 
+  // The new "auto-backfill to fill available width" behavior means these
+  // tests need a *bounded, known* viewport (`narrowSurface`) so the number
+  // of months auto-loaded before any manual tap is predictable — seed data
+  // below is sized so the initially-visible month alone already satisfies
+  // that width (`narrowWidth / _dayWidth` ≈ 14 points, seeded with 20),
+  // leaving the manual "Mes anterior" pagination mechanics these tests
+  // actually target unaffected by the new feature. Wrapped in a vertical
+  // scroll view so the new default `chartHeight` (440, "always ampliado")
+  // never overflows.
   Widget host(
     DeviceEnvironmentHistoryRepository repo, {
     EnvironmentHistoryMetric metric = EnvironmentHistoryMetric.temperature,
@@ -105,23 +135,33 @@ void main() {
   }) => MaterialApp(
     theme: ThemeData.dark(),
     home: Scaffold(
-      body: DeviceEnvironmentHistoryCard(
-        repository: repo,
-        tenantId: 'the-gene-pig',
-        unitId: unit,
-        visible: true,
-        initialMode: EnvironmentHistoryMode.daily,
-        initialMetric: metric,
+      body: SingleChildScrollView(
+        child: DeviceEnvironmentHistoryCard(
+          repository: repo,
+          tenantId: 'the-gene-pig',
+          unitId: unit,
+          visible: true,
+          initialMode: EnvironmentHistoryMode.daily,
+          initialMetric: metric,
+        ),
       ),
     ),
   );
 
+  const narrowWidth = 520.0; // exactly 20 * _dayWidth, matching the seed sizes below
+  void narrowSurface(WidgetTester t) {
+    t.view.physicalSize = const Size(narrowWidth, 900);
+    t.view.devicePixelRatio = 1;
+    addTearDown(t.view.reset);
+  }
+
   testWidgets('abrir Diario carga solo el mes actual (§1)', (t) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1, 2, 3],
+        List.generate(20, (i) => i + 1),
       );
     await t.pumpWidget(host(repo));
     await t.pumpAndSettle();
@@ -132,11 +172,12 @@ void main() {
   testWidgets('tap Mes anterior carga exactamente 1 mes adicional (§2)', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1, 2],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -151,20 +192,23 @@ void main() {
       'device-munters1/$current',
       'device-munters1/$previous',
     ]);
-    // Ambos meses concatenados: 4 puntos en total, sin perder los del mes
-    // actual al agregar el anterior.
-    final chart = t.widget<LineChart>(find.byType(LineChart));
-    expect(chart.data.lineBarsData.single.spots.length, 4);
+    // Ambos meses concatenados: 22 puntos en total (20 del actual + 2 del
+    // anterior), sin perder los del mes actual al agregar el anterior.
+    // Diario ahora agrega 2 barras extra invisibles (min/max) para la franja
+    // sombreada — la serie visible (promedio) sigue siendo la primera.
+    final chart = t.widget<LineChart>(dataCharts());
+    expect(chart.data.lineBarsData.first.spots.length, 22);
   });
 
   testWidgets('volver a un mes ya cargado (toggle Horario/Diario) → 0 reads (§4)', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -189,12 +233,13 @@ void main() {
     // Completer-controlled fetch so the second tap genuinely lands WHILE
     // the first is still in flight (a fake in-memory repo would otherwise
     // resolve instantly between the two tap() calls, defeating the test).
+    narrowSurface(t);
     final gate = <String, Completer<List<EnvironmentHistoryPoint>>>{};
     final repo = _GatedRepository(gate)
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -229,11 +274,12 @@ void main() {
   testWidgets('sin más historia: botón se deshabilita y no repite queries vacías (§19)', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       );
     // pointsByMonth no tiene entrada para `previous` => loadMonth devuelve [].
     await t.pumpWidget(host(repo));
@@ -259,11 +305,12 @@ void main() {
   testWidgets('humedad en mes viejo (solo legacy): gap, nunca cero (§6)', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -277,9 +324,11 @@ void main() {
     await t.pumpAndSettle();
     await t.tap(find.text('Mes anterior'));
     await t.pumpAndSettle();
-    final chart = t.widget<LineChart>(find.byType(LineChart));
-    final spots = chart.data.lineBarsData.single.spots;
-    expect(spots.length, 2);
+    final chart = t.widget<LineChart>(dataCharts());
+    final spots = chart.data.lineBarsData.first.spots;
+    // El mes anterior (1 punto, sin humedad) queda primero cronológicamente;
+    // el mes actual aporta los 20 restantes.
+    expect(spots.length, 21);
     expect(spots.first, FlSpot.nullSpot); // mes viejo: sin humedad, gap
     expect(spots.where((s) => s.y == 0), isEmpty); // nunca cero artificial
   });
@@ -287,11 +336,12 @@ void main() {
   testWidgets('Ambas: cargar mes nuevo actualiza las dos series con una sola carga (§7)', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -303,10 +353,10 @@ void main() {
     await t.tap(find.text('Mes anterior'));
     await t.pumpAndSettle();
     expect(repo.monthCalls.length, 2); // 1 carga por mes, no 2 (una por métrica)
-    expect(find.byType(LineChart), findsNWidgets(2)); // temp + hum superpuestos
+    expect(dataCharts(), findsNWidgets(2)); // temp + hum superpuestos
   });
 
-  testWidgets('ampliar no genera reads extra y conserva el estado al cerrar (§12-13)', (
+  testWidgets('no hay botón ampliar: el card siempre renderiza el detalle completo', (
     t,
   ) async {
     final repo = CountingRepository()
@@ -314,52 +364,34 @@ void main() {
         current.year,
         current.month,
         [1],
-      )
-      ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
-        previous.year,
-        previous.month,
-        [28],
       );
     await t.pumpWidget(host(repo));
     await t.pumpAndSettle();
-    await t.tap(find.text('Mes anterior'));
-    await t.pumpAndSettle();
-    expect(repo.monthCalls.length, 2);
-
-    await t.tap(find.byTooltip('Ampliar'));
-    await t.pumpAndSettle();
-    expect(repo.monthCalls.length, 2); // 0 reads extra al ampliar
-    expect(find.text('Histórico ampliado'), findsOneWidget);
-    // El mismo estado (2 meses) se ve reflejado en la copia ampliada.
-    expect(find.text('Mes anterior'), findsNWidgets(2)); // compacta + ampliada
-
-    await t.tap(find.byTooltip('Cerrar'));
-    await t.pumpAndSettle();
+    expect(find.byTooltip('Ampliar'), findsNothing);
     expect(find.text('Histórico ampliado'), findsNothing);
-    expect(repo.monthCalls.length, 2); // cerrar tampoco genera reads
-    // El estado original sigue disponible sin recargar.
-    final chart = t.widget<LineChart>(find.byType(LineChart));
-    expect(chart.data.lineBarsData.single.spots.length, 2);
   });
 
   testWidgets('lazy loading: visible=false → 0 reads; visible=true → 1 mes', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       );
     await t.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: DeviceEnvironmentHistoryCard(
-            repository: repo,
-            tenantId: 'the-gene-pig',
-            unitId: 'munters1',
-            visible: false,
-            initialMode: EnvironmentHistoryMode.daily,
+          body: SingleChildScrollView(
+            child: DeviceEnvironmentHistoryCard(
+              repository: repo,
+              tenantId: 'the-gene-pig',
+              unitId: 'munters1',
+              visible: false,
+              initialMode: EnvironmentHistoryMode.daily,
+            ),
           ),
         ),
       ),
@@ -369,12 +401,14 @@ void main() {
     await t.pumpWidget(
       MaterialApp(
         home: Scaffold(
-          body: DeviceEnvironmentHistoryCard(
-            repository: repo,
-            tenantId: 'the-gene-pig',
-            unitId: 'munters1',
-            visible: true,
-            initialMode: EnvironmentHistoryMode.daily,
+          body: SingleChildScrollView(
+            child: DeviceEnvironmentHistoryCard(
+              repository: repo,
+              tenantId: 'the-gene-pig',
+              unitId: 'munters1',
+              visible: true,
+              initialMode: EnvironmentHistoryMode.daily,
+            ),
           ),
         ),
       ),
@@ -386,11 +420,12 @@ void main() {
   testWidgets('scope: Sala1 y Sala2 mantienen meses cargados independientes', (
     t,
   ) async {
+    narrowSurface(t);
     final repo = CountingRepository()
       ..pointsByMonth['device-munters1/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1],
+        List.generate(20, (i) => i + 1),
       )
       ..pointsByMonth['device-munters1/$previous'] = _monthPoints(
         previous.year,
@@ -400,7 +435,7 @@ void main() {
       ..pointsByMonth['device-munters2/$current'] = _monthPoints(
         current.year,
         current.month,
-        [1, 2, 3],
+        List.generate(20, (i) => i + 1),
       );
     await t.pumpWidget(host(repo, unit: 'munters1'));
     await t.pumpAndSettle();
@@ -418,8 +453,8 @@ void main() {
       'device-munters1/$previous',
       'device-munters2/$current',
     ]);
-    final chart = t.widget<LineChart>(find.byType(LineChart));
-    expect(chart.data.lineBarsData.single.spots.length, 3); // solo Sala2
+    final chart = t.widget<LineChart>(dataCharts());
+    expect(chart.data.lineBarsData.first.spots.length, 20); // solo Sala2
   });
 
   test('regresión: el punto de corte de "hace dos meses" también funciona', () {

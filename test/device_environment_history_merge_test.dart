@@ -105,8 +105,9 @@ class _MergeTestRepository extends DeviceEnvironmentHistoryRepository {
   Future<List<EnvironmentHistoryPoint>> loadModern(
     EnvironmentHistoryScope scope,
     EnvironmentHistoryMode mode,
-    int limit,
-  ) async {
+    int limit, {
+    DateTime? beforeUtc,
+  }) async {
     modernCalls++;
     final sorted = [...modernPoints]..sort((a, b) => a.start.compareTo(b.start));
     return sorted.length > limit

@@ -8980,9 +8980,18 @@ void openEnvironmentHistory(
     context: context,
     builder: (dialogContext) => Dialog(
       backgroundColor: const Color(0xFF0F172A),
+      insetPadding: const EdgeInsets.all(24),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+        // No fixed cap: as wide as the viewport allows (the Dialog's own
+        // insetPadding above already keeps a margin against the screen
+        // edges, so this just lets the chart use whatever space is left —
+        // wider screens auto-load more history to fill it, per the card's
+        // own auto-backfill-to-width behavior).
+        constraints: BoxConstraints(
+          maxWidth: MediaQuery.sizeOf(dialogContext).width,
+          maxHeight: 720,
+        ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
           child: Column(
@@ -9012,12 +9021,16 @@ void openEnvironmentHistory(
                   ),
                 ],
               ),
-              DeviceEnvironmentHistoryCard(
-                repository: repository,
-                tenantId: tenantId,
-                unitId: unitId,
-                visible: true,
-                initialMetric: initialMetric,
+              Flexible(
+                child: SingleChildScrollView(
+                  child: DeviceEnvironmentHistoryCard(
+                    repository: repository,
+                    tenantId: tenantId,
+                    unitId: unitId,
+                    visible: true,
+                    initialMetric: initialMetric,
+                  ),
+                ),
               ),
             ],
           ),
@@ -9056,6 +9069,7 @@ class _ComparisonHistoryValue extends StatelessWidget {
         tenantId: tenantId,
         unitId: plcId,
         visible: expanded,
+        chartHeight: 200,
       ),
     ],
   );
