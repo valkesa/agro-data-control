@@ -50,16 +50,44 @@ class BoardPresetApplicationResult {
 ///    trazability fields is [DeviceBoardConfigRepository.applyPreset]'s
 ///    job, one layer up — this function never touches Firestore.
 ///
-/// [cellLayoutPresetId] references inside [preset.items] are deliberately
-/// copied *by id*, not inlined/snapshotted (N7.1 §9's "revisar
-/// especialmente CellLayoutPreset" call-out, resolved here): a
-/// [CellLayoutPreset] is a shared *visual* design-system asset (font size,
-/// alignment, decorative layout of one cell), not per-Device business data
-/// — editing one is meant to propagate to every board using it, Device and
-/// BoardPreset alike, exactly like it already does pre-N7.1. The
-/// independence [BoardPresetApplicationResult] guarantees is over
-/// *content* (which metric/indicator goes where), never over shared
-/// presentation.
+/// N7.1.1 §3 — every [preset.items] entry referencing a [cellLayoutPresetId]
+/// gets its composition resolved against [cellLayoutCatalog] *once, here*,
+/// and snapshotted by value onto the returned item's
+/// [MetricBoardContent.cellLayoutSnapshot] — never re-resolved live
+/// afterwards. This supersedes N7.1's original "shared presentation, live
+/// reference is fine" design (kept only as the historical rationale below):
+/// an independent audit (`informe_etapa_n7_1_..._2026-09-19.html` §20.1,
+/// finding A2) found real Devices whose rendering *did* change when a
+/// global `CellLayoutPreset` was edited — the deep-copy guarantee N7.1
+/// claimed never actually covered cell-level composition. [cellLayoutPresetId]
+/// itself is kept on the item purely as trazability (§3: "puede conservarse
+/// SOLO como trazabilidad"), never resolved live once a snapshot exists —
+/// see `board_item_renderers.dart`/`board_content_validator.dart`.
+List<BoardContentItem> materializeCellLayoutSnapshots(
+  List<BoardContentItem> items,
+  CellLayoutCatalog cellLayoutCatalog, {
+  bool refreshExisting = false,
+}) => [
+  for (final item in items)
+    if (item.content case final MetricBoardContent content
+        when content.cellLayoutPresetId != null &&
+            (refreshExisting || content.cellLayoutSnapshot == null))
+      BoardContentItem(
+        id: item.id,
+        placement: item.placement,
+        content: content.copyWith(
+          cellLayoutSnapshot: cellLayoutCatalog.byId(
+            content.cellLayoutPresetId!,
+          ),
+          sourceCellLayoutPresetVersion: cellLayoutCatalog
+              .byId(content.cellLayoutPresetId!)
+              ?.presetVersion,
+        ),
+      )
+    else
+      item,
+];
+
 BoardPresetApplicationResult applyBoardPresetToDevice({
   required String deviceId,
   required BoardPreset preset,
@@ -83,7 +111,11 @@ BoardPresetApplicationResult applyBoardPresetToDevice({
     capabilityProfileId: capabilityProfileId,
     sourceBoardPresetId: preset.id,
     sourceBoardPresetVersion: preset.presetVersion,
-    items: preset.items,
+    items: materializeCellLayoutSnapshots(
+      preset.items,
+      cellLayoutCatalog,
+      refreshExisting: true,
+    ),
   );
 
   final issues = missingCapabilityIssues(preset: preset, profile: profile);

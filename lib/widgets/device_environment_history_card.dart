@@ -3,7 +3,9 @@ import 'dart:math' as math;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import '../models/hierarchical_alert_config.dart';
 import '../services/device_environment_history_repository.dart';
+import '../services/environment_alert_threshold_repository.dart';
 
 const _monthAbbreviations = [
   'ENE',
@@ -62,6 +64,7 @@ class DeviceEnvironmentHistoryCard extends StatefulWidget {
     this.initialMetric = EnvironmentHistoryMetric.temperature,
     this.initialMode = EnvironmentHistoryMode.hourly,
     this.chartHeight = 440,
+    this.thresholdLoader,
   });
   final DeviceEnvironmentHistoryRepository repository;
   final String? tenantId, unitId;
@@ -74,6 +77,11 @@ class DeviceEnvironmentHistoryCard extends StatefulWidget {
   /// Callers embedding it inside their own compact popup (see
   /// `comparison_page.dart`) pass a smaller explicit value.
   final double chartHeight;
+
+  final Future<EnvironmentAlertThresholds> Function(
+    EnvironmentHistoryScope scope,
+  )?
+  thresholdLoader;
 
   @override
   State<DeviceEnvironmentHistoryCard> createState() => _HistoryState();
@@ -88,6 +96,10 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
 
   DeviceDisplayNames? _displayNames;
   bool _loadingDisplayNames = false;
+  EnvironmentAlertThresholds? _alertThresholds;
+  bool _loadingAlertThresholds = false;
+  EnvironmentHistoryMetric _dualHoverMetric =
+      EnvironmentHistoryMetric.temperature;
 
   // Horario: day pagination, mirroring Diario's month pagination below.
   // Ascending by day; concatenating each day's already-ascending points
@@ -139,6 +151,8 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
       _dailyPreviousError = null;
       _displayNames = null;
       _loadingDisplayNames = false;
+      _alertThresholds = null;
+      _loadingAlertThresholds = false;
     }
     if (widget.visible) _ensureLoaded();
   }
@@ -152,11 +166,38 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
 
   void _ensureLoaded() {
     if (_displayNames == null && !_loadingDisplayNames) _loadDisplayNames();
+    if (_alertThresholds == null && !_loadingAlertThresholds) {
+      _loadAlertThresholds();
+    }
     if (_mode == EnvironmentHistoryMode.hourly) {
       if (_hourlyDays.isEmpty && !_hourlyLoadingInitial) _loadInitialHourly();
     } else if (_dailyMonths.isEmpty && !_dailyLoadingInitial) {
       _loadInitialMonth();
     }
+  }
+
+  void _loadAlertThresholds() {
+    final tenant = widget.tenantId;
+    final unit = widget.unitId;
+    if (tenant == null || unit == null) return;
+    _loadingAlertThresholds = true;
+    final loader =
+        widget.thresholdLoader ??
+        const EnvironmentAlertThresholdRepository().load;
+    widget.repository
+        .resolve(tenant, unit)
+        .then(loader)
+        .then((thresholds) {
+          if (!mounted) return;
+          setState(() {
+            _alertThresholds = thresholds;
+            _loadingAlertThresholds = false;
+          });
+        })
+        .catchError((Object _) {
+          if (!mounted) return;
+          setState(() => _loadingAlertThresholds = false);
+        });
   }
 
   void _loadDisplayNames() {
@@ -345,7 +386,10 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     });
   }
 
-  void _preserveScrollAfterPrepend(ScrollController controller, double addedWidth) {
+  void _preserveScrollAfterPrepend(
+    ScrollController controller,
+    double addedWidth,
+  ) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !controller.hasClients) return;
       final target = (controller.offset + addedWidth).clamp(
@@ -455,6 +499,7 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
             ),
           const SizedBox(height: 12),
           _legend(),
+          _limitsLegend(),
           _buildBody(),
         ],
       ),
@@ -589,7 +634,10 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     ],
   );
 
-  Widget _renderChartArea(List<EnvironmentHistoryPoint> points, double unitWidth) {
+  Widget _renderChartArea(
+    List<EnvironmentHistoryPoint> points,
+    double unitWidth,
+  ) {
     final hasTemp = points.any((p) => p.temperature.value != null);
     final hasHum = points.any((p) => p.humidity.value != null);
     final isDual = _metric == EnvironmentHistoryMetric.both;
@@ -606,7 +654,9 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         ? _buildDualChart(points, hasTemp: hasTemp, hasHum: hasHum)
         : _buildSingleChart(points, _metric);
     final isDaily = _mode == EnvironmentHistoryMode.daily;
-    final controller = isDaily ? _dailyScrollController : _hourlyScrollController;
+    final controller = isDaily
+        ? _dailyScrollController
+        : _hourlyScrollController;
 
     // Pinned Y axis/axes (Etapa "eje fijo"): built as separate, non-scrolled
     // LineCharts sharing the exact same minY/maxY/bottom-reserved-size as
@@ -619,7 +669,9 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     final leftSpec = isDual
         ? _dualLeftAxisSpec(points, hasTemp: hasTemp)
         : _singleAxisSpec(points, _metric);
-    final rightSpec = isDual && (hasHum || !hasTemp) ? _dualRightAxisSpec() : null;
+    final rightSpec = isDual && (hasHum || !hasTemp)
+        ? _dualRightAxisSpec()
+        : null;
 
     // Each point keeps a minimum fixed pixel width so it never gets
     // unreadably cramped, but when the container is wider than the loaded
@@ -639,7 +691,10 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         Expanded(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              final width = math.max(constraints.maxWidth, points.length * unitWidth);
+              final width = math.max(
+                constraints.maxWidth,
+                points.length * unitWidth,
+              );
               return ScrollConfiguration(
                 behavior: _DragScrollBehavior(),
                 child: SingleChildScrollView(
@@ -744,6 +799,108 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     );
   }
 
+  AlertThresholds _thresholdsForMetric(EnvironmentHistoryMetric metric) =>
+      metric == EnvironmentHistoryMetric.humidity
+      ? (_alertThresholds?.humidity ?? AlertThresholds.empty)
+      : (_alertThresholds?.temperature ?? AlertThresholds.empty);
+
+  Widget _limitsLegend() {
+    final metrics = _metric == EnvironmentHistoryMetric.both
+        ? const <EnvironmentHistoryMetric>[
+            EnvironmentHistoryMetric.temperature,
+            EnvironmentHistoryMetric.humidity,
+          ]
+        : <EnvironmentHistoryMetric>[_metric];
+    final entries = <({Color color, String label})>[];
+    for (final metric in metrics) {
+      final thresholds = _thresholdsForMetric(metric);
+      if (thresholds.min == null && thresholds.max == null) continue;
+      final suffix = metric == EnvironmentHistoryMetric.humidity ? '%' : '°C';
+      final name = metric == EnvironmentHistoryMetric.humidity
+          ? 'Humedad'
+          : 'Temperatura';
+      final values = <String>[
+        if (thresholds.min != null)
+          'mín. ${_formatThreshold(thresholds.min!)}$suffix',
+        if (thresholds.max != null)
+          'máx. ${_formatThreshold(thresholds.max!)}$suffix',
+      ].join(' · ');
+      entries.add((color: _metricColor(metric), label: '$name: $values'));
+    }
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 3, bottom: 5),
+      child: Wrap(
+        spacing: 14,
+        runSpacing: 4,
+        children: <Widget>[
+          for (final entry in entries)
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: <Widget>[
+                Container(
+                  width: 18,
+                  height: 2,
+                  margin: const EdgeInsets.only(right: 6),
+                  color: entry.color,
+                ),
+                Text(
+                  entry.label,
+                  style: TextStyle(color: entry.color, fontSize: 11),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Color _metricColor(EnvironmentHistoryMetric metric) =>
+      metric == EnvironmentHistoryMetric.humidity
+      ? Colors.cyanAccent
+      : Colors.orangeAccent;
+
+  String _formatThreshold(double value) => value == value.roundToDouble()
+      ? value.toStringAsFixed(0)
+      : value.toStringAsFixed(1);
+
+  ExtraLinesData _limitLines(EnvironmentHistoryMetric metric) {
+    final thresholds = _thresholdsForMetric(metric);
+    final humidity = metric == EnvironmentHistoryMetric.humidity;
+    final suffix = humidity ? '%' : '°C';
+    final color = _metricColor(metric);
+    // In dual-axis mode the two independent scales can project different
+    // limits onto nearly the same pixel row. Keep labels attached to their
+    // own line but place temperature and humidity on opposite vertical
+    // sides, symmetrically for minimums and maximums.
+    final minAlignment = humidity ? Alignment.topRight : Alignment.bottomRight;
+    final maxAlignment = humidity ? Alignment.bottomRight : Alignment.topRight;
+    HorizontalLine line(double value, String label, Alignment alignment) =>
+        HorizontalLine(
+          y: value,
+          color: color,
+          strokeWidth: 1.5,
+          dashArray: const <int>[6, 4],
+          label: HorizontalLineLabel(
+            show: true,
+            alignment: alignment,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            style: TextStyle(
+              color: color,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+            labelResolver: (_) => '$label ${_formatThreshold(value)}$suffix',
+          ),
+        );
+    return ExtraLinesData(
+      horizontalLines: <HorizontalLine>[
+        if (thresholds.min != null) line(thresholds.min!, 'Mín', minAlignment),
+        if (thresholds.max != null) line(thresholds.max!, 'Máx', maxAlignment),
+      ],
+    );
+  }
+
   double _minX(int length) => length == 1 ? -0.5 : 0;
   double _maxX(int length) => length == 1 ? 0.5 : (length - 1).toDouble();
 
@@ -804,7 +961,11 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     return (
       bars: [avgBar, minBar, maxBar],
       betweenBars: [
-        BetweenBarsData(fromIndex: 1, toIndex: 2, color: color.withValues(alpha: 0.15)),
+        BetweenBarsData(
+          fromIndex: 1,
+          toIndex: 2,
+          color: color.withValues(alpha: 0.15),
+        ),
       ],
     );
   }
@@ -828,14 +989,24 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
               .whereType<double>()
               .toList()
         : const <double>[];
-    final all = [...avgValues, ...extremes]..sort();
-    return (minY: all.first.floorToDouble() - 1, maxY: all.last.ceilToDouble() + 1);
+    final thresholds = _thresholdsForMetric(metric);
+    final all = <double>[
+      ...avgValues,
+      ...extremes,
+      if (thresholds.min != null) thresholds.min!,
+      if (thresholds.max != null) thresholds.max!,
+    ]..sort();
+    return (
+      minY: all.first.floorToDouble() - 1,
+      maxY: all.last.ceilToDouble() + 1,
+    );
   }
 
   /// Bottom-axis reserved height — shared between the real (scrolled) chart
   /// and every pinned axis column, since they must match for the Y-value
   /// pixel mapping to line up (see `_pinnedAxis`'s doc comment).
-  double get _bottomReservedSize => _mode == EnvironmentHistoryMode.daily ? 28 : 30;
+  double get _bottomReservedSize =>
+      _mode == EnvironmentHistoryMode.daily ? 28 : 30;
 
   /// One pinned Y axis's definition — everything `_pinnedAxis` needs to
   /// render tick labels that land on the same pixel rows as the real
@@ -875,7 +1046,10 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     double reservedSize,
     Widget Function(double, TitleMeta) titleBuilder,
   })
-  _dualLeftAxisSpec(List<EnvironmentHistoryPoint> points, {required bool hasTemp}) {
+  _dualLeftAxisSpec(
+    List<EnvironmentHistoryPoint> points, {
+    required bool hasTemp,
+  }) {
     final yRange = hasTemp
         ? _yRangeFor(
             points,
@@ -952,9 +1126,14 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         gridData: const FlGridData(show: false),
         lineTouchData: const LineTouchData(enabled: false),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(
-            sideTitles: SideTitles(showTitles: false, reservedSize: bottomReservedSize),
+            sideTitles: SideTitles(
+              showTitles: false,
+              reservedSize: bottomReservedSize,
+            ),
           ),
           leftTitles: onRight
               ? const AxisTitles(sideTitles: SideTitles(showTitles: false))
@@ -984,7 +1163,9 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
           if (v != i || i < 0 || i >= points.length) {
             return const SizedBox.shrink();
           }
-          final art = points[i].start.toUtc().subtract(const Duration(hours: 3));
+          final art = points[i].start.toUtc().subtract(
+            const Duration(hours: 3),
+          );
           final DateTime? prevArt = i == 0
               ? null
               : points[i - 1].start.toUtc().subtract(const Duration(hours: 3));
@@ -1061,7 +1242,6 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
     );
   }
 
-  /// Horario: just the hour and the average value, nothing else.
   LineTooltipItem _tooltipItem(
     EnvironmentHistoryPoint p,
     String suffix,
@@ -1069,18 +1249,13 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   ) {
     final s = p.stats(metric);
     final art = p.start.toUtc().subtract(const Duration(hours: 3));
+    final period = _mode == EnvironmentHistoryMode.daily
+        ? '${art.day.toString().padLeft(2, '0')}/${art.month.toString().padLeft(2, '0')}/${art.year}'
+        : art.hour.toString().padLeft(2, '0');
+    String value(double? number) => number?.toStringAsFixed(1) ?? '—';
     return LineTooltipItem(
-      '${art.hour.toString().padLeft(2, '0')}: ${s.value?.toStringAsFixed(1) ?? "—"} $suffix',
-      const TextStyle(color: Colors.white, fontSize: 11),
-    );
-  }
-
-  /// Diario: just the date, no values.
-  LineTooltipItem _dateTooltipItem(EnvironmentHistoryPoint p) {
-    final art = p.start.toUtc().subtract(const Duration(hours: 3));
-    return LineTooltipItem(
-      '${art.day.toString().padLeft(2, '0')}/${art.month.toString().padLeft(2, '0')}/${art.year}',
-      const TextStyle(color: Colors.white, fontSize: 11),
+      '$period\nmi/pr/ma: ${value(s.min)}/${value(s.value)}/${value(s.max)} $suffix',
+      TextStyle(color: _metricColor(metric), fontSize: 11),
     );
   }
 
@@ -1090,7 +1265,6 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   ) {
     final humidity = metric == EnvironmentHistoryMetric.humidity;
     final suffix = humidity ? '%' : '°C';
-    final isDaily = _mode == EnvironmentHistoryMode.daily;
     final color = humidity ? Colors.cyanAccent : Colors.orangeAccent;
     final series = _seriesFor(points, metric, color);
     final yRange = humidity
@@ -1110,16 +1284,25 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
         ),
         lineBarsData: series.bars,
         betweenBarsData: series.betweenBars,
+        extraLinesData: _limitLines(metric),
         titlesData: FlTitlesData(
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          topTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
+          rightTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           // Shown separately in a pinned column outside the horizontal
           // scroll (see `_renderChartArea`/`_pinnedAxis`) so it stays
           // visible while the plot scrolls — not rendered here any more.
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(
+            sideTitles: SideTitles(showTitles: false),
+          ),
           bottomTitles: AxisTitles(sideTitles: _bottomTitles(points)),
         ),
         lineTouchData: LineTouchData(
+          touchSpotThreshold: 8,
+          distanceCalculator: (touch, spot) => (touch - spot).distance,
           touchTooltipData: LineTouchTooltipData(
             getTooltipItems: (spots) => spots
                 // Diario adds 2 extra (invisible) bars per _seriesFor for the
@@ -1127,9 +1310,8 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
                 // produce a tooltip line.
                 .where((spot) => spot.barIndex == 0)
                 .map(
-                  (spot) => isDaily
-                      ? _dateTooltipItem(points[spot.x.toInt()])
-                      : _tooltipItem(points[spot.x.toInt()], suffix, metric),
+                  (spot) =>
+                      _tooltipItem(points[spot.x.toInt()], suffix, metric),
                 )
                 .toList(),
           ),
@@ -1152,50 +1334,46 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
   }) {
     final minX = _minX(points.length);
     final maxX = _maxX(points.length);
-    final isDaily = _mode == EnvironmentHistoryMode.daily;
-    // Touch/tooltip lives on whichever chart actually has data to touch;
-    // the other is IgnorePointer'd so taps always land on an interactive
-    // series. Tooltip content combines both metrics in Horario; Diario
-    // shows only the date (see _dateTooltipItem).
-    final touchOnTemp = hasTemp || !hasHum;
-
-    LineTooltipItem dualTooltip(EnvironmentHistoryPoint p) {
-      final art = p.start.toUtc().subtract(const Duration(hours: 3));
-      return LineTooltipItem(
-        '${art.hour.toString().padLeft(2, '0')}\n'
-        'Temp: ${p.temperature.value?.toStringAsFixed(1) ?? "—"} °C\n'
-        'Hum: ${p.humidity.value?.toStringAsFixed(1) ?? "—"} %',
-        const TextStyle(color: Colors.white, fontSize: 11),
-      );
-    }
-
-    LineTouchTooltipData tooltipData() => LineTouchTooltipData(
-      getTooltipItems: (spots) => spots
-          .where((spot) => spot.barIndex == 0)
-          .map(
-            (spot) => isDaily
-                ? _dateTooltipItem(points[spot.x.toInt()])
-                : dualTooltip(points[spot.x.toInt()]),
+    final tempRange = hasTemp
+        ? _yRangeFor(
+            points,
+            EnvironmentHistoryMetric.temperature,
+            fallbackMin: 0,
+            fallbackMax: 1,
           )
-          .toList(),
-    );
+        : (minY: 0.0, maxY: 1.0);
+    final touchMetric = hasTemp && hasHum
+        ? _dualHoverMetric
+        : hasHum
+        ? EnvironmentHistoryMetric.humidity
+        : EnvironmentHistoryMetric.temperature;
+
+    LineTouchTooltipData tooltipData(EnvironmentHistoryMetric metric) =>
+        LineTouchTooltipData(
+          getTooltipItems: (spots) => spots
+              .where((spot) => spot.barIndex == 0)
+              .map(
+                (spot) => _tooltipItem(
+                  points[spot.x.toInt()],
+                  metric == EnvironmentHistoryMetric.humidity ? '%' : '°C',
+                  metric,
+                ),
+              )
+              .toList(),
+        );
 
     Widget tempChart({required bool interactive}) {
-      final series = _seriesFor(points, EnvironmentHistoryMetric.temperature, Colors.orangeAccent);
-      final yRange = hasTemp
-          ? _yRangeFor(
-              points,
-              EnvironmentHistoryMetric.temperature,
-              fallbackMin: 0,
-              fallbackMax: 1,
-            )
-          : (minY: 0.0, maxY: 1.0);
+      final series = _seriesFor(
+        points,
+        EnvironmentHistoryMetric.temperature,
+        Colors.orangeAccent,
+      );
       return LineChart(
         LineChartData(
           minX: minX,
           maxX: maxX,
-          minY: yRange.minY,
-          maxY: yRange.maxY,
+          minY: tempRange.minY,
+          maxY: tempRange.maxY,
           borderData: FlBorderData(show: false),
           gridData: FlGridData(
             getDrawingHorizontalLine: (_) =>
@@ -1204,22 +1382,39 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
           ),
           lineBarsData: series.bars,
           betweenBarsData: series.betweenBars,
+          extraLinesData: _limitLines(EnvironmentHistoryMetric.temperature),
           titlesData: FlTitlesData(
-            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
             // Pinned separately outside the scroll — see _renderChartArea.
-            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            leftTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
             bottomTitles: AxisTitles(sideTitles: _bottomTitles(points)),
           ),
           lineTouchData: interactive
-              ? LineTouchData(touchTooltipData: tooltipData())
+              ? LineTouchData(
+                  touchSpotThreshold: 8,
+                  distanceCalculator: (touch, spot) => (touch - spot).distance,
+                  touchTooltipData: tooltipData(
+                    EnvironmentHistoryMetric.temperature,
+                  ),
+                )
               : const LineTouchData(enabled: false),
         ),
       );
     }
 
     Widget humChart({required bool interactive}) {
-      final series = _seriesFor(points, EnvironmentHistoryMetric.humidity, Colors.cyanAccent);
+      final series = _seriesFor(
+        points,
+        EnvironmentHistoryMetric.humidity,
+        Colors.cyanAccent,
+      );
       return LineChart(
         LineChartData(
           minX: minX,
@@ -1230,30 +1425,95 @@ class _HistoryState extends State<DeviceEnvironmentHistoryCard> {
           gridData: const FlGridData(show: false),
           lineBarsData: series.bars,
           betweenBarsData: series.betweenBars,
+          extraLinesData: _limitLines(EnvironmentHistoryMetric.humidity),
           titlesData: FlTitlesData(
-            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            leftTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
             // Pinned separately outside the scroll — see _renderChartArea.
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
+            bottomTitles: const AxisTitles(
+              sideTitles: SideTitles(showTitles: false),
+            ),
           ),
           lineTouchData: interactive
-              ? LineTouchData(touchTooltipData: tooltipData())
+              ? LineTouchData(
+                  touchSpotThreshold: 8,
+                  distanceCalculator: (touch, spot) => (touch - spot).distance,
+                  touchTooltipData: tooltipData(
+                    EnvironmentHistoryMetric.humidity,
+                  ),
+                )
               : const LineTouchData(enabled: false),
         ),
       );
     }
 
-    return Stack(
-      children: [
-        touchOnTemp
-            ? tempChart(interactive: true)
-            : IgnorePointer(child: tempChart(interactive: false)),
-        if (hasHum || !hasTemp)
-          touchOnTemp
-              ? IgnorePointer(child: humChart(interactive: false))
-              : humChart(interactive: true),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) => MouseRegion(
+        key: const Key('history-dual-hover-region'),
+        onHover: hasTemp && hasHum
+            ? (event) => _selectDualHoverMetric(
+                event.localPosition,
+                Size(constraints.maxWidth, constraints.maxHeight),
+                points,
+                tempRange,
+              )
+            : null,
+        child: Stack(
+          children: [
+            touchMetric == EnvironmentHistoryMetric.temperature
+                ? tempChart(interactive: true)
+                : IgnorePointer(child: tempChart(interactive: false)),
+            if (hasHum || !hasTemp)
+              touchMetric == EnvironmentHistoryMetric.humidity
+                  ? humChart(interactive: true)
+                  : IgnorePointer(child: humChart(interactive: false)),
+          ],
+        ),
+      ),
     );
+  }
+
+  void _selectDualHoverMetric(
+    Offset position,
+    Size size,
+    List<EnvironmentHistoryPoint> points,
+    ({double minY, double maxY}) tempRange,
+  ) {
+    if (points.isEmpty || size.width <= 0 || size.height <= 0) return;
+    final plotHeight = math.max(1.0, size.height - _bottomReservedSize);
+    final index = points.length == 1
+        ? 0
+        : ((position.dx / size.width) * (points.length - 1)).round().clamp(
+            0,
+            points.length - 1,
+          );
+    final pointX = points.length == 1
+        ? size.width / 2
+        : index / (points.length - 1) * size.width;
+
+    double distance(EnvironmentHistoryMetric metric, double minY, double maxY) {
+      final value = points[index].stats(metric).value;
+      if (value == null || maxY <= minY) return double.infinity;
+      final pointY = (maxY - value) / (maxY - minY) * plotHeight;
+      return (Offset(pointX, pointY) - position).distance;
+    }
+
+    final tempDistance = distance(
+      EnvironmentHistoryMetric.temperature,
+      tempRange.minY,
+      tempRange.maxY,
+    );
+    final humDistance = distance(EnvironmentHistoryMetric.humidity, 0, 100);
+    final next = humDistance < tempDistance
+        ? EnvironmentHistoryMetric.humidity
+        : EnvironmentHistoryMetric.temperature;
+    if (next != _dualHoverMetric) setState(() => _dualHoverMetric = next);
   }
 }

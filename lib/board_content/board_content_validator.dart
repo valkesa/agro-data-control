@@ -60,7 +60,14 @@ abstract final class BoardContentValidator {
       if (item.content is MetricBoardContent) {
         final metricItem = item.toMetricItem();
         try {
-          final preset = presets.resolve(metricItem);
+          // N7.1.1 §3 — validate against the item's own independent
+          // snapshot when it has one, never a live catalog lookup: deleting
+          // or editing the global CellLayoutPreset a Device once applied
+          // must never turn into a validation issue (and, via A3's new
+          // Guardar gating, never a save-blocking one).
+          final snapshot =
+              (item.content as MetricBoardContent).cellLayoutSnapshot;
+          final preset = snapshot ?? presets.resolve(metricItem);
           for (final issue in CellLayoutValidator.validate(
             preset,
             metricItem,

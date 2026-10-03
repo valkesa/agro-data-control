@@ -8,17 +8,13 @@
 // automáticamente en cada arranque").
 //
 // Run with:
-//   dart run tool/seed_n7_1_global_config.dart --dry-run       # preview only, touches nothing
-//   dart run tool/seed_n7_1_global_config.dart                 # non-destructive
-//   dart run tool/seed_n7_1_global_config.dart --overwrite     # bumps existing docs
+//   dart run tool/seed_n7_1_global_config.dart            # remote audit only
+//   dart run tool/seed_n7_1_global_config.dart --audit    # same, explicit
+//   dart run tool/seed_n7_1_global_config.dart --apply    # create missing only
 //
-// Non-destructive by default: a document that already exists in Firestore
-// is left untouched and skipped, unless --overwrite is passed (same
-// convention as tool/seed_device_templates.dart, which this script mirrors
-// for the REST-via-service-account technique and the
-// _encodeFirestoreValue/_getAccessToken/_getDoc/_putDoc helpers,
-// duplicated rather than shared per that file's own established
-// precedent).
+// The apply path is strictly create-only. Every write carries the Firestore
+// precondition `currentDocument.exists=false`, so even a document created by
+// another process between audit and apply is never overwritten.
 //
 // IMPORTANT — why this doesn't just import the app's shared in-memory
 // stores (`sharedMetricLibraryStore`, `sharedBoardPresetCatalog`, ...):
@@ -71,26 +67,60 @@ typedef _PlannedDoc = ({
   Map<String, Object?> fields,
 });
 
+enum _AuditStatus { missing, matching, conflict }
+
+class _AuditEntry {
+  const _AuditEntry({
+    required this.planned,
+    required this.status,
+    required this.existing,
+    required this.differences,
+  });
+
+  final _PlannedDoc planned;
+  final _AuditStatus status;
+  final _Doc? existing;
+  final List<String> differences;
+}
+
+class _AuditResult {
+  const _AuditResult({required this.entries, required this.remoteByCollection});
+
+  final List<_AuditEntry> entries;
+  final Map<String, List<_Doc>> remoteByCollection;
+
+  Iterable<_AuditEntry> get missing =>
+      entries.where((entry) => entry.status == _AuditStatus.missing);
+  Iterable<_AuditEntry> get conflicts =>
+      entries.where((entry) => entry.status == _AuditStatus.conflict);
+}
+
 Future<void> main(List<String> args) async {
-  final bool overwrite = args.contains('--overwrite');
-  final bool dryRun = args.contains('--dry-run');
+  const allowed = {'--audit', '--dry-run', '--apply'};
+  final unknown = args.where((arg) => !allowed.contains(arg)).toList();
+  if (unknown.isNotEmpty || args.contains('--overwrite')) {
+    stderr.writeln(
+      'Argumento no permitido: ${unknown.join(', ')}. Este seed no admite '
+      'overwrite. Usá --audit o --apply.',
+    );
+    exitCode = 64;
+    return;
+  }
+  final bool apply = args.contains('--apply');
   print(
-    '=== N7.1 — seed de config global (overwrite=$overwrite, dry-run=$dryRun) ===',
+    '=== N7.1 — configuración global (modo=${apply ? 'APPLY' : 'AUDIT'}) ===',
   );
 
   final List<_PlannedDoc> planned = _buildPlan();
-
-  if (dryRun) {
-    print(
-      '--dry-run: no se toca Firestore. ${planned.length} documento(s) '
-      'candidatos:',
-    );
-    for (final item in planned) {
-      print('  ${item.collection}/${item.id}');
+  final planIssues = _validatePlannedReferences(planned);
+  if (planIssues.isNotEmpty) {
+    for (final issue in planIssues) {
+      stderr.writeln('PLAN_INVALID $issue');
     }
-    print('=== Dry-run completo ===');
+    exitCode = 65;
     return;
   }
+  _printInventory(planned);
 
   final Map<String, dynamic> serviceAccount =
       jsonDecode(File('backend/config/service-account.json').readAsStringSync())
@@ -100,8 +130,24 @@ Future<void> main(List<String> args) async {
   final HttpClient client = HttpClient();
 
   try {
-    for (final item in planned) {
-      await _seedOne(
+    final before = await _audit(
+      client: client,
+      projectId: projectId,
+      accessToken: accessToken,
+      planned: planned,
+    );
+    _printAudit('ANTES', before, planned);
+
+    if (!apply) {
+      print('=== Auditoría completa; no se realizaron escrituras ===');
+      return;
+    }
+
+    var created = 0;
+    var concurrentExisting = 0;
+    for (final entry in before.missing) {
+      final item = entry.planned;
+      final wasCreated = await _createOnly(
         client: client,
         projectId: projectId,
         accessToken: accessToken,
@@ -109,10 +155,30 @@ Future<void> main(List<String> args) async {
         id: item.id,
         versionField: item.versionField,
         fields: item.fields,
-        overwrite: overwrite,
       );
+      if (wasCreated) {
+        created++;
+      } else {
+        concurrentExisting++;
+      }
     }
-    print('=== Seed completo ===');
+
+    final after = await _audit(
+      client: client,
+      projectId: projectId,
+      accessToken: accessToken,
+      planned: planned,
+    );
+    _printAudit('DESPUÉS', after, planned);
+    print(
+      'RESULTADO created=$created concurrentExisting=$concurrentExisting '
+      'missing=${after.missing.length} conflicts=${after.conflicts.length}',
+    );
+    if (after.missing.isNotEmpty) {
+      exitCode = 2;
+    } else if (_remoteReferenceIssues(after).isNotEmpty) {
+      exitCode = 3;
+    }
   } finally {
     client.close(force: true);
   }
@@ -127,8 +193,14 @@ Future<void> main(List<String> args) async {
 List<_PlannedDoc> _buildPlan() {
   final List<_PlannedDoc> planned = [];
 
-  for (final LayoutTemplate template
-      in initialLayoutTemplateCatalog.templates) {
+  final layouts = <String, LayoutTemplate>{
+    for (final template in initialLayoutTemplateCatalog.templates)
+      template.id: template,
+    // The official Arco BoardPreset uses its complete 6x7 fixture. Persist
+    // that referenced template too, otherwise the seed graph is dangling.
+    disinfectionContentExample.template.id: disinfectionContentExample.template,
+  };
+  for (final LayoutTemplate template in layouts.values) {
     planned.add((
       collection: 'layoutTemplates',
       id: template.id,
@@ -188,6 +260,96 @@ List<_PlannedDoc> _buildPlan() {
   }
 
   return planned;
+}
+
+void _printInventory(List<_PlannedDoc> planned) {
+  print('--- INVENTARIO OFICIAL (${planned.length} documentos) ---');
+  for (final item in planned) {
+    final relations = <String>[];
+    if (item.collection == 'capabilityProfiles') {
+      relations.add(
+        'metrics=${(item.fields['metricKeys'] as List?)?.length ?? 0}',
+      );
+      relations.add(
+        'indicators=${(item.fields['indicatorKeys'] as List?)?.length ?? 0}',
+      );
+    }
+    if (item.collection == 'boardPresets') {
+      relations.add('layout=${item.fields['layoutTemplateId']}');
+      relations.add('profile=${item.fields['capabilityProfileId'] ?? '-'}');
+    }
+    print(
+      'SEED ${item.collection}/${item.id} '
+      '${item.versionField}(source=${item.fields[item.versionField] ?? 1}, '
+      'create=1)'
+      '${relations.isEmpty ? '' : ' ${relations.join(' ')}'}',
+    );
+  }
+}
+
+List<String> _validatePlannedReferences(List<_PlannedDoc> planned) {
+  Set<String> ids(String collection) => planned
+      .where((item) => item.collection == collection)
+      .map((item) => item.id)
+      .toSet();
+
+  final layouts = ids('layoutTemplates');
+  final cells = ids('cellLayoutPresets');
+  final metrics = ids('capabilityMetrics');
+  final indicators = ids('capabilityIndicators');
+  final profiles = ids('capabilityProfiles');
+  final issues = <String>[];
+
+  for (final entry in initialCellLayoutCatalog.defaults.entries) {
+    if (!cells.contains(entry.value)) {
+      issues.add('default ${entry.key} -> ${entry.value} inexistente');
+    }
+    final preset = initialCellLayoutCatalog.byId(entry.value);
+    if (preset == null ||
+        '${preset.widthCells}x${preset.heightCells}' != entry.key ||
+        !preset.enabled) {
+      issues.add('default ${entry.key} -> ${entry.value} no resoluble');
+    }
+  }
+
+  for (final profile in planned.where(
+    (item) => item.collection == 'capabilityProfiles',
+  )) {
+    for (final key in (profile.fields['metricKeys'] as List).cast<String>()) {
+      if (!metrics.contains(key)) {
+        issues.add('${profile.id} -> metric $key inexistente');
+      }
+    }
+    for (final key
+        in (profile.fields['indicatorKeys'] as List).cast<String>()) {
+      if (!indicators.contains(key)) {
+        issues.add('${profile.id} -> indicator $key inexistente');
+      }
+    }
+  }
+
+  for (final board in planned.where(
+    (item) => item.collection == 'boardPresets',
+  )) {
+    final layout = board.fields['layoutTemplateId'] as String;
+    final profile = board.fields['capabilityProfileId'] as String?;
+    if (!layouts.contains(layout)) {
+      issues.add('${board.id} -> layout $layout inexistente');
+    }
+    if (profile != null && !profiles.contains(profile)) {
+      issues.add('${board.id} -> profile $profile inexistente');
+    }
+    final boardMetrics = <String>{
+      ...(board.fields['requiredMetricKeys'] as List).cast<String>(),
+      ...(board.fields['optionalMetricKeys'] as List).cast<String>(),
+    };
+    for (final key in boardMetrics) {
+      if (!metrics.contains(key)) {
+        issues.add('${board.id} -> metric $key inexistente');
+      }
+    }
+  }
+  return issues;
 }
 
 /// Plain-`Map`-building stand-in for `DeviceCapabilityProfile`
@@ -355,10 +517,255 @@ List<BoardPreset> _seedBoardPresets() => [
 ];
 
 // ---------------------------------------------------------------------
-// Firestore REST plumbing (verbatim copy of tool/seed_device_templates.dart)
+// Remote audit and create-only Firestore REST plumbing.
 // ---------------------------------------------------------------------
 
-Future<void> _seedOne({
+Future<_AuditResult> _audit({
+  required HttpClient client,
+  required String projectId,
+  required String accessToken,
+  required List<_PlannedDoc> planned,
+}) async {
+  final collections = planned.map((item) => item.collection).toSet();
+  final remoteByCollection = <String, List<_Doc>>{};
+  for (final collection in collections) {
+    remoteByCollection[collection] = await _listCollection(
+      client,
+      projectId,
+      accessToken,
+      collection,
+    );
+  }
+
+  final entries = <_AuditEntry>[];
+  for (final item in planned) {
+    _Doc? existing;
+    for (final doc in remoteByCollection[item.collection]!) {
+      if (doc.id == item.id) {
+        existing = doc;
+        break;
+      }
+    }
+    if (existing == null) {
+      entries.add(
+        _AuditEntry(
+          planned: item,
+          status: _AuditStatus.missing,
+          existing: null,
+          differences: const [],
+        ),
+      );
+      continue;
+    }
+    final differences = _seedDifferences(item, existing);
+    entries.add(
+      _AuditEntry(
+        planned: item,
+        status: differences.isEmpty
+            ? _AuditStatus.matching
+            : _AuditStatus.conflict,
+        existing: existing,
+        differences: differences,
+      ),
+    );
+  }
+  return _AuditResult(entries: entries, remoteByCollection: remoteByCollection);
+}
+
+void _printAudit(String label, _AuditResult audit, List<_PlannedDoc> planned) {
+  print('--- AUDITORÍA $label ---');
+  for (final collection in audit.remoteByCollection.keys) {
+    final expected = planned.where((item) => item.collection == collection);
+    print(
+      'COUNT $collection remote=${audit.remoteByCollection[collection]!.length} '
+      'seed=${expected.length}',
+    );
+  }
+  for (final entry in audit.entries) {
+    final item = entry.planned;
+    final path = '${item.collection}/${item.id}';
+    final version = entry.existing == null
+        ? '-'
+        : _int(entry.existing!.fields[item.versionField])?.toString() ??
+              'inválida';
+    switch (entry.status) {
+      case _AuditStatus.missing:
+        print('MISSING $path (create ${item.versionField}=1)');
+      case _AuditStatus.matching:
+        print('MATCH $path (${item.versionField}=$version)');
+      case _AuditStatus.conflict:
+        print(
+          'CONFLICT $path (${item.versionField}=$version; '
+          '${entry.differences.join(', ')})',
+        );
+    }
+  }
+
+  final expectedPaths = {
+    for (final item in planned) '${item.collection}/${item.id}',
+  };
+  for (final entry in audit.remoteByCollection.entries) {
+    for (final doc in entry.value) {
+      final path = '${entry.key}/${doc.id}';
+      if (!expectedPaths.contains(path)) print('PRESERVED_EXTRA $path');
+    }
+  }
+  final referenceIssues = _remoteReferenceIssues(audit);
+  if (referenceIssues.isEmpty) {
+    print('REFERENCES_OK');
+  } else {
+    for (final issue in referenceIssues) {
+      print('BROKEN_REFERENCE $issue');
+    }
+  }
+}
+
+List<String> _remoteReferenceIssues(_AuditResult audit) {
+  Map<String, Map<String, Object?>> docs(String collection) => {
+    for (final doc in audit.remoteByCollection[collection] ?? const <_Doc>[])
+      doc.id: <String, Object?>{
+        for (final entry in doc.fields.entries)
+          entry.key: _decodeFirestoreValue(entry.value),
+      },
+  };
+
+  final layouts = docs('layoutTemplates');
+  final cells = docs('cellLayoutPresets');
+  final metrics = docs('capabilityMetrics');
+  final indicators = docs('capabilityIndicators');
+  final profiles = docs('capabilityProfiles');
+  final boards = docs('boardPresets');
+  final issues = <String>[];
+
+  for (final entry in initialCellLayoutCatalog.defaults.entries) {
+    final cell = cells[entry.value];
+    final parts = entry.key.split('x');
+    if (cell == null ||
+        cell['enabled'] != true ||
+        cell['widthCells'] != int.parse(parts[0]) ||
+        cell['heightCells'] != int.parse(parts[1])) {
+      issues.add('default ${entry.key} -> ${entry.value} no resoluble');
+    }
+  }
+
+  for (final entry in profiles.entries) {
+    for (final key in (entry.value['metricKeys'] as List?) ?? const []) {
+      if (!metrics.containsKey(key)) {
+        issues.add('profile ${entry.key} -> metric $key inexistente');
+      }
+    }
+    for (final key in (entry.value['indicatorKeys'] as List?) ?? const []) {
+      if (!indicators.containsKey(key)) {
+        issues.add('profile ${entry.key} -> indicator $key inexistente');
+      }
+    }
+  }
+
+  for (final entry in boards.entries) {
+    final board = entry.value;
+    final layout = board['layoutTemplateId'];
+    final profile = board['capabilityProfileId'];
+    if (!layouts.containsKey(layout)) {
+      issues.add('board ${entry.key} -> layout $layout inexistente');
+    }
+    if (profile != null && !profiles.containsKey(profile)) {
+      issues.add('board ${entry.key} -> profile $profile inexistente');
+    }
+    final boardMetrics = <Object?>{
+      ...?board['requiredMetricKeys'] as List?,
+      ...?board['optionalMetricKeys'] as List?,
+    };
+    for (final item in (board['items'] as List?) ?? const []) {
+      if (item is! Map) continue;
+      final content = item['content'];
+      if (content is Map) {
+        if (content['metricKey'] != null) {
+          boardMetrics.add(content['metricKey']);
+        }
+        final cellId = content['cellLayoutPresetId'];
+        if (cellId != null && !cells.containsKey(cellId)) {
+          issues.add('board ${entry.key} -> cell preset $cellId inexistente');
+        }
+      }
+    }
+    for (final key in boardMetrics) {
+      if (!metrics.containsKey(key)) {
+        issues.add('board ${entry.key} -> metric $key inexistente');
+      }
+    }
+  }
+  return issues;
+}
+
+List<String> _seedDifferences(_PlannedDoc planned, _Doc existing) {
+  final expected = _normalizedSeedContent(planned.fields, planned.versionField);
+  final actual = <String, Object?>{
+    for (final entry in existing.fields.entries)
+      entry.key: _decodeFirestoreValue(entry.value),
+  };
+  actual.remove('createdAt');
+  actual.remove('updatedAt');
+  actual.remove(planned.versionField);
+
+  final keys = {...expected.keys, ...actual.keys}.toList()..sort();
+  return [
+    for (final key in keys)
+      if (_canonicalJson(expected[key]) != _canonicalJson(actual[key])) key,
+  ];
+}
+
+Map<String, Object?> _normalizedSeedContent(
+  Map<String, Object?> fields,
+  String versionField,
+) {
+  final result = <String, Object?>{...fields};
+  result.remove('createdAt');
+  result.remove('updatedAt');
+  result.remove(versionField);
+  return result;
+}
+
+String _canonicalJson(Object? value) => jsonEncode(_canonicalize(value));
+
+Object? _canonicalize(Object? value) {
+  if (value is Map) {
+    final keys = value.keys.map((key) => key.toString()).toList()..sort();
+    return <String, Object?>{
+      for (final key in keys) key: _canonicalize(value[key]),
+    };
+  }
+  if (value is Iterable) return value.map(_canonicalize).toList();
+  return value;
+}
+
+Object? _decodeFirestoreValue(Object? raw) {
+  if (raw is! Map) return raw;
+  if (raw.containsKey('nullValue')) return null;
+  if (raw.containsKey('booleanValue')) return raw['booleanValue'];
+  if (raw.containsKey('integerValue')) {
+    return int.parse(raw['integerValue'].toString());
+  }
+  if (raw.containsKey('doubleValue')) return raw['doubleValue'];
+  if (raw.containsKey('stringValue')) return raw['stringValue'];
+  if (raw.containsKey('timestampValue')) return raw['timestampValue'];
+  if (raw.containsKey('arrayValue')) {
+    final array = raw['arrayValue'] as Map?;
+    return ((array?['values'] as List?) ?? const [])
+        .map(_decodeFirestoreValue)
+        .toList();
+  }
+  if (raw.containsKey('mapValue')) {
+    final map = raw['mapValue'] as Map?;
+    final fields = (map?['fields'] as Map?) ?? const {};
+    return <String, Object?>{
+      for (final entry in fields.entries)
+        entry.key.toString(): _decodeFirestoreValue(entry.value),
+    };
+  }
+  return raw;
+}
+
+Future<bool> _createOnly({
   required HttpClient client,
   required String projectId,
   required String accessToken,
@@ -366,45 +773,26 @@ Future<void> _seedOne({
   required String id,
   required String versionField,
   required Map<String, Object?> fields,
-  required bool overwrite,
 }) async {
   final String path = '$collection/$id';
-  final _Doc? existing = await _getDoc(client, projectId, accessToken, path);
-
-  if (existing != null && !overwrite) {
-    print('SKIP $path: ya existe (usá --overwrite para pisarlo).');
-    return;
-  }
-
-  final int previousVersion = existing == null
-      ? 0
-      : _int(existing.fields[versionField]) ?? 0;
-  final int nextVersion = previousVersion + 1;
-  final DateTime now = DateTime.now().toUtc();
+  final now = DateTime.now().toUtc();
 
   final Map<String, Object?> envelope = <String, Object?>{
     ...fields,
-    versionField: nextVersion,
-    'createdAt': existing == null
-        ? now
-        : _DoNotEncode(existing.fields['createdAt']),
+    versionField: 1,
+    'createdAt': now,
     'updatedAt': now,
   };
 
-  await _putDoc(client, projectId, accessToken, path, envelope);
-  print(
-    existing == null
-        ? 'CREADO $path ($versionField=$nextVersion).'
-        : 'SOBRESCRITO $path ($versionField $previousVersion -> $nextVersion).',
+  final created = await _putCreateOnly(
+    client,
+    projectId,
+    accessToken,
+    path,
+    envelope,
   );
-}
-
-/// Marker so `createdAt` can reuse the exact previously-stored Firestore
-/// value instead of re-encoding a parsed DateTime — avoids any precision
-/// loss on overwrite.
-class _DoNotEncode {
-  const _DoNotEncode(this.rawFirestoreValue);
-  final Object? rawFirestoreValue;
+  print(created ? 'CREATED $path ($versionField=1)' : 'RACE_PRESERVED $path');
+  return created;
 }
 
 int? _int(dynamic value) {
@@ -415,10 +803,6 @@ int? _int(dynamic value) {
 }
 
 Map<String, dynamic> _encodeFirestoreValue(Object? value) {
-  if (value is _DoNotEncode) {
-    return (value.rawFirestoreValue as Map?)?.cast<String, dynamic>() ??
-        _encodeFirestoreValue(null);
-  }
   if (value == null) {
     return {'nullValue': null};
   }
@@ -469,39 +853,60 @@ class _Doc {
   final Map<String, dynamic> fields;
 }
 
-Future<_Doc?> _getDoc(
+Future<List<_Doc>> _listCollection(
   HttpClient client,
   String projectId,
   String accessToken,
-  String path,
+  String collection,
 ) async {
-  final Uri uri = Uri.parse(
-    'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$path',
-  );
-  final HttpClientRequest request = await client.getUrl(uri);
-  request.headers.set('Authorization', 'Bearer $accessToken');
-  final HttpClientResponse response = await request.close();
-  final String body = await response.transform(utf8.decoder).join();
-  if (response.statusCode == 404) return null;
-  if (response.statusCode != 200) {
-    throw StateError('GET $path failed (${response.statusCode}): $body');
-  }
-  final Map<String, dynamic> json = jsonDecode(body) as Map<String, dynamic>;
-  return _Doc(
-    id: (json['name'] as String).split('/').last,
-    fields: (json['fields'] as Map<String, dynamic>?) ?? const {},
-  );
+  final docs = <_Doc>[];
+  String? pageToken;
+  do {
+    final query = <String, String>{'pageSize': '100'};
+    if (pageToken != null) query['pageToken'] = pageToken;
+    final uri = Uri.https(
+      'firestore.googleapis.com',
+      '/v1/projects/$projectId/databases/(default)/documents/$collection',
+      query,
+    );
+    final request = await client.getUrl(uri);
+    request.headers.set('Authorization', 'Bearer $accessToken');
+    final response = await request.close();
+    final body = await response.transform(utf8.decoder).join();
+    if (response.statusCode != 200) {
+      throw StateError(
+        'LIST $collection failed (${response.statusCode}): $body',
+      );
+    }
+    final json = jsonDecode(body) as Map<String, dynamic>;
+    for (final raw in (json['documents'] as List?) ?? const []) {
+      final doc = raw as Map<String, dynamic>;
+      docs.add(
+        _Doc(
+          id: (doc['name'] as String).split('/').last,
+          fields:
+              (doc['fields'] as Map<String, dynamic>?) ??
+              const <String, dynamic>{},
+        ),
+      );
+    }
+    pageToken = json['nextPageToken'] as String?;
+  } while (pageToken != null && pageToken.isNotEmpty);
+  docs.sort((a, b) => a.id.compareTo(b.id));
+  return docs;
 }
 
-Future<void> _putDoc(
+Future<bool> _putCreateOnly(
   HttpClient client,
   String projectId,
   String accessToken,
   String path,
   Map<String, Object?> fields,
 ) async {
-  final Uri uri = Uri.parse(
-    'https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$path',
+  final Uri uri = Uri.https(
+    'firestore.googleapis.com',
+    '/v1/projects/$projectId/databases/(default)/documents/$path',
+    {'currentDocument.exists': 'false'},
   );
   final HttpClientRequest request = await client.openUrl('PATCH', uri);
   request.headers.set('Authorization', 'Bearer $accessToken');
@@ -518,9 +923,11 @@ Future<void> _putDoc(
   );
   final HttpClientResponse response = await request.close();
   final String body = await response.transform(utf8.decoder).join();
+  if (response.statusCode == 409) return false;
   if (response.statusCode != 200) {
     throw StateError('PATCH $path failed (${response.statusCode}): $body');
   }
+  return true;
 }
 
 Future<String> _getAccessToken(Map<String, dynamic> serviceAccount) async {

@@ -1551,8 +1551,9 @@ service cloud.firestore {
     // `sourceBoardPresetVersion` trazability only (never a live reference:
     // editing/deleting a `boardPresets` document never touches this one).
     // Read: any tenant member/owner/Valke technician, same as every other
-    // Device-scoped collection. Write: owner or tenant_admin of THIS
-    // tenant only (§16) — never a global permission.
+    // Device-scoped collection. N7.1.1 keeps the feature owner-only in both
+    // UI and Rules; tenant_admin is intentionally denied until a complete
+    // tenant-scoped administration surface is introduced.
     //
     // A fully-qualified top-level `match` (Firestore Rules supports
     // multi-segment match paths regardless of textual position in the
@@ -1580,6 +1581,13 @@ service cloud.firestore {
     // attempted (N7.1 §8/§11). Rules here focus on what actually needs
     // server-side enforcement: tenant scoping, role, and the top-level
     // document shape.
+    // Allows the owner-only aggregate collection-group count used before a
+    // BoardPreset delete. The query filters by sourceBoardPresetId and reads
+    // no documents; tenant roles do not receive this cross-tenant access.
+    match /{parentPath=**}/settings/{settingId} {
+      allow read: if isOwner();
+    }
+
     match /tenants/{tenantId}/devices/{deviceId}/settings/boardConfig {
       function isValidBoardConfigDocument() {
         return request.resource.data.keys().hasOnly([
@@ -1629,7 +1637,7 @@ service cloud.firestore {
       }
 
       allow read: if canReadTenant(tenantId);
-      allow create, update: if (isOwner() || isTenantAdmin(tenantId))
+      allow create, update: if isOwner()
         && isValidBoardConfigDocument();
       allow delete: if false;
     }

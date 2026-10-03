@@ -252,6 +252,14 @@ void main() {
         );
         expect(
           mainSource,
+          contains('await _siteConfigService.fetchActiveTenants()'),
+          reason:
+              'Gestion de clientes puede activar, desactivar o renombrar '
+              'Tenants; al volver, el selector de la Home debe refrescarse.',
+        );
+        expect(mainSource, contains('_availableTenants = refreshedTenants'));
+        expect(
+          mainSource,
           contains(
             '_agroDeviceService.invalidateCache(tenantId: tenantId, siteId: siteId)',
           ),

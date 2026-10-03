@@ -7,6 +7,7 @@ import '../cell_layout_presets/cell_layout_preset.dart';
 import '../device_board_layouts/layout_validation_issue.dart';
 import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../layout_templates/layout_template.dart';
+import '../board_runtime/configurable_board_visual_state.dart';
 import '../ui_templates/board/template_icon_resolver.dart';
 import 'board_content_renderer.dart';
 import 'board_render_config.dart';
@@ -225,12 +226,23 @@ class MetricBoardRenderer extends StatelessWidget {
     // `_missing()` above for images) instead of taking down the whole
     // render tree.
     try {
-      final preset = c.presets.resolve(item);
+      // N7.1.1 §3 — a snapshot on the item itself (independent of the
+      // global catalog) always wins over a live lookup; only an item saved
+      // before this stage (no snapshot yet) falls back to resolving
+      // `cellLayoutPresetId` against the current global catalog.
+      final snapshot =
+          (c.item.content as MetricBoardContent).cellLayoutSnapshot;
+      final preset = snapshot ?? c.presets.resolve(item);
       final resolved = CellContentResolver.resolve(
         metric,
         item,
         preset,
         template: c.template,
+      );
+      final visualState = resolveConfigurableBoardMetricVisualState(
+        metric: metric,
+        deviceData: c.data.metricData,
+        rangeSettings: c.data.rangeSettings,
       );
       return CellLayoutCanvas(
         columns: preset.internalColumns(c.template),
@@ -243,6 +255,7 @@ class MetricBoardRenderer extends StatelessWidget {
         labelOverride: (c.item.content as MetricBoardContent).labelOverride,
         unitOverride: (c.item.content as MetricBoardContent).unitOverride,
         showGrid: c.showGrid,
+        visualState: visualState,
       );
     } on LayoutValidationException catch (error) {
       return PreviewDiagnostic(

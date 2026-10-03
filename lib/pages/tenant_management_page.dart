@@ -13,6 +13,7 @@ import '../services/agro_sector_service.dart';
 import '../services/agro_site_service.dart';
 import '../services/agro_tenant_service.dart';
 import '../services/firestore_error_messages.dart';
+import '../services/global_board_configuration_service.dart';
 import '../services/structural_id_helpers.dart';
 import 'device_board_config_page.dart';
 
@@ -1593,6 +1594,8 @@ class _DeviceTileState extends State<_DeviceTile> {
                     isOwner: true,
                     tenantId: widget.tenantId,
                     device: device,
+                    globalConfigurationService:
+                        sharedGlobalBoardConfigurationService,
                   ),
                 ),
               ),

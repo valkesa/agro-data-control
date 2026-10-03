@@ -38,25 +38,32 @@ class CellLayoutPresetRepository {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       path,
     );
-    final DocumentSnapshot<Map<String, dynamic>> existing = await reference
-        .get();
-    if (existing.exists) {
-      throw StateError('Ya existe un CellLayoutPreset con id "${preset.id}".');
-    }
-    await reference.set(<String, Object?>{
-      ...preset.toMap(),
-      'presetVersion': 1,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
+    final created = await firestore.runTransaction<bool>((transaction) async {
+      if ((await transaction.get(reference)).exists) return false;
+      transaction.set(reference, <String, Object?>{
+        ...preset.toMap(),
+        'presetVersion': 1,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
     });
+    if (!created) {
+      throw FirestoreAlreadyExists(
+        entityType: 'cellLayoutPreset',
+        entityId: preset.id,
+      );
+    }
   }
 
   Future<int> save({
     required CellLayoutPreset preset,
     required int expectedVersion,
-  }) {
+  }) async {
     final String path = FirestorePaths.cellLayoutPresetDoc(preset.id);
-    return firestore.runTransaction<int>((Transaction transaction) async {
+    final outcome = await firestore.runTransaction<Object>((
+      Transaction transaction,
+    ) async {
       final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
         path,
       );
@@ -68,12 +75,7 @@ class CellLayoutPresetRepository {
       final int actualVersion =
           (snapshot.data()?['presetVersion'] as int?) ?? 0;
       if (actualVersion != expectedVersion) {
-        throw FirestoreVersionConflict(
-          entityType: 'cellLayoutPreset',
-          entityId: preset.id,
-          expectedVersion: expectedVersion,
-          actualVersion: actualVersion,
-        );
+        return FirestoreVersionMismatchResult(actualVersion);
       }
       final int nextVersion = expectedVersion + 1;
       transaction.set(reference, <String, Object?>{
@@ -85,6 +87,15 @@ class CellLayoutPresetRepository {
       });
       return nextVersion;
     });
+    if (outcome is FirestoreVersionMismatchResult) {
+      throw FirestoreVersionConflict(
+        entityType: 'cellLayoutPreset',
+        entityId: preset.id,
+        expectedVersion: expectedVersion,
+        actualVersion: outcome.actualVersion,
+      );
+    }
+    return outcome as int;
   }
 
   Future<void> setEnabled(String presetId, bool enabled) async {

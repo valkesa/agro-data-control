@@ -396,48 +396,49 @@ void main() {
   );
 
   group('N6.5.2 §19 — cambio de perfil en un Board existente', () {
-    testWidgets(
-      'Perfil A → Perfil B no borra items; revalida indicator_not_available',
-      (tester) async {
-        final fixtures = _seedAcceptanceCaseProfiles();
-        final presets = BoardPresetCatalog(initial: []);
-        final preset = presets.create(
-          name: 'Board cambia de perfil',
-          layout: buildLayoutTemplate(6, 4),
-          capabilityProfileId: fixtures.profileAId,
-        );
-        await pump(
-          tester,
-          BoardEditorPage(
-            isOwner: true,
-            presetId: preset.id,
-            presetCatalog: presets,
-            capabilityProfileStore: fixtures.profiles,
-          ),
-        );
-        await tester.pumpAndSettle();
-        await openAgregarTab(tester);
-        await tester.tap(find.byKey(const ValueKey('editor-add-type-metric')));
-        await tester.pumpAndSettle();
-        // Keep the suggested "heater" checked, confirm.
-        await tester.tap(find.byKey(const ValueKey('editor-confirm-add')));
-        await tester.pumpAndSettle();
-        expect(presets.byId(preset.id)!.items, hasLength(1));
+    testWidgets('Perfil A → Perfil B solo filtra; no borra ni invalida items', (
+      tester,
+    ) async {
+      final fixtures = _seedAcceptanceCaseProfiles();
+      final presets = BoardPresetCatalog(initial: []);
+      final preset = presets.create(
+        name: 'Board cambia de perfil',
+        layout: buildLayoutTemplate(6, 4),
+        capabilityProfileId: fixtures.profileAId,
+      );
+      await pump(
+        tester,
+        BoardEditorPage(
+          isOwner: true,
+          presetId: preset.id,
+          presetCatalog: presets,
+          capabilityProfileStore: fixtures.profiles,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openAgregarTab(tester);
+      await tester.tap(find.byKey(const ValueKey('editor-add-type-metric')));
+      await tester.pumpAndSettle();
+      // Keep the suggested "heater" checked, confirm.
+      await tester.tap(find.byKey(const ValueKey('editor-confirm-add')));
+      await tester.pumpAndSettle();
+      expect(presets.byId(preset.id)!.items, hasLength(1));
 
-        // Switch to Sala B, which doesn't have "heater" at all.
-        await tester.tap(
-          find.byKey(const ValueKey('editor-capability-profile')),
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.textContaining('Sala B').last);
-        await tester.pumpAndSettle();
+      final before = presets.byId(preset.id)!.toMap();
+      final versionBefore = presets.byId(preset.id)!.presetVersion;
 
-        // Item never deleted.
-        expect(presets.byId(preset.id)!.items, hasLength(1));
-        // Revalidates: "heater" is no longer available -> indicator_not_available
-        // (existing N3/N4.5 validator, reused unchanged — N6.5.2 §19).
-        expect(_issuesContain(tester, 'indicator_not_available'), isTrue);
-      },
-    );
+      // Switch to Sala B, which doesn't have "heater". This is now only
+      // a picker filter; validation still resolves against global libraries.
+      await tester.tap(find.byKey(const ValueKey('editor-capability-profile')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.textContaining('Sala B').last);
+      await tester.pumpAndSettle();
+
+      // Item never deleted.
+      expect(presets.byId(preset.id)!.items, hasLength(1));
+      expect(_issuesContain(tester, 'indicator_not_available'), isFalse);
+      expect(presets.byId(preset.id)!.toMap(), before);
+      expect(presets.byId(preset.id)!.presetVersion, versionBefore);
+    });
   });
 }

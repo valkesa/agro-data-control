@@ -51,26 +51,34 @@ class CapabilityProfileRepository {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.capabilityProfileDoc(profile.id),
     );
-    if ((await reference.get()).exists) {
-      throw StateError(
-        'Ya existe un CapabilityProfile con id "${profile.id}".',
+    final created = await firestore.runTransaction<bool>((transaction) async {
+      if ((await transaction.get(reference)).exists) return false;
+      transaction.set(reference, <String, Object?>{
+        ...profile.toMap(),
+        'profileVersion': 1,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+    if (!created) {
+      throw FirestoreAlreadyExists(
+        entityType: 'capabilityProfile',
+        entityId: profile.id,
       );
     }
-    await reference.set(<String, Object?>{
-      ...profile.toMap(),
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
   }
 
   Future<int> save({
     required DeviceCapabilityProfile profile,
     required int expectedVersion,
-  }) {
+  }) async {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.capabilityProfileDoc(profile.id),
     );
-    return firestore.runTransaction<int>((Transaction transaction) async {
+    final outcome = await firestore.runTransaction<Object>((
+      Transaction transaction,
+    ) async {
       final DocumentSnapshot<Map<String, dynamic>> snapshot = await transaction
           .get(reference);
       if (!snapshot.exists) {
@@ -79,12 +87,7 @@ class CapabilityProfileRepository {
       final int actualVersion =
           (snapshot.data()?['profileVersion'] as int?) ?? 1;
       if (actualVersion != expectedVersion) {
-        throw FirestoreVersionConflict(
-          entityType: 'capabilityProfile',
-          entityId: profile.id,
-          expectedVersion: expectedVersion,
-          actualVersion: actualVersion,
-        );
+        return FirestoreVersionMismatchResult(actualVersion);
       }
       final int nextVersion = expectedVersion + 1;
       transaction.set(reference, <String, Object?>{
@@ -96,6 +99,15 @@ class CapabilityProfileRepository {
       });
       return nextVersion;
     });
+    if (outcome is FirestoreVersionMismatchResult) {
+      throw FirestoreVersionConflict(
+        entityType: 'capabilityProfile',
+        entityId: profile.id,
+        expectedVersion: expectedVersion,
+        actualVersion: outcome.actualVersion,
+      );
+    }
+    return outcome as int;
   }
 
   Future<void> setEnabled(String profileId, bool enabled) async {

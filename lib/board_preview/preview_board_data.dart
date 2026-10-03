@@ -4,6 +4,7 @@ import '../board_content/reference_content_boards.dart';
 import '../device_board_layouts/reference_board_layouts.dart';
 import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../layout_templates/layout_template.dart';
+import '../models/dashboard_range_settings.dart';
 import '../ui_templates/models/template_data_context.dart';
 
 enum PreviewSeverity { ok, warning, critical, neutral }
@@ -21,10 +22,12 @@ class PreviewBoardDataProvider {
     this.metricData = const TemplateDataContext(source: null),
     this.sources = const {},
     this.media = const {},
+    this.rangeSettings = const DashboardRangeSettings.defaults(),
   });
   final TemplateDataContext metricData;
   final Map<String, Object?> sources;
   final Map<String, ImageProvider> media;
+  final DashboardRangeSettings rangeSettings;
 }
 
 class PreviewBoardFixture {

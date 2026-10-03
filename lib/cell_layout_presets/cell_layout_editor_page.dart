@@ -1,19 +1,76 @@
 import 'package:flutter/material.dart';
+import '../board_content/board_content_config.dart';
 import '../board_preview/board_render_config.dart';
 import '../board_preview/cell_layout_canvas.dart';
 import '../board_preview/preview_board_data.dart';
 import '../device_board_layouts/device_board_layout.dart';
 import '../device_board_layouts/layout_validation_issue.dart';
 import '../device_capabilities/reference_capability_seeds.dart';
+import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../layout_templates/grid_placement.dart';
 import '../layout_templates/layout_template.dart';
+import '../ui_templates/enums/metric_display_type.dart';
+import '../ui_templates/models/metric_definition.dart';
+import '../ui_templates/models/template_data_context.dart';
 import 'cell_content_resolver.dart';
 import 'cell_layout_preset.dart';
 import 'cell_layout_preset_catalog.dart';
 import 'cell_layout_validator.dart';
 
 const _labelStyle = TextStyle(color: Color(0xFF94A3B8), fontSize: 12);
+
+String _cellSizeRoleLabel(CellSizeRole role) => switch (role) {
+  CellSizeRole.fit => 'Ajustar a la celda',
+  _ => role.name,
+};
 const _errorStyle = TextStyle(color: Color(0xFFF87171), fontSize: 12);
+
+enum CellLayoutEditorMode { globalPreset, itemContext }
+
+/// Real Board item context supplied only when this editor is opened from an
+/// item. [effectiveLayout] is already materialized: editing it never writes
+/// to [CellLayoutEditorPage.catalog].
+class CellLayoutItemContext {
+  const CellLayoutItemContext({
+    required this.itemId,
+    required this.content,
+    required this.metric,
+    required this.catalog,
+    required this.effectiveLayout,
+    required this.widthCells,
+    required this.heightCells,
+  });
+
+  final String itemId;
+  final MetricBoardContent content;
+  final MetricDefinition metric;
+  final DeviceMetricCatalog catalog;
+  final CellLayoutPreset effectiveLayout;
+  final int widthCells;
+  final int heightCells;
+
+  String get visibleLabel => content.labelOverride ?? metric.label;
+  String get visibleUnit => content.unitOverride ?? metric.unit;
+}
+
+/// Centralized, semantic mock used by contextual previews. It deliberately
+/// has no metric-key special case such as `agua`.
+Object previewValueFor(MetricDefinition metric) {
+  final hint = '${metric.key} ${metric.label} ${metric.unit}'.toLowerCase();
+  return switch (metric.displayType) {
+    MetricDisplayType.percentage => 75,
+    MetricDisplayType.counter => 12,
+    MetricDisplayType.boolean => true,
+    MetricDisplayType.status => 'Activo',
+    MetricDisplayType.text => 'Ejemplo',
+    MetricDisplayType.number when hint.contains('temp') => 24.6,
+    MetricDisplayType.number when hint.contains('hum') => 65,
+    MetricDisplayType.number
+        when hint.contains('presion') || hint.contains('pressure') =>
+      8,
+    MetricDisplayType.number => 123,
+  };
+}
 
 /// Visual editor for a [CellLayoutPreset]'s internal composition (N6.3):
 /// label/value/unit/icon/indicator slots, moved/resized/aligned inside the
@@ -27,8 +84,13 @@ class CellLayoutEditorPage extends StatefulWidget {
     required this.presetId,
     required this.catalog,
     this.isReferenced,
+    this.itemContext,
+    this.onItemSnapshotSaved,
     this.renderConfig = const BoardRenderConfig(),
-  });
+  }) : assert(
+         itemContext == null || onItemSnapshotSaved != null,
+         'itemContext requires onItemSnapshotSaved',
+       );
 
   final bool isOwner;
   final String presetId;
@@ -39,7 +101,13 @@ class CellLayoutEditorPage extends StatefulWidget {
   /// (N6.3 §3). When null, direct editing is always offered (e.g. a preset
   /// created from a picker that has no such context yet).
   final bool Function(String presetId)? isReferenced;
+  final CellLayoutItemContext? itemContext;
+  final ValueChanged<CellLayoutPreset>? onItemSnapshotSaved;
   final BoardRenderConfig renderConfig;
+
+  CellLayoutEditorMode get mode => itemContext == null
+      ? CellLayoutEditorMode.globalPreset
+      : CellLayoutEditorMode.itemContext;
 
   @override
   State<CellLayoutEditorPage> createState() => _CellLayoutEditorPageState();
@@ -59,8 +127,15 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
   @override
   void initState() {
     super.initState();
-    _loadFrom(widget.catalog.byId(widget.presetId)!);
+    _loadFrom(
+      widget.itemContext?.effectiveLayout ??
+          widget.catalog.byId(widget.presetId)!,
+    );
     _nameController.text = _pristine.name;
+    if (widget.itemContext != null) {
+      _editingDirectly = true;
+      return;
+    }
     final isGlobal = widget.catalog.isSeedGlobal(widget.presetId);
     final referenced = widget.isReferenced?.call(widget.presetId) ?? false;
     _editingDirectly = !isGlobal && !referenced;
@@ -153,9 +228,17 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
     );
   }
 
+  void _closeEditor() => Navigator.of(
+    context,
+  ).pop(widget.itemContext == null ? _pristine.id : null);
+
   void _reset() {
     setState(() {
-      _loadFrom(widget.catalog.byId(_pristine.id) ?? _pristine);
+      _loadFrom(
+        widget.itemContext == null
+            ? widget.catalog.byId(_pristine.id) ?? _pristine
+            : _pristine,
+      );
       _nameController.text = _pristine.name;
     });
   }
@@ -176,6 +259,31 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
   }
 
   void _save() {
+    final itemContext = widget.itemContext;
+    if (itemContext != null) {
+      final snapshot = CellLayoutPreset(
+        id: _pristine.id,
+        name: _nameController.text.trim().isEmpty
+            ? _pristine.name
+            : _nameController.text.trim(),
+        widthCells: _width,
+        heightCells: _height,
+        presetVersion: _pristine.presetVersion + 1,
+        enabled: _enabled,
+        elements: _elements,
+        createdAt: _pristine.createdAt,
+        updatedAt: DateTime.now(),
+      );
+      widget.onItemSnapshotSaved!(snapshot);
+      setState(() {
+        _loadFrom(snapshot);
+        _nameController.text = snapshot.name;
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Diseño del item guardado')));
+      return;
+    }
     final activeId = _pristine.id;
     widget.catalog.update(activeId, elements: _elements, enabled: _enabled);
     if (_nameController.text.trim().isNotEmpty &&
@@ -274,10 +382,7 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: BackButton(
-            onPressed: () =>
-                _confirmDiscard(() => Navigator.of(context).pop(_pristine.id)),
-          ),
+          leading: BackButton(onPressed: () => _confirmDiscard(_closeEditor)),
           title: const Text('Diseño de celda'),
           actions: [
             IconButton(
@@ -336,6 +441,7 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
 
   Widget _header() {
     final isGlobal = widget.catalog.isSeedGlobal(_pristine.id);
+    final itemContext = widget.itemContext;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -348,9 +454,36 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
           ),
         ),
         const SizedBox(height: 4),
+        if (itemContext != null) ...[
+          Text(
+            'Editando diseño del item: ${itemContext.visibleLabel}',
+            key: const ValueKey('cell-editor-item-context-label'),
+            style: const TextStyle(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            'Span externo: ${itemContext.widthCells} × ${itemContext.heightCells}',
+            key: const ValueKey('cell-editor-item-context-span'),
+            style: _labelStyle,
+          ),
+          Text(
+            'Indicators activos: '
+            '${itemContext.content.indicatorKeys.isEmpty ? 'ninguno' : itemContext.content.indicatorKeys.join(', ')}',
+            key: const ValueKey('cell-editor-item-context-indicators'),
+            style: _labelStyle,
+          ),
+          const SizedBox(height: 4),
+        ] else
+          const Text(
+            'Modo globalPreset · preview ficticio de referencia',
+            key: ValueKey('cell-editor-global-preview-label'),
+            style: _labelStyle,
+          ),
         Text(
           '$_width × $_height externo → $_columns × $_rows interno'
-          '${isGlobal ? ' · diseño global compartido' : ''}',
+          '${widget.itemContext == null && isGlobal ? ' · diseño global compartido' : ''}',
           style: _labelStyle,
         ),
         const SizedBox(height: 8),
@@ -369,7 +502,7 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
           key: const ValueKey('cell-editor-dirty-state'),
           style: _labelStyle,
         ),
-        if (!_editingDirectly) ...[
+        if (itemContext == null && !_editingDirectly) ...[
           const SizedBox(height: 8),
           Container(
             padding: const EdgeInsets.all(10),
@@ -415,15 +548,32 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
       sharedMetricLibraryStore,
       sharedIndicatorLibraryStore,
     );
-    final metric = referenceCatalog.metricByKey('tempInterior');
+    final itemContext = widget.itemContext;
+    final activeCatalog = itemContext?.catalog ?? referenceCatalog;
+    final metric =
+        itemContext?.metric ?? referenceCatalog.metricByKey('tempInterior');
     final demoIndicatorSlots = _elements
         .where((e) => e.type == CellElementType.indicator)
         .length;
     final demoIndicatorKeys =
+        itemContext?.content.indicatorKeys ??
         (referenceCatalog.availableIndicators['tempInterior'] ??
                 const <String>[])
             .take(demoIndicatorSlots)
             .toList();
+    final previewData = itemContext == null
+        ? samplePreviewData
+        : PreviewBoardDataProvider(
+            metricData: TemplateDataContext(
+              source: const <String, Object?>{},
+              extras: {
+                metric!.sourceField: previewValueFor(metric),
+                for (final key in demoIndicatorKeys)
+                  if (activeCatalog.indicatorByKey(key) case final indicator?)
+                    indicator.sourceField: indicator.condition,
+              },
+            ),
+          );
     final virtualTemplate = LayoutTemplate(
       id: 'cell-editor-virtual',
       name: 'cell editor virtual',
@@ -445,14 +595,15 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
         );
         final demoItem = DeviceBoardLayoutItem(
           id: 'cell-editor',
-          metricKey: 'tempInterior',
+          metricKey: metric.key,
           placement: GridPlacement(
             x: 0,
             y: 0,
             widthCells: _width,
             heightCells: _height,
           ),
-          cellLayoutPresetId: draftPreset.id,
+          cellLayoutPresetId:
+              itemContext?.content.cellLayoutPresetId ?? draftPreset.id,
           indicatorKeys: demoIndicatorKeys,
         );
         resolved = CellContentResolver.resolve(
@@ -485,9 +636,14 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
             ),
           ),
           const SizedBox(height: 4),
-          const Text(
-            'Métrica demo de referencia (Temperatura interior · 24.6 · °C) — '
-            'no pertenece a un Device real, solo para diseñar el diseño de celda.',
+          Text(
+            itemContext == null
+                ? 'Preview ficticio de referencia '
+                      '(Temperatura interior · 24.6 · °C).'
+                : 'Preview contextual: ${itemContext.visibleLabel} · '
+                      '${previewValueFor(metric!)}'
+                      '${itemContext.visibleUnit.isEmpty ? '' : ' · ${itemContext.visibleUnit}'}',
+            key: const ValueKey('cell-editor-preview-description'),
             style: _labelStyle,
           ),
           const SizedBox(height: 12),
@@ -500,9 +656,11 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
                     rows: _rows,
                     resolved: resolved,
                     rawElements: resolved == null ? _elements : null,
-                    catalog: referenceCatalog,
-                    data: samplePreviewData,
+                    catalog: activeCatalog,
+                    data: previewData,
                     metric: metric,
+                    labelOverride: itemContext?.content.labelOverride,
+                    unitOverride: itemContext?.content.unitOverride,
                     itemIdForKeys: 'cell-editor',
                     editorMode: true,
                     showGrid: true,
@@ -749,13 +907,25 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
               value: e.sizeRole,
               items: [
                 for (final s in CellSizeRole.values)
-                  DropdownMenuItem(value: s, child: Text(s.name)),
+                  if (s != CellSizeRole.fit || e.type == CellElementType.value)
+                    DropdownMenuItem(
+                      value: s,
+                      child: Text(_cellSizeRoleLabel(s)),
+                    ),
               ],
               onChanged: (v) =>
                   _replaceSelected((c) => _withSizeRole(c, v ?? c.sizeRole)),
             ),
           ],
         ),
+        if (e.sizeRole == CellSizeRole.fit) ...[
+          const SizedBox(height: 4),
+          const Text(
+            'Usa el mayor tamaño posible sin exceder el espacio disponible.',
+            key: ValueKey('cell-editor-fit-help'),
+            style: _labelStyle,
+          ),
+        ],
         const SizedBox(height: 8),
         Row(
           children: [
@@ -983,8 +1153,17 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
         runSpacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
+          if (widget.itemContext != null)
+            Text(
+              'Indicators activos del item: '
+              '${widget.itemContext!.content.indicatorKeys.isEmpty ? 'ninguno' : widget.itemContext!.content.indicatorKeys.join(', ')}',
+              key: const ValueKey('cell-editor-active-indicators'),
+              style: _labelStyle,
+            ),
           Text(
-            'Indicator slots: $indicators',
+            widget.itemContext == null
+                ? 'Indicator slots: $indicators'
+                : 'Slots disponibles en el diseño: $indicators',
             style: const TextStyle(color: Colors.white),
           ),
           for (final element
@@ -1023,9 +1202,8 @@ class _CellLayoutEditorPageState extends State<CellLayoutEditorPage> {
       ),
       const SizedBox(width: 8),
       TextButton(
-        onPressed: () =>
-            _confirmDiscard(() => Navigator.of(context).pop(_pristine.id)),
-        child: const Text('Volver al Board'),
+        onPressed: () => _confirmDiscard(_closeEditor),
+        child: Text(widget.itemContext == null ? 'Volver' : 'Volver al Board'),
       ),
     ],
   );

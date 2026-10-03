@@ -1,4 +1,6 @@
-LayoutTemplate
++------------------+
+|  LayoutTemplate  |
+--------------------
 6x1 / 6x2 / 6x3 / 6x4 / 8x4...
 → geometría solamente
 
@@ -8,13 +10,18 @@ Temperatura / HR / Fan / puertas...
 → qué puede mostrar ese Device
 
 
-BoardPreset
++------------------+
+|   BoardPreset    |
+--------------------
 "Maternidad estándar"
 "Sala clima estándar"
 "Arco estándar"
 → configuración reutilizable para arrancar
 
 
-DeviceBoardLayout
+
++------------------+
+|DeviceBoardLayout |
+--------------------
 Sala1 de The Gene Pig
 → configuración real y editable de ese Device

@@ -2,10 +2,12 @@ import '../cell_layout_presets/cell_layout_preset.dart'
     show
         CellFontWeight,
         CellHorizontalAlignment,
+        CellLayoutPreset,
         CellSizeRole,
         CellVerticalAlignment,
         readCellEnum;
 import '../device_board_layouts/board_parsing.dart';
+import 'data_source_binding.dart';
 
 enum BoardContentType {
   metric,
@@ -113,6 +115,9 @@ class MetricBoardContent extends BoardContentConfig {
   MetricBoardContent({
     required this.metricKey,
     this.cellLayoutPresetId,
+    this.cellLayoutSnapshot,
+    this.sourceCellLayoutPresetVersion,
+    this.dataSourceBinding,
     String? labelOverride,
     String? unitOverride,
     Iterable<String> indicatorKeys = const [],
@@ -131,6 +136,9 @@ class MetricBoardContent extends BoardContentConfig {
     _fields(map, {
       'metricKey',
       'cellLayoutPresetId',
+      'cellLayoutSnapshot',
+      'sourceCellLayoutPresetVersion',
+      'dataSource',
       'indicatorKeys',
       'labelOverride',
       'unitOverride',
@@ -144,6 +152,32 @@ class MetricBoardContent extends BoardContentConfig {
           : BoardParsing.string(
               map['cellLayoutPresetId'],
               'cellLayoutPresetId',
+            ),
+      // N7.1.1 §3/§4 — absent on any document written before this stage
+      // (schema-2, no snapshot yet): `null` here means "resolve
+      // `cellLayoutPresetId` live for now", the one and only legacy
+      // fallback path — see `cell_content_resolver.dart`. The very next time
+      // this item is touched by an apply/save, a snapshot is always stamped
+      // (never left absent going forward).
+      cellLayoutSnapshot: map['cellLayoutSnapshot'] == null
+          ? null
+          : CellLayoutPreset.fromMap(
+              BoardParsing.map(map['cellLayoutSnapshot'], 'cellLayoutSnapshot'),
+            ),
+      sourceCellLayoutPresetVersion:
+          map['sourceCellLayoutPresetVersion'] == null
+          ? null
+          : BoardParsing.integer(
+              map['sourceCellLayoutPresetVersion'],
+              'sourceCellLayoutPresetVersion',
+            ),
+      // Absent on every document written before this stage, and on any
+      // item not yet wired to a real source — `binding=null`, a valid,
+      // non-error document (see DataSourceBinding's doc comment).
+      dataSourceBinding: map['dataSource'] == null
+          ? null
+          : DataSourceBinding.fromMap(
+              BoardParsing.map(map['dataSource'], 'dataSource'),
             ),
       indicatorKeys: BoardParsing.list(
         map['indicatorKeys'],
@@ -169,6 +203,12 @@ class MetricBoardContent extends BoardContentConfig {
     String? metricKey,
     String? cellLayoutPresetId,
     bool clearCellLayoutPresetId = false,
+    CellLayoutPreset? cellLayoutSnapshot,
+    bool clearCellLayoutSnapshot = false,
+    int? sourceCellLayoutPresetVersion,
+    bool clearSourceCellLayoutPresetVersion = false,
+    DataSourceBinding? dataSourceBinding,
+    bool clearDataSourceBinding = false,
     Iterable<String>? indicatorKeys,
     String? labelOverride,
     String? unitOverride,
@@ -179,6 +219,15 @@ class MetricBoardContent extends BoardContentConfig {
     cellLayoutPresetId: clearCellLayoutPresetId
         ? null
         : cellLayoutPresetId ?? this.cellLayoutPresetId,
+    cellLayoutSnapshot: clearCellLayoutSnapshot
+        ? null
+        : cellLayoutSnapshot ?? this.cellLayoutSnapshot,
+    sourceCellLayoutPresetVersion: clearSourceCellLayoutPresetVersion
+        ? null
+        : sourceCellLayoutPresetVersion ?? this.sourceCellLayoutPresetVersion,
+    dataSourceBinding: clearDataSourceBinding
+        ? null
+        : dataSourceBinding ?? this.dataSourceBinding,
     indicatorKeys: indicatorKeys ?? this.indicatorKeys,
     labelOverride: clearLabelOverride
         ? null
@@ -187,7 +236,34 @@ class MetricBoardContent extends BoardContentConfig {
   );
 
   final String metricKey;
+
+  /// N7.1.1 §3 — trazability only ("puede conservarse SOLO como
+  /// trazabilidad"), never re-resolved live once [cellLayoutSnapshot] is
+  /// present. Kept so the UI can still show "basado en preset X" and so the
+  /// cell-design editor can offer "actualizar desde el preset actual" as an
+  /// explicit, opt-in action.
   final String? cellLayoutPresetId;
+
+  /// N7.1.1 §3 — the actual, independent composition this item renders
+  /// with. A full, immutable copy of the [CellLayoutPreset] resolved at the
+  /// moment this item was last (re)applied/saved — never re-resolved from
+  /// the global catalog afterwards, so editing or deleting the global
+  /// [CellLayoutPreset] this came from can never change how this item
+  /// renders (§3: "el Device debe poder reconstruir exactamente su layout
+  /// aunque el CellLayoutPreset global cambie/sea renombrado/sea
+  /// eliminado").
+  final CellLayoutPreset? cellLayoutSnapshot;
+
+  /// N7.1.1 §3 — the `presetVersion` of [cellLayoutPresetId] at the moment
+  /// [cellLayoutSnapshot] was taken. Trazability only, same as
+  /// `sourceBoardPresetVersion` on [BoardContentLayout].
+  final int? sourceCellLayoutPresetVersion;
+
+  /// Etapa DataSourceBinding 1 — where this item's value actually comes
+  /// from (Tenant/Site/Device + concrete metric key), independent of
+  /// [metricKey] above (the item's render/semantic identity). `null` is the
+  /// normal, non-error state — see [DataSourceBinding]'s doc comment.
+  final DataSourceBinding? dataSourceBinding;
   final List<String> indicatorKeys;
   @override
   BoardContentType get type => BoardContentType.metric;
@@ -195,6 +271,11 @@ class MetricBoardContent extends BoardContentConfig {
   Map<String, Object?> toMap() => {
     'metricKey': metricKey,
     'cellLayoutPresetId': cellLayoutPresetId,
+    if (cellLayoutSnapshot != null)
+      'cellLayoutSnapshot': cellLayoutSnapshot!.toMap(),
+    if (sourceCellLayoutPresetVersion != null)
+      'sourceCellLayoutPresetVersion': sourceCellLayoutPresetVersion,
+    if (dataSourceBinding != null) 'dataSource': dataSourceBinding!.toMap(),
     'indicatorKeys': indicatorKeys.toList(),
     if (labelOverride != null) 'labelOverride': labelOverride,
     if (unitOverride != null) 'unitOverride': unitOverride,

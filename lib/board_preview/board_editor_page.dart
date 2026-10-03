@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import '../board_content/board_content_config.dart';
 import '../board_content/board_content_layout.dart'
     show BoardContentItem, BoardContentLayout;
+import '../board_content/data_source_binding.dart';
 import '../board_presets/board_preset.dart';
 import '../board_presets/board_preset_catalog.dart';
 import '../cell_layout_presets/cell_layout_catalog.dart';
@@ -11,8 +13,11 @@ import '../cell_layout_presets/cell_layout_preset_catalog.dart';
 import '../device_board_layouts/layout_validation_issue.dart';
 import '../device_capabilities/device_capability_profile.dart';
 import '../device_capabilities/device_capability_profile_store.dart';
+import '../device_capabilities/capability_library_store.dart';
+import '../device_capabilities/global_capability_catalog.dart';
 import '../device_capabilities/reference_capability_seeds.dart';
 import '../device_metric_catalogs/device_metric_catalog.dart';
+import '../services/firestore_version_conflict.dart';
 import '../ui_templates/board/template_icon_resolver.dart';
 import 'board_content_renderer.dart';
 import 'board_editor_canvas.dart';
@@ -128,9 +133,9 @@ String _errorFrom(Object error) {
   return error.toString();
 }
 
-/// Owner-only visual editor for [BoardContentLayout] fixtures. Works
-/// entirely on in-memory state (N6 §3/§23): no Firestore repository, no
-/// listener, no write to a productive Device. Editing reuses N5.2's
+/// Owner-only visual editor for fixtures, BoardPresets and Device layouts.
+/// The editable draft stays in memory; explicit callbacks supplied by the
+/// owning page form the only persistence boundary. Editing reuses N5.2's
 /// approved geometry via [BoardEditorCanvas]/[BoardCanvasLayout]; Preview
 /// reuses the exact same read-only [BoardContentRenderer] N5 already ships
 /// (N6.1 §6 — two different widgets, not one widget pretending to be both).
@@ -150,6 +155,7 @@ class BoardEditorDeviceContext {
     required this.tenantId,
     required this.deviceId,
     required this.initialLayout,
+    required this.expectedRemoteVersion,
     required this.profile,
     required this.profileId,
     required this.onSave,
@@ -158,6 +164,11 @@ class BoardEditorDeviceContext {
   final String tenantId;
   final String deviceId;
   final BoardContentLayout initialLayout;
+
+  /// N7.1.1 §9 — `0` when the Device has no remote `boardConfig` document
+  /// yet; never derived from `initialLayout.layoutVersion` (that field can
+  /// never be less than 1 — see `BoardEditorController.forDevice`).
+  final int expectedRemoteVersion;
   final DeviceCapabilityProfile? profile;
   final String? profileId;
 
@@ -179,7 +190,11 @@ class BoardEditorPage extends StatefulWidget {
     this.presetCatalog,
     this.metricCatalog,
     this.capabilityProfileStore,
+    this.metricLibrary,
+    this.indicatorLibrary,
+    this.cellLayoutPresetCatalog,
     this.deviceContext,
+    this.onPresetSave,
   }) : assert(
          (presetId == null) == (presetCatalog == null),
          'presetId and presetCatalog must be provided together (N6.2 §12).',
@@ -215,6 +230,14 @@ class BoardEditorPage extends StatefulWidget {
   /// against. Defaults to [sharedDeviceCapabilityProfileStore]. Irrelevant
   /// outside preset mode.
   final DeviceCapabilityProfileStore? capabilityProfileStore;
+  final MetricLibraryStore? metricLibrary;
+  final IndicatorLibraryStore? indicatorLibrary;
+  final CellLayoutPresetCatalog? cellLayoutPresetCatalog;
+
+  /// Explicit persistence boundary for preset mode. Production supplies
+  /// the real repository operation through the parent page.
+  final Future<int> Function(BoardPreset preset, int expectedVersion)?
+  onPresetSave;
   @override
   State<BoardEditorPage> createState() => _BoardEditorPageState();
 }
@@ -238,6 +261,7 @@ enum _SidePanelTab { board, selected, add }
 class _BoardEditorPageState extends State<BoardEditorPage> {
   late int _fixtureIndex;
   late BoardEditorController _controller;
+  String? _metricFilterProfileId;
 
   bool get _presetMode => widget.presetId != null;
 
@@ -323,9 +347,12 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
   CellLayoutCatalog get _presets =>
       widget.presets ??
       CellLayoutCatalog(
-        sharedCellLayoutPresetCatalog.presets,
+        _cellPresetCatalog.presets,
         defaults: initialCellLayoutCatalog.defaults,
       );
+
+  CellLayoutPresetCatalog get _cellPresetCatalog =>
+      widget.cellLayoutPresetCatalog ?? sharedCellLayoutPresetCatalog;
 
   /// True whenever exiting/switching away would silently lose something:
   /// applied board changes, an in-progress add draft, typed-but-invalid text
@@ -339,31 +366,46 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       _selectedFieldError != null ||
       _itemDrafts.isNotEmpty;
 
+  bool get _saving => _controller.saveStatus == BoardSaveStatus.saving;
+
   /// N6.5 §25/§30, renamed N6.5.2 §17: the admin registry to resolve
   /// [BoardPreset.capabilityProfileId] against, and to populate the profile
   /// selector from.
   DeviceCapabilityProfileStore get _capabilityProfileStore =>
       widget.capabilityProfileStore ?? sharedDeviceCapabilityProfileStore;
 
-  /// `null` means "Sin perfil" (N6.5 §26, N6.5.2 §18) — resolved to the
-  /// sentinel empty catalog, never to [referenceCapabilityProfile], so a
-  /// preset explicitly set to no profile stays exactly that, even if the
-  /// reference profile still exists in the store. Returns both the source
-  /// profile (for `suggestedIndicatorsByMetric`, N6.5.2 §8) and its
-  /// resolved [DeviceMetricCatalog] (for validation/rendering, unchanged).
-  ({DeviceCapabilityProfile? profile, DeviceMetricCatalog catalog})
-  _resolveProfile(String? id) {
-    if (id == null) return (profile: null, catalog: emptyDeviceMetricCatalog);
-    final profile =
-        _capabilityProfileStore.byId(id) ?? referenceCapabilityProfile;
-    return (
-      profile: profile,
-      catalog: profile.resolve(
-        sharedMetricLibraryStore,
-        sharedIndicatorLibraryStore,
-      ),
+  MetricLibraryStore get _metricLibrary =>
+      widget.metricLibrary ?? sharedMetricLibraryStore;
+
+  IndicatorLibraryStore get _indicatorLibrary =>
+      widget.indicatorLibrary ?? sharedIndicatorLibraryStore;
+
+  DeviceCapabilityProfile? get _metricFilterProfile {
+    final id = _metricFilterProfileId;
+    return id == null ? null : _capabilityProfileStore.byId(id);
+  }
+
+  DeviceMetricCatalog get _globalPresetCatalog => buildGlobalCapabilityCatalog(
+    metrics: _metricLibrary,
+    indicators: _indicatorLibrary,
+  );
+
+  /// Catalog shown only in pickers. The controller always retains the full
+  /// global catalog, independently of this filter.
+  DeviceMetricCatalog get _metricSelectionCatalog {
+    final profile = _metricFilterProfile;
+    if (profile == null) return _globalPresetCatalog;
+    return filterGlobalCapabilityCatalog(
+      _globalPresetCatalog,
+      metricKeys: profile.metricKeys,
+      indicatorKeys: profile.indicatorKeys,
+      id: '__filter_${profile.id}__',
+      name: profile.name,
     );
   }
+
+  DeviceMetricCatalog get _presetMetricSelectionCatalog =>
+      widget.metricCatalog ?? _metricSelectionCatalog;
 
   /// N6.5.2 §8 — the active profile's suggested indicators for [metricKey],
   /// or none: fixture mode, "Sin perfil", and any metricKey the profile
@@ -371,7 +413,7 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
   /// user still picks freely from every indicator the profile offers).
   List<String> _suggestedIndicatorsFor(String? metricKey) {
     if (metricKey == null) return const [];
-    return _controller.profile?.suggestedIndicatorsByMetric[metricKey] ??
+    return _metricFilterProfile?.suggestedIndicatorsByMetric[metricKey] ??
         const [];
   }
 
@@ -383,26 +425,21 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       if (preset == null) {
         throw StateError('Unknown BoardPreset id "${widget.presetId}"');
       }
-      final resolved = widget.metricCatalog == null
-          ? _resolveProfile(preset.capabilityProfileId)
-          : (profile: null, catalog: widget.metricCatalog!);
+      _metricFilterProfileId = preset.capabilityProfileId;
       _controller = BoardEditorController.forPreset(
         preset: preset,
-        catalog: resolved.catalog,
-        profile: resolved.profile,
-        profileId: widget.metricCatalog == null
-            ? preset.capabilityProfileId
-            : null,
+        catalog: widget.metricCatalog ?? _globalPresetCatalog,
       )..addListener(_onControllerChanged);
     } else if (_deviceMode) {
       final ctx = widget.deviceContext!;
       final catalog = ctx.profile?.resolve(
-        sharedMetricLibraryStore,
-        sharedIndicatorLibraryStore,
+        widget.metricLibrary ?? sharedMetricLibraryStore,
+        widget.indicatorLibrary ?? sharedIndicatorLibraryStore,
       );
       _controller = BoardEditorController.forDevice(
         tenantId: ctx.tenantId,
         layout: ctx.initialLayout,
+        expectedRemoteVersion: ctx.expectedRemoteVersion,
         catalog: catalog ?? emptyDeviceMetricCatalog,
         profile: ctx.profile,
         profileId: ctx.profileId,
@@ -444,10 +481,8 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
     super.dispose();
   }
 
-  /// In preset mode every applied mutation is immediately committed back
-  /// into the [BoardPresetCatalog] (N6.2 §12): editing *is* saving, still
-  /// entirely in memory. The two catalogs (fixtures vs. presets) never
-  /// share state, so this never touches a demo fixture.
+  /// Rebuilds the page for controller changes. Preset changes remain an
+  /// isolated draft until [_saveBoardPreset] succeeds.
   void _onControllerChanged() {
     setState(() {
       // Selecting a new item jumps the side panel to "Seleccionado" so the
@@ -458,31 +493,13 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       }
       _lastAutoTabSelectedId = selectedId;
     });
-    if (_presetMode && _controller.mode == BoardEditorMode.preset) {
-      // N6.5 §25, renamed N6.5.2 §17: only persist a profile choice when it
-      // came from the selector itself (never when `widget.metricCatalog`
-      // forced an override) — omitting the named argument leaves the
-      // preset's stored choice untouched rather than wiping it to null.
-      if (widget.metricCatalog == null) {
-        widget.presetCatalog!.updateContent(
-          widget.presetId!,
-          layout: _controller.template,
-          items: _controller.items,
-          showTitle: _controller.showTitle,
-          titleOverride: _controller.titleOverride,
-          clearTitleOverride: _controller.titleOverride == null,
-          capabilityProfileId: _controller.presetProfileId,
-        );
-      } else {
-        widget.presetCatalog!.updateContent(
-          widget.presetId!,
-          layout: _controller.template,
-          items: _controller.items,
-          showTitle: _controller.showTitle,
-          titleOverride: _controller.titleOverride,
-          clearTitleOverride: _controller.titleOverride == null,
-        );
-      }
+    if (_presetMode &&
+        _controller.mode == BoardEditorMode.preset &&
+        _controller.dirty) {
+      // The shared catalog mirrors the route-local draft so existing UI
+      // readers render it, but this is not a persistence event. Save still
+      // crosses [onPresetSave]; Reset/Discard restore confirmedPreset.
+      widget.presetCatalog!.replacePersisted(_controller.presetDraft);
     }
   }
 
@@ -555,6 +572,12 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
             key: const ValueKey('editor-discard-confirm'),
             onPressed: () {
               Navigator.of(context).pop();
+              if (_presetMode) {
+                final confirmed = _controller.confirmedPreset;
+                if (confirmed != null) {
+                  widget.presetCatalog!.replacePersisted(confirmed);
+                }
+              }
               onConfirm();
             },
             child: const Text('Descartar'),
@@ -568,8 +591,17 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Restaurar configuración inicial'),
-        content: const Text('Se perderán los cambios locales de este fixture.'),
+        title: Text(
+          _presetMode
+              ? 'Restaurar último BoardPreset guardado'
+              : 'Restaurar configuración inicial',
+        ),
+        content: Text(
+          _presetMode
+              ? 'Se descartará el borrador y se restaurará el último estado '
+                    'confirmado.'
+              : 'Se perderán los cambios locales de este fixture.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(),
@@ -580,6 +612,12 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
               Navigator.of(context).pop();
               setState(() {
                 _controller.reset();
+                if (_presetMode) {
+                  final confirmed = _controller.confirmedPreset;
+                  if (confirmed != null) {
+                    widget.presetCatalog!.replacePersisted(confirmed);
+                  }
+                }
                 _resetEphemeralState();
               });
             },
@@ -642,7 +680,9 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       _pendingTextWeight = CellFontWeight.normal;
       _pendingTextMaxLines = 3;
       if (type == BoardContentType.metric) {
-        final metrics = _controller.catalog.metrics;
+        final metrics = _presetMode
+            ? _presetMetricSelectionCatalog.metrics
+            : _controller.catalog.metrics;
         _pendingMetricKey = metrics.isEmpty ? null : metrics.first.key;
         // N6.5.2 §8 — the profile's suggested indicators for this metric
         // are only a prefill: already selected here, but every indicator in
@@ -681,7 +721,10 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         // metric add is pending never leaves a stale key from the old
         // catalog silently confirmable.
         final key = _pendingMetricKey;
-        if (key == null || _controller.catalog.metricByKey(key) == null) {
+        final selectionCatalog = _presetMode
+            ? _presetMetricSelectionCatalog
+            : _controller.catalog;
+        if (key == null || selectionCatalog.metricByKey(key) == null) {
           throw ArgumentError('Elegí una métrica');
         }
         return MetricBoardContent(
@@ -873,103 +916,95 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
     return 'Esta métrica sigue declarada como requerida por el preset.';
   }
 
-  /// True if some *other* item — anywhere, including a sibling in this same
-  /// [BoardPreset] — already references [cellLayoutPresetId]; used to
-  /// decide whether editing a "Diseño de celda" should go straight to a
-  /// local copy instead of the shared original (N6.3 §3).
-  ///
-  /// N6.4 §18 fix: only the item currently being edited is excluded — never
-  /// the whole current [BoardPreset]. The previous version excluded every
-  /// item in `widget.presetId` to stop a preset from flagging itself as
-  /// "shared" merely because the item being edited references the design
-  /// (a real self-triggering bug fixed in N6.3.1) — but that also silently
-  /// stopped protecting *sibling* items in the same board that happen to
-  /// share the same local design: editing one directly used to warn (for
-  /// the wrong reason), then N6.3.1's fix made it stop warning at all. This
-  /// restores the warning for the right reason — a genuine second reference
-  /// — while still not self-triggering on the item actually being edited.
-  bool _isCellLayoutPresetReferenced(
-    String cellLayoutPresetId, {
-    String? excludingItemId,
-  }) {
-    for (final preset
-        in (widget.presetCatalog ?? sharedBoardPresetCatalog).presets) {
-      for (final item in preset.items) {
-        if (preset.id == widget.presetId && item.id == excludingItemId) {
-          continue;
-        }
-        final content = item.content;
-        if (content is MetricBoardContent &&
-            content.cellLayoutPresetId == cellLayoutPresetId) {
-          return true;
-        }
-      }
+  /// Opens the cell editor with the real selected item. Saving writes only a
+  /// new embedded snapshot back to that item; the global catalog is never
+  /// mutated, even when the item originated from a shared preset.
+  Future<void> _openItemCellLayoutEditor(
+    BoardContentItem item,
+    MetricBoardContent content,
+  ) async {
+    final metric = _controller.catalog.metricByKey(content.metricKey);
+    final origin = content.cellLayoutPresetId == null
+        ? null
+        : _cellPresetCatalog.byId(content.cellLayoutPresetId!);
+    final effective = content.cellLayoutSnapshot ?? origin;
+    if (metric == null || effective == null) {
+      setState(
+        () => _selectedFieldError =
+            'No se pudo resolver la métrica o el diseño efectivo del item.',
+      );
+      return;
     }
-    return false;
-  }
-
-  /// N6.3 §5: "Diseño de celda → Editar diseño". Pushes the visual cell
-  /// layout editor for [presetId] and, on return, applies whichever preset
-  /// id ended up being edited (the original if editing was direct, or a
-  /// fresh local copy if the editor duplicated it first) back onto the
-  /// item that opened it.
-  Future<void> _openCellLayoutEditor(
-    String? presetId, {
-    required void Function(String presetId) onApplied,
-  }) async {
-    if (presetId == null) return;
-    final resultId = await Navigator.of(context).push<String>(
+    await Navigator.of(context).push<void>(
       MaterialPageRoute(
         builder: (_) => CellLayoutEditorPage(
           isOwner: widget.isOwner,
-          presetId: presetId,
-          catalog: sharedCellLayoutPresetCatalog,
-          isReferenced: (id) => _isCellLayoutPresetReferenced(
-            id,
-            excludingItemId: _controller.selectedItemId,
+          presetId: effective.id,
+          catalog: _cellPresetCatalog,
+          itemContext: CellLayoutItemContext(
+            itemId: item.id,
+            content: content,
+            metric: metric,
+            catalog: _controller.catalog,
+            effectiveLayout: effective,
+            widthCells: item.placement.widthCells,
+            heightCells: item.placement.heightCells,
           ),
+          onItemSnapshotSaved: (snapshot) {
+            _safeUpdateSelected(
+              () => content.copyWith(
+                cellLayoutSnapshot: snapshot,
+                sourceCellLayoutPresetVersion:
+                    content.sourceCellLayoutPresetVersion ??
+                    origin?.presetVersion,
+              ),
+            );
+          },
           renderConfig: widget.renderConfig,
         ),
       ),
     );
-    // N6.3.1: always re-apply a non-null result, even if it equals the id
-    // passed in — a freshly-created "desde default" preset is applied to
-    // the item for the first time right here (it was never assigned before
-    // opening the editor), so `resultId == presetId` is the common case for
-    // that flow, not a no-op to skip.
-    if (!mounted) return;
-    if (resultId != null) {
-      onApplied(resultId);
-    }
-    setState(() {});
+    if (mounted) setState(() {});
   }
 
   /// N6.3.1 §5: materializes the ephemeral "(default por span)" resolution
-  /// into a real, catalog-backed, editable [CellLayoutPreset] — never a
-  /// no-op, unlike the old pencil-icon behavior when no seeded default
-  /// existed for the span. The new preset is unreferenced by anything until
-  /// the user actually leaves the editor via "Volver al Board" (handled by
-  /// [_openCellLayoutEditor]'s `onApplied`), so it never appears "shared"
-  /// and is always editable directly — no spurious duplicate-first gate.
-  void _createDesignFromDefault(dynamic item, MetricBoardContent content) {
-    final width = item.placement.widthCells as int;
-    final height = item.placement.heightCells as int;
-    final created = sharedCellLayoutPresetCatalog.create(
+  /// into a real snapshot and immediately opens it in item context.
+  void _createDesignFromDefault(
+    BoardContentItem item,
+    MetricBoardContent content,
+  ) {
+    final width = item.placement.widthCells;
+    final height = item.placement.heightCells;
+    final created = _cellPresetCatalog.create(
       name: 'Diseño $width × $height (desde default)',
       width: width,
       height: height,
     );
-    _openCellLayoutEditor(
-      created.id,
-      onApplied: (id) => _safeUpdateSelected(
-        () => MetricBoardContent(
-          metricKey: content.metricKey,
-          labelOverride: content.labelOverride,
-          unitOverride: content.unitOverride,
-          cellLayoutPresetId: id,
-          indicatorKeys: content.indicatorKeys,
-        ),
-      ),
+    final materialized = _withCellLayoutPreset(content, created.id);
+    _safeUpdateSelected(() => materialized);
+    _openItemCellLayoutEditor(item, materialized);
+  }
+
+  /// N7.1.1 §3 — every place the editor changes which [CellLayoutPreset] a
+  /// metric item points to must ALSO (re)stamp its snapshot right then,
+  /// resolved from the same live catalog the picker itself shows: picking
+  /// "now" always means "frozen as of now" (see
+  /// `apply_board_preset_to_device.dart`'s matching stamping step for
+  /// Aplicar). `id == null` ("Sin diseño") clears all three fields —
+  /// [MetricBoardContent.copyWith]'s own `??`-based fields would otherwise
+  /// just keep the old value instead of clearing it.
+  MetricBoardContent _withCellLayoutPreset(
+    MetricBoardContent content,
+    String? id,
+  ) {
+    final preset = id == null ? null : _cellPresetCatalog.byId(id);
+    return content.copyWith(
+      cellLayoutPresetId: id,
+      clearCellLayoutPresetId: id == null,
+      cellLayoutSnapshot: preset,
+      clearCellLayoutSnapshot: preset == null,
+      sourceCellLayoutPresetVersion: preset?.presetVersion,
+      clearSourceCellLayoutPresetVersion: preset == null,
     );
   }
 
@@ -1120,9 +1155,10 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         : '${fixture.name} · demo';
     final showIssuesPanel = _controller.editMode || _debugVisible;
     return PopScope(
-      canPop: !_effectiveDirty,
+      canPop: !_effectiveDirty && !_saving,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) return;
+        if (_saving) return;
         _confirmDiscard(() => Navigator.of(context).pop());
       },
       child: Scaffold(
@@ -1143,88 +1179,93 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
               icon: Icon(
                 _debugVisible ? Icons.bug_report : Icons.bug_report_outlined,
               ),
-              onPressed: () => setState(() => _debugVisible = !_debugVisible),
+              onPressed: _saving
+                  ? null
+                  : () => setState(() => _debugVisible = !_debugVisible),
             ),
             IconButton(
               key: const ValueKey('editor-toggle-mode'),
               tooltip: _controller.editMode ? 'Ver preview' : 'Editar',
               icon: Icon(_controller.editMode ? Icons.visibility : Icons.edit),
-              onPressed: () => _controller.toggleEditMode(),
+              onPressed: _saving ? null : () => _controller.toggleEditMode(),
             ),
           ],
         ),
-        body: SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1400),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _headerPanel(),
-                const SizedBox(height: 12),
-                if (!_presetMode && !_deviceMode) ...[
-                  const Text(
-                    'CASOS DEMO',
-                    style: TextStyle(
-                      color: Color(0xFF64748B),
-                      fontWeight: FontWeight.w700,
-                      fontSize: 11,
-                      letterSpacing: 1.1,
+        body: AbsorbPointer(
+          absorbing: _saving,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(16),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 1400),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _headerPanel(),
+                  const SizedBox(height: 12),
+                  if (!_presetMode && !_deviceMode) ...[
+                    const Text(
+                      'CASOS DEMO',
+                      style: TextStyle(
+                        color: Color(0xFF64748B),
+                        fontWeight: FontWeight.w700,
+                        fontSize: 11,
+                        letterSpacing: 1.1,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      for (var i = 0; i < previewBoardFixtures.length; i++)
-                        ChoiceChip(
-                          label: Text('${previewBoardFixtures[i].name} demo'),
-                          selected: _fixtureIndex == i,
-                          onSelected: (_) => _switchFixture(i),
-                        ),
-                      if (_controller.editMode)
-                        ActionChip(
-                          key: const ValueKey('editor-reset'),
-                          label: const Text('Reset'),
-                          onPressed: _effectiveDirty ? _reset : null,
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                ] else if (_controller.editMode) ...[
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: ActionChip(
-                      key: const ValueKey('editor-reset'),
-                      label: const Text('Reset'),
-                      onPressed: _effectiveDirty ? _reset : null,
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        for (var i = 0; i < previewBoardFixtures.length; i++)
+                          ChoiceChip(
+                            label: Text('${previewBoardFixtures[i].name} demo'),
+                            selected: _fixtureIndex == i,
+                            onSelected: (_) => _switchFixture(i),
+                          ),
+                        if (_controller.editMode)
+                          ActionChip(
+                            key: const ValueKey('editor-reset'),
+                            label: const Text('Reset'),
+                            onPressed: _effectiveDirty ? _reset : null,
+                          ),
+                      ],
                     ),
+                    const SizedBox(height: 16),
+                  ] else if (_controller.editMode) ...[
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: ActionChip(
+                        key: const ValueKey('editor-reset'),
+                        label: const Text('Reset'),
+                        onPressed: _effectiveDirty ? _reset : null,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_controller.editMode) ...[
+                    _layoutTemplateSelector(),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_controller.editMode &&
+                      _presetMode &&
+                      widget.metricCatalog == null) ...[
+                    _capabilityProfileSelector(),
+                    const SizedBox(height: 16),
+                  ],
+                  if (_controller.editMode) ...[
+                    _titleSection(),
+                    const SizedBox(height: 16),
+                  ],
+                  _boardAndSidePanel(
+                    catalog,
+                    data,
+                    deviceName,
+                    issues,
+                    showIssuesPanel,
                   ),
-                  const SizedBox(height: 16),
                 ],
-                if (_controller.editMode) ...[
-                  _layoutTemplateSelector(),
-                  const SizedBox(height: 16),
-                ],
-                if (_controller.editMode &&
-                    _presetMode &&
-                    widget.metricCatalog == null) ...[
-                  _capabilityProfileSelector(),
-                  const SizedBox(height: 16),
-                ],
-                if (_controller.editMode) ...[
-                  _titleSection(),
-                  const SizedBox(height: 16),
-                ],
-                _boardAndSidePanel(
-                  catalog,
-                  data,
-                  deviceName,
-                  issues,
-                  showIssuesPanel,
-                ),
-              ],
+              ),
             ),
           ),
         ),
@@ -1359,7 +1400,9 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                     style: _fieldLabelStyle,
                   )
                 : _selectedItemPanel(catalog),
-          _SidePanelTab.add => _addContentPanel(catalog),
+          _SidePanelTab.add => _addContentPanel(
+            _presetMode ? _presetMetricSelectionCatalog : catalog,
+          ),
         },
       ],
     ),
@@ -1382,31 +1425,130 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       case BoardSaveStatus.saved:
         return 'Guardado · v${_controller.loadedLayoutVersion}';
       case BoardSaveStatus.idle:
-        return _controller.dirty
-            ? 'Cambios sin guardar'
-            : 'Sin cambios · v${_controller.loadedLayoutVersion}';
+        if (!_controller.dirty) {
+          return 'Sin cambios · v${_controller.loadedLayoutVersion}';
+        }
+        // N7.1.1 §5 — "mostrar razón clara" when Guardar is disabled because
+        // of a blocking issue, not just the generic dirty message.
+        return _boardHasBlockingIssues
+            ? 'No se puede guardar: resolvé los errores marcados abajo'
+            : 'Cambios sin guardar';
     }
   }
 
+  String _presetSaveStatusText() {
+    switch (_controller.saveStatus) {
+      case BoardSaveStatus.saving:
+        return 'Guardando BoardPreset…';
+      case BoardSaveStatus.error:
+        return _controller.saveError ?? 'No se pudo guardar el BoardPreset';
+      case BoardSaveStatus.saved:
+        return 'BoardPreset guardado · v${_controller.loadedPresetVersion}';
+      case BoardSaveStatus.idle:
+        if (!_effectiveDirty) {
+          return 'Sin cambios · v${_controller.loadedPresetVersion}';
+        }
+        return _boardHasBlockingIssues
+            ? 'No se puede guardar: resolvé los errores de validación'
+            : 'Cambios sin guardar';
+    }
+  }
+
+  String _presetPersistenceError(Object error) {
+    if (error is FirestoreVersionConflict) {
+      return 'Conflicto de versión: el BoardPreset remoto cambió. '
+          'El borrador local se conserva; volvé a abrir para recargar.';
+    }
+    final raw = error.toString();
+    final normalized = raw.toLowerCase();
+    if (normalized.contains('permission-denied')) {
+      return 'Permiso denegado al guardar. El borrador local se conserva.';
+    }
+    if (normalized.contains('unavailable') ||
+        normalized.contains('network') ||
+        normalized.contains('deadline-exceeded')) {
+      return 'Error de red al guardar. El borrador local se conserva.';
+    }
+    if (error is LayoutValidationException) {
+      return 'Error de validación: ${_errorFrom(error)}';
+    }
+    return 'No se pudo guardar el BoardPreset: $raw';
+  }
+
+  Future<void> _saveBoardPreset() async {
+    if (!_presetMode || _boardHasBlockingIssues || !_effectiveDirty) return;
+    final sentPreset = _controller.presetDraft;
+    final expectedVersion = _controller.loadedPresetVersion;
+    final sentRevision = _controller.revision;
+    _controller.markSaving();
+    try {
+      final save = widget.onPresetSave;
+      final newVersion = save == null
+          ? expectedVersion + 1
+          : await save(sentPreset, expectedVersion);
+      if (!mounted) return;
+      final confirmed = sentPreset.copyWith(presetVersion: newVersion);
+      widget.presetCatalog!.replacePersisted(confirmed);
+      _controller.markPresetSaved(
+        sentPreset: sentPreset,
+        savedPresetVersion: newVersion,
+        sentRevision: sentRevision,
+      );
+      ScaffoldMessenger.of(context)
+        ..hideCurrentSnackBar()
+        ..showSnackBar(const SnackBar(content: Text('BoardPreset guardado')));
+    } catch (error) {
+      if (!mounted) return;
+      _controller.markSaveError(_presetPersistenceError(error));
+    }
+  }
+
+  /// N7.1.1 §7/§8 (finding A4) — [sentLayout]/[sentRevision] are captured
+  /// *before* the `await`, exactly what gets compared inside
+  /// [BoardEditorController.markSaved] against whatever the controller's
+  /// `revision` is by the time this resolves, to detect edits that happened
+  /// while the save was in flight.
   Future<void> _saveDeviceBoard() async {
     final ctx = widget.deviceContext;
     if (ctx == null) return;
     final layout = _controller.board;
-    final expectedVersion = _controller.loadedLayoutVersion;
+    final expectedVersion = _controller.expectedRemoteVersion;
+    final sentRevision = _controller.revision;
     _controller.markSaving();
     try {
       final int newVersion = await ctx.onSave(layout, expectedVersion);
       if (!mounted) return;
-      _controller.markSaved(newVersion);
+      _controller.markSaved(
+        sentLayout: layout,
+        savedLayoutVersion: newVersion,
+        sentRevision: sentRevision,
+      );
     } catch (error) {
       if (!mounted) return;
       _controller.markSaveError(error.toString());
     }
   }
 
+  /// N7.1.1 §5/§6 (finding A3) — Guardar is disabled not just while dirty
+  /// tracking says there's nothing to send, but also whenever the current
+  /// board has any blocking issue (overlap, out of bounds, missing metric,
+  /// invalid/unresolvable indicator or cell reference — every code
+  /// `BoardContentValidator.validate` can currently emit is structural, none
+  /// are advisory-only). This is the UI-layer defense; the repository layer
+  /// (`DeviceBoardConfigRepository.saveLayout`) re-validates independently
+  /// right before writing, so a caller that bypasses this button entirely
+  /// still can't persist an invalid layout (see its own doc comment).
+  bool get _boardHasBlockingIssues =>
+      _controller.issues(_presets).isNotEmpty ||
+      _pendingType != null ||
+      _pendingFieldError != null ||
+      _selectedFieldError != null ||
+      _itemDrafts.isNotEmpty;
+
   Widget _deviceSaveBar() {
     final saving = _controller.saveStatus == BoardSaveStatus.saving;
-    final canSave = _controller.dirty && !saving;
+    final blocked = _boardHasBlockingIssues;
+    final canSave = _controller.dirty && !saving && !blocked;
     return Row(
       children: [
         Expanded(
@@ -1423,6 +1565,36 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
           key: const ValueKey('editor-device-save'),
           onPressed: canSave ? _saveDeviceBoard : null,
           child: Text(saving ? 'Guardando…' : 'Guardar'),
+        ),
+      ],
+    );
+  }
+
+  Widget _presetSaveBar() {
+    final saving = _controller.saveStatus == BoardSaveStatus.saving;
+    final canSave = _effectiveDirty && !saving && !_boardHasBlockingIssues;
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            _presetSaveStatusText(),
+            key: const ValueKey('editor-dirty-state'),
+            style: _controller.saveStatus == BoardSaveStatus.error
+                ? _errorStyle
+                : _fieldLabelStyle,
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton.icon(
+          key: const ValueKey('editor-preset-save'),
+          onPressed: canSave ? _saveBoardPreset : null,
+          icon: saving
+              ? const SizedBox.square(
+                  dimension: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.save),
+          label: Text(saving ? 'Guardando…' : 'Guardar BoardPreset'),
         ),
       ],
     );
@@ -1485,14 +1657,11 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
             key: const ValueKey('editor-preset-layout'),
             style: _fieldLabelStyle,
           ),
-          const SizedBox(height: 4),
-          Text(
-            _controller.editMode
-                ? 'Editando preset · borrador local en memoria'
-                : 'Modo preview · solo lectura',
-            key: const ValueKey('editor-dirty-state'),
-            style: _fieldLabelStyle,
-          ),
+          const SizedBox(height: 8),
+          if (_controller.editMode)
+            _presetSaveBar()
+          else
+            const Text('Modo preview · solo lectura', style: _fieldLabelStyle),
         ],
       );
     }
@@ -1565,16 +1734,10 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
     );
   }
 
-  /// N6.5 §25/§26/§27, N6.5.2 §17/§18/§19 — lets the preset pick which
-  /// [DeviceCapabilityProfile] to design against, including the explicit
-  /// "Sin perfil" option (`null`), without requiring one to keep using
-  /// text/icon/image/placeholder/unbound content (N6.4 stays intact).
-  /// Switching never touches existing items — a metricKey missing from the
-  /// new profile's resolved catalog surfaces as the existing
-  /// `metric_not_found` issue on the very next validation pass, never a
-  /// silent drop (N6.5 §27/§41, N6.5.2 §19).
+  /// Filters only the add-metric choices. It does not mutate the board,
+  /// dirty state, preset version, bindings, or the global validation source.
   Widget _capabilityProfileSelector() {
-    final currentId = _controller.presetProfileId;
+    final currentId = _metricFilterProfileId;
     final profiles = _capabilityProfileStore.profiles;
     final isKnown = currentId == null || profiles.any((p) => p.id == currentId);
     return Column(
@@ -1582,10 +1745,7 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       children: [
         Row(
           children: [
-            const Text(
-              'Perfil de capacidades de referencia:',
-              style: _fieldLabelStyle,
-            ),
+            const Text('Filtrar métricas por perfil:', style: _fieldLabelStyle),
             const SizedBox(width: 8),
             Expanded(
               child: DropdownButton<String?>(
@@ -1595,7 +1755,10 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                 items: [
                   const DropdownMenuItem<String?>(
                     value: null,
-                    child: Text('Sin perfil', overflow: TextOverflow.ellipsis),
+                    child: Text(
+                      'Todas las métricas',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                   for (final entry in profiles)
                     DropdownMenuItem<String?>(
@@ -1615,24 +1778,15 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                     ),
                 ],
                 onChanged: (id) {
-                  final resolved = _resolveProfile(id);
-                  // N6.5.1: a pending "Agregar métrica" form left open while
-                  // switching profiles must never keep pointing at a key the
-                  // new profile doesn't have — that `DropdownMenuItem` would
-                  // no longer exist, crashing the dropdown on rebuild.
-                  if (_pendingMetricKey != null &&
-                      resolved.catalog.metricByKey(_pendingMetricKey!) ==
-                          null) {
-                    setState(() {
+                  setState(() {
+                    _metricFilterProfileId = id;
+                    final selection = _metricSelectionCatalog;
+                    if (_pendingMetricKey != null &&
+                        selection.metricByKey(_pendingMetricKey!) == null) {
                       _pendingMetricKey = null;
                       _pendingIndicatorKeys.clear();
-                    });
-                  }
-                  _controller.setProfile(
-                    resolved.profile,
-                    resolved.catalog,
-                    id: id,
-                  );
+                    }
+                  });
                 },
               ),
             ),
@@ -1642,8 +1796,8 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         // N6.5.1 §9 — always visible, independent of the current selection,
         // so it reads as an explanation of the field, not a validation error.
         const Text(
-          'Las métricas e indicators disponibles en este Board provienen de '
-          'este perfil.',
+          'El filtro solo cambia las opciones para agregar. El BoardPreset '
+          'completo se valida contra las bibliotecas globales.',
           style: _fieldLabelStyle,
         ),
       ],
@@ -1970,12 +2124,12 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
       children: [
         if (_presetMode) ...[
           const Text(
-            'Perfil de capacidades de referencia',
+            'Bibliotecas globales',
             style: TextStyle(color: Color(0xFF63D3FA), fontSize: 11),
           ),
           const Text(
-            'Estas métricas no pertenecen a un cliente real. Se usan para '
-            'diseñar el preset.',
+            'La métrica y sus indicators se validan globalmente. El perfil '
+            'elegido arriba solo filtra las opciones al agregar.',
             style: _fieldLabelStyle,
           ),
           const SizedBox(height: 4),
@@ -2004,12 +2158,16 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                 ],
                 onChanged: (key) {
                   if (key == null) return;
+                  // copyWith (not a fresh MetricBoardContent(...)) so
+                  // cellLayoutSnapshot/dataSourceBinding survive a metricKey
+                  // change instead of being silently dropped — the render
+                  // identity changing doesn't imply the cell design or the
+                  // real-world source should reset (Etapa DataSourceBinding
+                  // 1 §6: item.metricKey and dataSource.metricKey are
+                  // deliberately independent).
                   _safeUpdateSelected(
-                    () => MetricBoardContent(
+                    () => content.copyWith(
                       metricKey: key,
-                      labelOverride: content.labelOverride,
-                      unitOverride: content.unitOverride,
-                      cellLayoutPresetId: content.cellLayoutPresetId,
                       indicatorKeys: const [],
                     ),
                   );
@@ -2062,80 +2220,23 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                   currentPresetId: content.cellLayoutPresetId,
                 ),
                 onChanged: (id) => _safeUpdateSelected(
-                  () => MetricBoardContent(
-                    metricKey: content.metricKey,
-                    labelOverride: content.labelOverride,
-                    unitOverride: content.unitOverride,
-                    cellLayoutPresetId: id,
-                    indicatorKeys: content.indicatorKeys,
-                  ),
+                  () => _withCellLayoutPreset(content, id),
                 ),
               ),
             ),
           ],
         ),
-        if (content.cellLayoutPresetId != null &&
-            sharedCellLayoutPresetCatalog.byId(content.cellLayoutPresetId!) !=
-                null)
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                key: const ValueKey('editor-open-cell-layout-editor'),
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Editar diseño'),
-                onPressed: () => _openCellLayoutEditor(
-                  content.cellLayoutPresetId,
-                  onApplied: (id) {
-                    if (id == content.cellLayoutPresetId) return;
-                    _safeUpdateSelected(
-                      () => MetricBoardContent(
-                        metricKey: content.metricKey,
-                        labelOverride: content.labelOverride,
-                        unitOverride: content.unitOverride,
-                        cellLayoutPresetId: id,
-                        indicatorKeys: content.indicatorKeys,
-                      ),
-                    );
-                  },
-                ),
-              ),
-              OutlinedButton.icon(
-                key: const ValueKey('editor-duplicate-cell-layout'),
-                icon: const Icon(Icons.copy_outlined, size: 18),
-                label: const Text('Duplicar diseño'),
-                onPressed: () {
-                  final copy = sharedCellLayoutPresetCatalog.duplicate(
-                    content.cellLayoutPresetId!,
-                  );
-                  _safeUpdateSelected(
-                    () => MetricBoardContent(
-                      metricKey: content.metricKey,
-                      labelOverride: content.labelOverride,
-                      unitOverride: content.unitOverride,
-                      cellLayoutPresetId: copy.id,
-                      indicatorKeys: content.indicatorKeys,
-                    ),
-                  );
-                  _openCellLayoutEditor(
-                    copy.id,
-                    onApplied: (id) {
-                      if (id == copy.id) return;
-                      _safeUpdateSelected(
-                        () => MetricBoardContent(
-                          metricKey: content.metricKey,
-                          labelOverride: content.labelOverride,
-                          unitOverride: content.unitOverride,
-                          cellLayoutPresetId: id,
-                          indicatorKeys: content.indicatorKeys,
-                        ),
-                      );
-                    },
-                  );
-                },
-              ),
-            ],
+        if (content.cellLayoutSnapshot != null ||
+            (content.cellLayoutPresetId != null &&
+                _cellPresetCatalog.byId(content.cellLayoutPresetId!) != null))
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              key: const ValueKey('editor-open-cell-layout-editor'),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text('Editar diseño del item'),
+              onPressed: () => _openItemCellLayoutEditor(item, content),
+            ),
           ),
         if (content.cellLayoutPresetId == null) ...[
           const SizedBox(height: 4),
@@ -2151,16 +2252,22 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         ],
         const SizedBox(height: 4),
         Text(
-          _presetMode || _deviceMode
+          _presetMode
+              ? 'Indicators de la biblioteca global'
+              : _deviceMode
               ? 'Indicators disponibles en el perfil'
               : 'Indicators:',
           style: _fieldLabelStyle,
         ),
-        if (_presetMode || _deviceMode)
+        if (_presetMode)
           const Text(
-            'N6.5.2: cualquier indicator del perfil es seleccionable para '
-            'esta métrica, no solo los sugeridos. El diseño de celda decide '
-            'dónde se muestran.',
+            'Cambiar el filtro no invalida indicators ya agregados.',
+            style: _fieldLabelStyle,
+          )
+        else if (_deviceMode)
+          const Text(
+            'Cualquier indicator del perfil es seleccionable; el diseño de '
+            'celda decide dónde se muestra.',
             style: _fieldLabelStyle,
           ),
         Wrap(
@@ -2178,20 +2285,91 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
                   } else {
                     next.remove(key);
                   }
+                  // copyWith, not a fresh MetricBoardContent(...) — see the
+                  // matching comment on the metricKey dropdown above.
                   _safeUpdateSelected(
-                    () => MetricBoardContent(
-                      metricKey: content.metricKey,
-                      labelOverride: content.labelOverride,
-                      unitOverride: content.unitOverride,
-                      cellLayoutPresetId: content.cellLayoutPresetId,
-                      indicatorKeys: next,
-                    ),
+                    () => content.copyWith(indicatorKeys: next),
                   );
                 },
               ),
           ],
         ),
+        const SizedBox(height: 8),
+        _dataSourceBindingPanel(content),
       ],
+    );
+  }
+
+  /// Etapa DataSourceBinding 1 §7 — read-only: shows whether this item has
+  /// a real Tenant/Site/Device/metric binding yet. No Tenant→Site→Device→
+  /// Métrica selector in this stage (§10 — out of scope), only visibility.
+  Widget _dataSourceBindingPanel(MetricBoardContent content) {
+    final binding = content.dataSourceBinding;
+    return Container(
+      key: const ValueKey('editor-data-source-panel'),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F1B2E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF2B405E)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Fuente de datos', style: _fieldLabelStyle),
+          const SizedBox(height: 4),
+          if (binding == null)
+            const Text(
+              'Sin configurar',
+              key: ValueKey('editor-data-source-unset'),
+              style: TextStyle(color: Colors.white),
+            )
+          else ...[
+            Text(
+              'Tenant: ${binding.tenantId}',
+              key: const ValueKey('editor-data-source-tenant'),
+              style: const TextStyle(color: Colors.white),
+            ),
+            Text(
+              'Site: ${binding.siteId}',
+              key: const ValueKey('editor-data-source-site'),
+              style: const TextStyle(color: Colors.white),
+            ),
+            Text(
+              'Device: ${binding.deviceId}',
+              key: const ValueKey('editor-data-source-device'),
+              style: const TextStyle(color: Colors.white),
+            ),
+            Text(
+              'Métrica: ${binding.metricKey}',
+              key: const ValueKey('editor-data-source-metric'),
+              style: const TextStyle(color: Colors.white),
+            ),
+          ],
+          // Etapa DataSourceBinding 1 §8 — dev-only smoke mechanism: no
+          // Tenant→Site→Device→Métrica selector exists yet (out of scope),
+          // so this is how the stage can be validated visually without
+          // writing real data or hardcoding a real tenant. Never compiled
+          // into a release build.
+          if (kDebugMode) ...[
+            const SizedBox(height: 4),
+            OutlinedButton(
+              key: const ValueKey('editor-data-source-qa-sample'),
+              onPressed: () => _safeUpdateSelected(
+                () => content.copyWith(
+                  dataSourceBinding: DataSourceBinding(
+                    tenantId: 'qa-tenant',
+                    siteId: 'qa-site',
+                    deviceId: 'qa-device',
+                    metricKey: content.metricKey,
+                  ),
+                ),
+              ),
+              child: const Text('QA: aplicar binding de ejemplo'),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -2307,7 +2485,10 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         const SizedBox(height: 8),
         OutlinedButton.icon(
           key: const ValueKey('editor-convert-placeholder-to-metric'),
-          onPressed: () => _convertPlaceholderToMetric(catalog, content),
+          onPressed: () => _convertPlaceholderToMetric(
+            _presetMode ? _presetMetricSelectionCatalog : catalog,
+            content,
+          ),
           icon: const Icon(Icons.swap_horiz, size: 18),
           label: const Text('Convertir a métrica'),
         ),
@@ -2995,14 +3176,14 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
   Widget _pendingForm(DeviceMetricCatalog catalog) {
     switch (_pendingType!) {
       case BoardContentType.metric:
-        // N6.5.1 §6: "Sin catálogo" (or any catalog with zero metrics) never
+        // An empty filter never leaves a silently-unusable dropdown.
         // shows an empty, silently-unusable dropdown — an explicit helper
         // replaces the whole form instead, same pattern already used by
         // `_convertPlaceholderToMetric` for the same situation.
         if (catalog.metrics.isEmpty) {
           return const Text(
             key: ValueKey('editor-pending-metric-empty-catalog'),
-            'Seleccioná un perfil de capacidades para agregar métricas.',
+            'No hay métricas globales disponibles para este filtro.',
             style: _fieldLabelStyle,
           );
         }
@@ -3495,7 +3676,8 @@ class _BoardEditorPageState extends State<BoardEditorPage> {
         value: value,
         items: [
           for (final s in CellSizeRole.values)
-            DropdownMenuItem(value: s, child: Text(s.name)),
+            if (s != CellSizeRole.fit)
+              DropdownMenuItem(value: s, child: Text(s.name)),
         ],
         onChanged: (v) => onChanged(v ?? value),
       ),

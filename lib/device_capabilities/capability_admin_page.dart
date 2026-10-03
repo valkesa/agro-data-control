@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '../services/global_board_configuration_service.dart';
+import '../services/capability_profile_repository.dart';
 import '../board_presets/board_preset_catalog.dart';
 import '../board_presets/board_preset_metric_references.dart';
 import '../ui_templates/board/template_icon_resolver.dart';
@@ -8,13 +10,13 @@ import '../ui_templates/enums/metric_transform.dart';
 import 'capability_indicator_definition.dart';
 import 'capability_library_store.dart';
 import 'capability_metric_definition.dart';
+import 'capability_records.dart';
 import 'capability_reference_utils.dart';
 import 'capability_validation.dart';
 import 'device_capability_profile.dart';
 import 'device_capability_profile_store.dart';
 import 'indicator_binding.dart';
 import 'metric_binding.dart';
-import 'reference_capability_seeds.dart';
 
 const _labelStyle = TextStyle(color: Color(0xFF94A3B8), fontSize: 12);
 const _errorStyle = TextStyle(color: Color(0xFFF87171), fontSize: 12);
@@ -38,22 +40,39 @@ class CapabilityAdminPage extends StatefulWidget {
     IndicatorLibraryStore? indicatorLibrary,
     DeviceCapabilityProfileStore? profileStore,
     BoardPresetCatalog? presetCatalog,
-  }) : metricLibrary = metricLibrary ?? sharedMetricLibraryStore,
-       indicatorLibrary = indicatorLibrary ?? sharedIndicatorLibraryStore,
-       profileStore = profileStore ?? sharedDeviceCapabilityProfileStore,
-       presetCatalog = presetCatalog ?? sharedBoardPresetCatalog;
+    GlobalBoardConfigurationService? configurationService,
+  }) : metricLibrary = metricLibrary ?? MetricLibraryStore(),
+       indicatorLibrary = indicatorLibrary ?? IndicatorLibraryStore(),
+       profileStore = profileStore ?? DeviceCapabilityProfileStore(),
+       presetCatalog = presetCatalog ?? BoardPresetCatalog(initial: const []),
+       configurationService =
+           configurationService ?? sharedGlobalBoardConfigurationService,
+       firestoreBacked =
+           metricLibrary == null &&
+           indicatorLibrary == null &&
+           profileStore == null &&
+           presetCatalog == null;
 
   final bool isOwner;
   final MetricLibraryStore metricLibrary;
   final IndicatorLibraryStore indicatorLibrary;
   final DeviceCapabilityProfileStore profileStore;
   final BoardPresetCatalog presetCatalog;
+  final GlobalBoardConfigurationService configurationService;
+  final bool firestoreBacked;
 
   @override
   State<CapabilityAdminPage> createState() => _CapabilityAdminPageState();
 }
 
 class _CapabilityAdminPageState extends State<CapabilityAdminPage> {
+  bool _loading = false;
+  bool _hydrating = false;
+  bool _syncScheduled = false;
+  String? _persistenceError;
+  final Map<String, CapabilityMetricRecord> _metricBaseline = {};
+  final Map<String, CapabilityIndicatorRecord> _indicatorBaseline = {};
+  final Map<String, CapabilityProfileRecord> _profileBaseline = {};
   String? _selectedMetricKey;
   String? _selectedIndicatorKey;
   String? _selectedProfileId;
@@ -78,6 +97,7 @@ class _CapabilityAdminPageState extends State<CapabilityAdminPage> {
     widget.metricLibrary.addListener(_onChanged);
     widget.indicatorLibrary.addListener(_onChanged);
     widget.profileStore.addListener(_onChanged);
+    if (widget.firestoreBacked) _load();
   }
 
   @override
@@ -95,7 +115,138 @@ class _CapabilityAdminPageState extends State<CapabilityAdminPage> {
     super.dispose();
   }
 
-  void _onChanged() => setState(() {});
+  void _onChanged() {
+    if (mounted) setState(() {});
+    if (!widget.firestoreBacked || _hydrating || _syncScheduled) return;
+    _syncScheduled = true;
+    Future<void>.microtask(_persistChanges);
+  }
+
+  Future<void> _load({bool refresh = false}) async {
+    setState(() {
+      _loading = true;
+      _persistenceError = null;
+    });
+    try {
+      final snapshot = await widget.configurationService.load(refresh: refresh);
+      _hydrating = true;
+      widget.metricLibrary.replaceAll(
+        snapshot.metrics.where((r) => r.enabled).map((r) => r.metric),
+      );
+      widget.indicatorLibrary.replaceAll(
+        snapshot.indicators.where((r) => r.enabled).map((r) => r.indicator),
+      );
+      widget.profileStore.replaceAll(
+        snapshot.profiles.where((r) => r.profile.enabled).map((r) => r.profile),
+      );
+      widget.presetCatalog.replaceAll(
+        snapshot.boardPresets.where((p) => p.enabled),
+      );
+      _metricBaseline
+        ..clear()
+        ..addEntries(snapshot.metrics.map((r) => MapEntry(r.metric.key, r)));
+      _indicatorBaseline
+        ..clear()
+        ..addEntries(
+          snapshot.indicators.map((r) => MapEntry(r.indicator.key, r)),
+        );
+      _profileBaseline
+        ..clear()
+        ..addEntries(snapshot.profiles.map((r) => MapEntry(r.profile.id, r)));
+      _hydrating = false;
+      if (mounted) {
+        setState(() => _loading = false);
+      }
+    } catch (error) {
+      _hydrating = false;
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _persistenceError = '$error';
+        });
+      }
+    }
+  }
+
+  Future<void> _persistChanges() async {
+    _syncScheduled = false;
+    if (mounted) setState(() => _loading = true);
+    try {
+      final currentMetrics = {
+        for (final m in widget.metricLibrary.metrics) m.key: m,
+      };
+      for (final entry in currentMetrics.entries) {
+        final old = _metricBaseline[entry.key];
+        if (old == null) {
+          await widget.configurationService.metrics.create(entry.value);
+        } else if (old.metric.toMap().toString() !=
+            entry.value.toMap().toString()) {
+          await widget.configurationService.metrics.save(
+            metric: entry.value,
+            enabled: old.enabled,
+            expectedVersion: old.recordVersion,
+          );
+        }
+      }
+      for (final removed in _metricBaseline.keys.toSet().difference(
+        currentMetrics.keys.toSet(),
+      )) {
+        await widget.configurationService.metrics.setEnabled(removed, false);
+      }
+
+      final currentIndicators = {
+        for (final i in widget.indicatorLibrary.indicators) i.key: i,
+      };
+      for (final entry in currentIndicators.entries) {
+        final old = _indicatorBaseline[entry.key];
+        if (old == null) {
+          await widget.configurationService.indicators.create(entry.value);
+        } else if (old.indicator.toMap().toString() !=
+            entry.value.toMap().toString()) {
+          await widget.configurationService.indicators.save(
+            indicator: entry.value,
+            enabled: old.enabled,
+            expectedVersion: old.recordVersion,
+          );
+        }
+      }
+      for (final removed in _indicatorBaseline.keys.toSet().difference(
+        currentIndicators.keys.toSet(),
+      )) {
+        await widget.configurationService.indicators.setEnabled(removed, false);
+      }
+
+      final currentProfiles = {
+        for (final p in widget.profileStore.profiles) p.id: p,
+      };
+      for (final entry in currentProfiles.entries) {
+        final old = _profileBaseline[entry.key];
+        if (old == null) {
+          await widget.configurationService.profiles.create(entry.value);
+        } else if (old.profile.toMap().toString() !=
+            entry.value.toMap().toString()) {
+          await widget.configurationService.profiles.save(
+            profile: entry.value,
+            expectedVersion: old.profile.profileVersion,
+          );
+        }
+      }
+      for (final removed in _profileBaseline.keys.toSet().difference(
+        currentProfiles.keys.toSet(),
+      )) {
+        await widget.configurationService.profiles.setEnabled(removed, false);
+      }
+      widget.configurationService.invalidate();
+      await _load(refresh: true);
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _persistenceError = 'No se pudo guardar: $error';
+        });
+      }
+    }
+  }
 
   CapabilityMetricDefinition? get _selectedMetric {
     final key = _selectedMetricKey;
@@ -152,6 +303,14 @@ class _CapabilityAdminPageState extends State<CapabilityAdminPage> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('Capacidades'),
+          actions: [
+            if (widget.firestoreBacked)
+              IconButton(
+                tooltip: 'Actualizar desde Firestore',
+                onPressed: _loading ? null : () => _load(refresh: true),
+                icon: const Icon(Icons.refresh),
+              ),
+          ],
           bottom: const TabBar(
             tabs: [
               Tab(
@@ -169,9 +328,31 @@ class _CapabilityAdminPageState extends State<CapabilityAdminPage> {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [_metricsTab(), _indicatorsTab(), _profilesTab()],
-        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : Column(
+                children: [
+                  if (_persistenceError != null)
+                    MaterialBanner(
+                      content: Text(_persistenceError!),
+                      actions: [
+                        TextButton(
+                          onPressed: () => _load(refresh: true),
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+                  Expanded(
+                    child: TabBarView(
+                      children: [
+                        _metricsTab(),
+                        _indicatorsTab(),
+                        _profilesTab(),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
       ),
     );
   }

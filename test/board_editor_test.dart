@@ -13,6 +13,7 @@ import 'package:agro_data_control/board_preview/board_preview_card.dart';
 import 'package:agro_data_control/board_preview/board_render_config.dart';
 import 'package:agro_data_control/cell_layout_presets/cell_layout_catalog.dart';
 import 'package:agro_data_control/cell_layout_presets/cell_layout_preset.dart';
+import 'package:agro_data_control/cell_layout_presets/cell_layout_preset_catalog.dart';
 
 /// Every preset in the real N4 catalog exposes exactly 3 indicator slots,
 /// matching the 3 real indicators tempInterior offers — so the "exceeds
@@ -1353,6 +1354,7 @@ void main() {
       await pump(
         tester,
         BoardEditorPage(
+          key: ValueKey(original.id),
           isOwner: true,
           presetId: original.id,
           presetCatalog: catalog,
@@ -1369,6 +1371,7 @@ void main() {
       await pump(
         tester,
         BoardEditorPage(
+          key: ValueKey(duplicate.id),
           isOwner: true,
           presetId: duplicate.id,
           presetCatalog: catalog,
@@ -1898,9 +1901,13 @@ void main() {
         );
         await tester.pumpAndSettle();
         expect(find.text('Diseño de celda'), findsWidgets);
-        // humidity's default 2x1 preset is a seed global — duplicate first.
-        await tester.tap(find.byKey(const ValueKey('cell-editor-duplicate')));
-        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('cell-editor-duplicate')),
+          findsNothing,
+        );
+        final globalBefore = sharedCellLayoutPresetCatalog
+            .byId('default_2x1')!
+            .toMap();
         await tester.tap(
           find.byKey(const ValueKey('cell-editor-element-value')),
         );
@@ -1914,8 +1921,12 @@ void main() {
         expect(tester.takeException(), isNull);
         final content =
             _liveController(tester).selectedItem!.content as MetricBoardContent;
-        expect(content.cellLayoutPresetId, isNotNull);
-        expect(content.cellLayoutPresetId, isNot('default_2x1'));
+        expect(content.cellLayoutPresetId, 'default_2x1');
+        expect(content.cellLayoutSnapshot, isNotNull);
+        expect(
+          sharedCellLayoutPresetCatalog.byId('default_2x1')!.toMap(),
+          globalBefore,
+        );
       },
     );
   });

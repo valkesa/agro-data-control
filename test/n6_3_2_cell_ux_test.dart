@@ -205,6 +205,12 @@ void main() {
       MetricBoardContent content() =>
           c.byId(p.id)!.items.single.content as MetricBoardContent;
       final id = content().cellLayoutPresetId!;
+      final globalValueRole = sharedCellLayoutPresetCatalog
+          .byId(id)!
+          .elements
+          .firstWhere((e) => e.type == CellElementType.value)
+          .sizeRole
+          .name;
       for (final role in ['hero', 'xl']) {
         await tap(t, 'editor-open-cell-layout-editor');
         expect(
@@ -220,13 +226,20 @@ void main() {
         await t.pumpAndSettle();
         expect(content().cellLayoutPresetId, id);
         expect(
+          content().cellLayoutSnapshot!.elements
+              .firstWhere((e) => e.type == CellElementType.value)
+              .sizeRole
+              .name,
+          role,
+        );
+        expect(
           sharedCellLayoutPresetCatalog
               .byId(id)!
               .elements
               .firstWhere((e) => e.type == CellElementType.value)
               .sizeRole
               .name,
-          role,
+          globalValueRole,
         );
       }
       for (final key in [
@@ -249,7 +262,7 @@ void main() {
       await t.pumpAndSettle();
       expect(content().indicatorKeys, indicatorsBefore);
       expect(find.textContaining('insufficient_indicator_slots'), findsWidgets);
-      expect(find.text('Duplicar diseño'), findsOneWidget);
+      expect(find.text('Duplicar diseño'), findsNothing);
       expect(t.takeException(), isNull);
     },
   );

@@ -448,66 +448,81 @@ void main() {
   });
 
   group('N6.4 §24 — referencia compartida de CellLayoutPreset', () {
-    testWidgets(
-      'itemA y itemB comparten presetLocalX: Editar diseño desde itemA '
-      'detecta que itemB también lo usa',
-      (tester) async {
-        final shared = sharedCellLayoutPresetCatalog.create(
-          name: 'Compartido N6.4',
-          width: 1,
-          height: 1,
-        );
-        final layout = buildLayoutTemplate(4, 4);
-        final itemA = BoardContentItem(
-          id: 'itemA',
-          content: MetricBoardContent(
-            metricKey: 'tempInterior',
-            cellLayoutPresetId: shared.id,
+    testWidgets('itemA y itemB comparten presetLocalX: editar A crea snapshot '
+        'independiente sin mutar B ni el global', (tester) async {
+      final shared = sharedCellLayoutPresetCatalog.create(
+        name: 'Compartido N6.4',
+        width: 1,
+        height: 1,
+      );
+      final layout = buildLayoutTemplate(4, 4);
+      final itemA = BoardContentItem(
+        id: 'itemA',
+        content: MetricBoardContent(
+          metricKey: 'tempInterior',
+          cellLayoutPresetId: shared.id,
+        ),
+        placement: GridPlacement(x: 0, y: 0, widthCells: 1, heightCells: 1),
+      );
+      final itemB = BoardContentItem(
+        id: 'itemB',
+        content: MetricBoardContent(
+          metricKey: 'humedadInterior',
+          cellLayoutPresetId: shared.id,
+        ),
+        placement: GridPlacement(x: 1, y: 0, widthCells: 1, heightCells: 1),
+      );
+      final preset = BoardPreset(
+        id: 'preset-shared-n64',
+        name: 'Con hermanos',
+        layoutTemplateId: layout.id,
+        items: [itemA, itemB],
+      );
+      final catalog = BoardPresetCatalog(initial: [preset]);
+      final globalBefore = shared.toMap();
+      final itemBBefore = itemB.toMap();
+      await pump(
+        tester,
+        freePreset(
+          catalog: catalog,
+          presetId: preset.id,
+          metricCatalog: referenceCapabilityProfile.resolve(
+            sharedMetricLibraryStore,
+            sharedIndicatorLibraryStore,
           ),
-          placement: GridPlacement(x: 0, y: 0, widthCells: 1, heightCells: 1),
-        );
-        final itemB = BoardContentItem(
-          id: 'itemB',
-          content: MetricBoardContent(
-            metricKey: 'humedadInterior',
-            cellLayoutPresetId: shared.id,
-          ),
-          placement: GridPlacement(x: 1, y: 0, widthCells: 1, heightCells: 1),
-        );
-        final preset = BoardPreset(
-          id: 'preset-shared-n64',
-          name: 'Con hermanos',
-          layoutTemplateId: layout.id,
-          items: [itemA, itemB],
-        );
-        final catalog = BoardPresetCatalog(initial: [preset]);
-        await pump(
-          tester,
-          freePreset(
-            catalog: catalog,
-            presetId: preset.id,
-            metricCatalog: referenceCapabilityProfile.resolve(
-              sharedMetricLibraryStore,
-              sharedIndicatorLibraryStore,
-            ),
-          ),
-        );
-        await tester.pumpAndSettle();
-        await openBoardTab(tester);
-        await tester.tap(find.byKey(const ValueKey('editor-item-row-itemA')));
-        await tester.pumpAndSettle();
-        await openSelectedTab(tester);
-        await tester.tap(
-          find.byKey(const ValueKey('editor-open-cell-layout-editor')),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('cell-editor-duplicate')),
-          findsOneWidget,
-          reason:
-              'itemB still uses the same design, so editing itemA must warn',
-        );
-      },
-    );
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openBoardTab(tester);
+      await tester.tap(find.byKey(const ValueKey('editor-item-row-itemA')));
+      await tester.pumpAndSettle();
+      await openSelectedTab(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('editor-open-cell-layout-editor')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cell-editor-duplicate')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('cell-editor-item-context-label')),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('cell-editor-element-value')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cell-editor-move-right')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cell-editor-save')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Volver al Board'));
+      await tester.pumpAndSettle();
+
+      final saved = catalog.byId(preset.id)!;
+      final savedA = saved.items.first.content as MetricBoardContent;
+      expect(savedA.cellLayoutSnapshot, isNotNull);
+      expect(saved.items.last.toMap(), itemBBefore);
+      expect(
+        sharedCellLayoutPresetCatalog.byId(shared.id)!.toMap(),
+        globalBefore,
+      );
+    });
   });
 }

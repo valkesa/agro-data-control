@@ -50,15 +50,22 @@ class BoardPresetRepository {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.boardPresetDoc(preset.id),
     );
-    if ((await reference.get()).exists) {
-      throw StateError('Ya existe un BoardPreset con id "${preset.id}".');
-    }
-    await reference.set(<String, Object?>{
-      ...preset.toMap(),
-      'presetVersion': 1,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
+    final created = await firestore.runTransaction<bool>((transaction) async {
+      if ((await transaction.get(reference)).exists) return false;
+      transaction.set(reference, <String, Object?>{
+        ...preset.toMap(),
+        'presetVersion': 1,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
     });
+    if (!created) {
+      throw FirestoreAlreadyExists(
+        entityType: 'boardPreset',
+        entityId: preset.id,
+      );
+    }
   }
 
   /// Versioned update (§15) — every edit (rename, add/remove item, change
@@ -69,11 +76,13 @@ class BoardPresetRepository {
   Future<int> save({
     required BoardPreset preset,
     required int expectedVersion,
-  }) {
+  }) async {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.boardPresetDoc(preset.id),
     );
-    return firestore.runTransaction<int>((Transaction transaction) async {
+    final outcome = await firestore.runTransaction<Object>((
+      Transaction transaction,
+    ) async {
       final DocumentSnapshot<Map<String, dynamic>> snapshot = await transaction
           .get(reference);
       if (!snapshot.exists) {
@@ -82,12 +91,7 @@ class BoardPresetRepository {
       final int actualVersion =
           (snapshot.data()?['presetVersion'] as int?) ?? 1;
       if (actualVersion != expectedVersion) {
-        throw FirestoreVersionConflict(
-          entityType: 'boardPreset',
-          entityId: preset.id,
-          expectedVersion: expectedVersion,
-          actualVersion: actualVersion,
-        );
+        return FirestoreVersionMismatchResult(actualVersion);
       }
       final int nextVersion = expectedVersion + 1;
       transaction.set(reference, <String, Object?>{
@@ -99,6 +103,15 @@ class BoardPresetRepository {
       });
       return nextVersion;
     });
+    if (outcome is FirestoreVersionMismatchResult) {
+      throw FirestoreVersionConflict(
+        entityType: 'boardPreset',
+        entityId: preset.id,
+        expectedVersion: expectedVersion,
+        actualVersion: outcome.actualVersion,
+      );
+    }
+    return outcome as int;
   }
 
   /// N7.1 §10 — real, physical delete (the one exception among N7.1's
@@ -107,8 +120,38 @@ class BoardPresetRepository {
   /// completely untouched, with `sourceBoardPresetId` surviving purely as
   /// historical trazability (its target may no longer exist — callers must
   /// never re-resolve it as a live reference).
-  Future<void> delete(String presetId) async {
-    await firestore.doc(FirestorePaths.boardPresetDoc(presetId)).delete();
+  Future<int> countDeviceUsages(String presetId) async {
+    final result = await firestore
+        .collectionGroup('settings')
+        .where('sourceBoardPresetId', isEqualTo: presetId)
+        .count()
+        .get();
+    return result.count ?? 0;
+  }
+
+  Future<void> delete(String presetId, {int? expectedVersion}) async {
+    final reference = firestore.doc(FirestorePaths.boardPresetDoc(presetId));
+    final outcome = await firestore.runTransaction<Object>((transaction) async {
+      final snapshot = await transaction.get(reference);
+      if (!snapshot.exists) return const _DeleteMissing();
+      final actual = (snapshot.data()?['presetVersion'] as int?) ?? 1;
+      if (expectedVersion != null && actual != expectedVersion) {
+        return _DeleteConflict(actual);
+      }
+      transaction.delete(reference);
+      return true;
+    });
+    if (outcome is _DeleteMissing) {
+      throw StateError('BoardPreset remoto inexistente: $presetId');
+    }
+    if (outcome is _DeleteConflict) {
+      throw FirestoreVersionConflict(
+        entityType: 'boardPreset',
+        entityId: presetId,
+        expectedVersion: expectedVersion!,
+        actualVersion: outcome.actualVersion,
+      );
+    }
   }
 
   BoardPreset? _tryParse(Map<String, Object?> raw) {
@@ -120,4 +163,13 @@ class BoardPresetRepository {
       return null;
     }
   }
+}
+
+class _DeleteMissing {
+  const _DeleteMissing();
+}
+
+class _DeleteConflict {
+  const _DeleteConflict(this.actualVersion);
+  final int actualVersion;
 }

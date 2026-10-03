@@ -55,13 +55,13 @@ class BoardPreset {
   /// Metric keys the preset can make use of but does not depend on.
   final List<String> optionalMetricKeys;
 
-  /// Which [DeviceCapabilityProfile] (by id, from a
-  /// `DeviceCapabilityProfileStore`) this preset is designed against (N6.5
-  /// §25/§28, renamed in N6.5.2 §17/§18 from `metricCatalogId` — one source
-  /// of truth, not two). `null` means "Sin perfil" (N6.5 §26/N6.5.2 §18) —
-  /// a preset can be fully designed with text/icon/image/placeholder/unbound
-  /// content and no capability profile at all, unchanged from N6.4. Never a
-  /// real Device's profile; that binding is deferred to N7.
+  /// Legacy-compatible design metadata: the profile that should be selected
+  /// initially as a metric/indicator filter when this preset is opened.
+  /// It is never the preset's capability contract and is never the exclusive
+  /// source used to validate its content. Strict capability validation is
+  /// deferred until the preset is applied to a real Device. `null` means
+  /// "Todas las métricas". The wire name is retained to avoid a destructive
+  /// migration of existing Firestore documents.
   final String? capabilityProfileId;
 
   final int schemaVersion;

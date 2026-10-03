@@ -1,12 +1,14 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import '../cell_layout_presets/cell_content_resolver.dart';
+import '../board_runtime/configurable_board_visual_state.dart';
 import '../cell_layout_presets/cell_layout_preset.dart';
 import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../ui_templates/board/template_data_resolver.dart';
 import '../ui_templates/board/template_icon_resolver.dart';
 import '../ui_templates/board/template_value_formatter.dart';
 import '../ui_templates/models/metric_definition.dart';
+import '../ui_templates/shared/template_visual_state.dart';
 import 'board_canvas_layout.dart';
 import 'cell_editor_tokens.dart';
 import 'board_render_config.dart';
@@ -24,6 +26,58 @@ Widget cellClip(Widget child, {Alignment alignment = Alignment.center}) =>
         child: child,
       ),
     );
+
+/// Bounds used by the adaptive value text. The maximum prevents absurdly
+/// large glyphs; the minimum is the preferred readable floor. A final
+/// [ClipRect] remains as a safety net for rectangles smaller than that floor,
+/// so fit mode can never paint outside its assigned subgrid rectangle.
+const double cellFitMinFontSize = 10;
+const double cellFitMaxFontSize = 160;
+
+/// `TextPainter.height` describes the complete typographic line, including
+/// ascent/descent space where numeric glyphs do not paint pixels. Values shown
+/// on the board are predominantly digits, punctuation and signs; their visible
+/// height occupies roughly this fraction of that line. Using the visible area
+/// prevents an unchanged-width value from shrinking merely because its box got
+/// closer to the glyphs' top and bottom edges.
+const double cellFitVisibleHeightFactor = 0.72;
+
+double fittedCellFontSize({
+  required String text,
+  required double maxWidth,
+  required double maxHeight,
+  FontWeight fontWeight = FontWeight.w400,
+  String? fontFamily,
+  TextScaler textScaler = TextScaler.noScaling,
+}) {
+  if (text.isEmpty ||
+      !maxWidth.isFinite ||
+      !maxHeight.isFinite ||
+      maxWidth <= 0 ||
+      maxHeight <= 0) {
+    return cellFitMinFontSize;
+  }
+  final painter = TextPainter(
+    text: TextSpan(
+      text: text,
+      style: TextStyle(
+        fontSize: cellFitMaxFontSize,
+        fontWeight: fontWeight,
+        fontFamily: fontFamily,
+      ),
+    ),
+    maxLines: 1,
+    textDirection: TextDirection.ltr,
+    textScaler: textScaler,
+  )..layout();
+  if (painter.width <= 0 || painter.height <= 0) return cellFitMinFontSize;
+  final visibleHeight = painter.height * cellFitVisibleHeightFactor;
+  final scale = math.min(maxWidth / painter.width, maxHeight / visibleHeight);
+  return (cellFitMaxFontSize * scale).clamp(
+    cellFitMinFontSize,
+    cellFitMaxFontSize,
+  );
+}
 
 /// The single geometry the internal subgrid of a [CellLayoutPreset] ever
 /// uses — extracted from `MetricBoardRenderer` (N6.3 §15/§1: "no crear
@@ -57,6 +111,7 @@ class CellLayoutCanvas extends StatelessWidget {
     this.onElementTap,
     this.onUnitResolved,
     this.underlayBuilder,
+    this.visualState = const ConfigurableBoardMetricVisualState.neutral(),
   }) : assert(
          (resolved != null) != (rawElements != null),
          'Provide exactly one of resolved (valid content) or rawElements '
@@ -104,6 +159,7 @@ class CellLayoutCanvas extends StatelessWidget {
   /// element always wins hit-testing, same ordering `BoardEditorCanvas` uses
   /// for its cell-tap grid) — the N6.3 cell editor's "Mover con clic" grid.
   final Widget Function(double unit)? underlayBuilder;
+  final ConfigurableBoardMetricVisualState visualState;
 
   @override
   Widget build(BuildContext context) {
@@ -202,7 +258,7 @@ class CellLayoutCanvas extends StatelessWidget {
       return cellClip(
         Icon(
           resolveTemplateIcon(part.iconRef!),
-          color: const Color(0xFF7DD3FC),
+          color: visualState.iconColor,
           size: size,
         ),
         alignment: alignment,
@@ -231,6 +287,20 @@ class CellLayoutCanvas extends StatelessWidget {
     }
     const resolver = TemplateDataResolver();
     final raw = resolver.resolveMetric(metric!, data!.metricData);
+    if (e.type == CellElementType.value && visualState.isSensorFailure) {
+      return Tooltip(
+        message: 'Falla sensor (cod. ${formatSensorFailureCode(raw)})',
+        child: cellClip(
+          Icon(
+            Icons.error_outline,
+            key: ValueKey('metric-$itemIdForKeys-sensor-failure'),
+            color: const Color(0xFFEF4444),
+            size: size,
+          ),
+          alignment: alignment,
+        ),
+      );
+    }
     final text = e.type == CellElementType.value
         ? formatTemplateMetricValue(metric!, raw)
         : e.type == CellElementType.unit
@@ -278,25 +348,60 @@ class CellLayoutCanvas extends StatelessWidget {
       CellFontWeight.medium => FontWeight.w500,
       _ => FontWeight.w400,
     };
+    final textAlign = switch (e.horizontalAlignment) {
+      CellHorizontalAlignment.start => TextAlign.start,
+      CellHorizontalAlignment.end => TextAlign.end,
+      _ => TextAlign.center,
+    };
+    final color = e.textStyle?.fontRole == CellFontRole.primaryValue
+        ? visualState.valueColor
+        : const Color(0xFF94A3B8);
+    final key = ValueKey('metric-$itemIdForKeys-${e.type.name}');
+    if (e.type == CellElementType.value && e.sizeRole == CellSizeRole.fit) {
+      return LayoutBuilder(
+        builder: (context, constraints) {
+          final fontSize = fittedCellFontSize(
+            text: text,
+            maxWidth: constraints.maxWidth,
+            maxHeight: constraints.maxHeight,
+            fontWeight: weight,
+            fontFamily: DefaultTextStyle.of(context).style.fontFamily,
+            textScaler: MediaQuery.textScalerOf(context),
+          );
+          return ClipRect(
+            child: OverflowBox(
+              alignment: alignment,
+              minWidth: 0,
+              maxWidth: double.infinity,
+              minHeight: 0,
+              maxHeight: double.infinity,
+              child: Text(
+                text,
+                key: key,
+                maxLines: 1,
+                softWrap: false,
+                overflow: TextOverflow.visible,
+                textAlign: textAlign,
+                style: TextStyle(
+                  color: color,
+                  fontSize: fontSize,
+                  fontWeight: weight,
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    }
     final textWidget = Text(
       text,
       // Preserved verbatim from the pre-N6.3 inline renderer: existing
       // widget tests key off 'metric-$itemId-$typeName' (not the element
       // id) for the real board-rendering path.
-      key: ValueKey('metric-$itemIdForKeys-${e.type.name}'),
+      key: key,
       maxLines: e.textStyle?.maxLines ?? 1,
-      textAlign: switch (e.horizontalAlignment) {
-        CellHorizontalAlignment.start => TextAlign.start,
-        CellHorizontalAlignment.end => TextAlign.end,
-        _ => TextAlign.center,
-      },
-      style: TextStyle(
-        color: e.textStyle?.fontRole == CellFontRole.primaryValue
-            ? const Color(0xFFE5E7EB)
-            : const Color(0xFF94A3B8),
-        fontSize: size,
-        fontWeight: weight,
-      ),
+      textAlign: textAlign,
+      style: TextStyle(color: color, fontSize: size, fontWeight: weight),
     );
     if ((e.textStyle?.maxLines ?? 1) == 1) {
       return cellClip(textWidget, alignment: alignment);

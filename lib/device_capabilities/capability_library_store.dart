@@ -17,6 +17,11 @@ class MetricLibraryStore extends ChangeNotifier {
 
   List<CapabilityMetricDefinition> get metrics => List.unmodifiable(_metrics);
 
+  void replaceAll(Iterable<CapabilityMetricDefinition> metrics) {
+    _metrics = List.of(metrics);
+    notifyListeners();
+  }
+
   CapabilityMetricDefinition? byKey(String key) {
     for (final metric in _metrics) {
       if (metric.key == key) return metric;
@@ -80,6 +85,11 @@ class IndicatorLibraryStore extends ChangeNotifier {
 
   List<CapabilityIndicatorDefinition> get indicators =>
       List.unmodifiable(_indicators);
+
+  void replaceAll(Iterable<CapabilityIndicatorDefinition> indicators) {
+    _indicators = List.of(indicators);
+    notifyListeners();
+  }
 
   CapabilityIndicatorDefinition? byKey(String key) {
     for (final indicator in _indicators) {

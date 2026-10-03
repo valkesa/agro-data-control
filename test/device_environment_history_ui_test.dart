@@ -3,8 +3,10 @@ import 'package:agro_data_control/models/dashboard_range_settings.dart';
 import 'package:agro_data_control/models/dashboard_door_event.dart';
 import 'package:agro_data_control/models/magnifier_settings.dart';
 import 'package:agro_data_control/models/munters_model.dart';
+import 'package:agro_data_control/models/hierarchical_alert_config.dart';
 import 'package:agro_data_control/pages/comparison_page.dart';
 import 'package:agro_data_control/services/device_environment_history_repository.dart';
+import 'package:agro_data_control/services/environment_alert_threshold_repository.dart';
 import 'package:agro_data_control/widgets/device_environment_history_card.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
@@ -14,8 +16,9 @@ import 'package:flutter_test/flutter_test.dart';
 // pinned outside the horizontal scroll to keep the Y axis visible (see
 // device_environment_history_card.dart's `_pinnedAxis`). This finder ignores
 // those and matches only the "real" chart(s) that actually carry data.
-Finder dataCharts() =>
-    find.byWidgetPredicate((w) => w is LineChart && w.data.lineBarsData.isNotEmpty);
+Finder dataCharts() => find.byWidgetPredicate(
+  (w) => w is LineChart && w.data.lineBarsData.isNotEmpty,
+);
 
 AgroDevice device(int n) => AgroDevice.fromFirestore(
   'plc-genetica-sala$n',
@@ -272,6 +275,95 @@ void main() {
       isEmpty,
     );
   });
+  testWidgets(
+    'shows effective temperature limits and includes them in Y range',
+    (t) async {
+      final repo = CountingRepository();
+      await t.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.dark(),
+          home: Scaffold(
+            body: DeviceEnvironmentHistoryCard(
+              repository: repo,
+              tenantId: 'the-gene-pig',
+              unitId: 'munters1',
+              visible: true,
+              chartHeight: 200,
+              thresholdLoader: (scope) async {
+                expect(scope.siteId, 'las-heras');
+                expect(scope.deviceId, 'plc-genetica-sala1');
+                return const EnvironmentAlertThresholds(
+                  temperature: AlertThresholds(min: 15, max: 30),
+                  humidity: AlertThresholds(min: 30, max: 95),
+                );
+              },
+            ),
+          ),
+        ),
+      );
+      await t.pumpAndSettle();
+
+      expect(find.text('Temperatura: mín. 15°C · máx. 30°C'), findsOneWidget);
+      final chart = t.widget<LineChart>(dataCharts());
+      expect(
+        chart.data.extraLinesData.horizontalLines.map((line) => line.y),
+        orderedEquals(<double>[15, 30]),
+      );
+      expect(
+        chart.data.extraLinesData.horizontalLines
+            .map((line) => line.color)
+            .toSet(),
+        <Color>{Colors.orangeAccent},
+      );
+      expect(chart.data.minY, lessThan(15));
+      expect(chart.data.maxY, greaterThan(30));
+      expect(
+        chart.data.lineTouchData.distanceCalculator(
+          Offset.zero,
+          const Offset(3, 4),
+        ),
+        5,
+      );
+      final bar = chart.data.lineBarsData.first;
+      final tooltip = chart.data.lineTouchData.touchTooltipData.getTooltipItems(
+        <LineBarSpot>[LineBarSpot(bar, 0, bar.spots.first)],
+      ).single!;
+      expect(tooltip.text, contains('mi/pr/ma: 20.0/21.0/22.0 °C'));
+
+      await t.tap(find.byTooltip('Humedad'));
+      await t.pumpAndSettle();
+      final humidityChart = t.widget<LineChart>(dataCharts());
+      expect(
+        humidityChart.data.extraLinesData.horizontalLines
+            .map((line) => line.color)
+            .toSet(),
+        <Color>{Colors.cyanAccent},
+      );
+
+      await t.tap(find.byTooltip('Ambas'));
+      await t.pumpAndSettle();
+      final dualCharts = t.widgetList<LineChart>(dataCharts()).toList();
+      final temperatureLimits = dualCharts
+          .singleWhere(
+            (chart) =>
+                chart.data.lineBarsData.first.color == Colors.orangeAccent,
+          )
+          .data
+          .extraLinesData
+          .horizontalLines;
+      final humidityLimits = dualCharts
+          .singleWhere(
+            (chart) => chart.data.lineBarsData.first.color == Colors.cyanAccent,
+          )
+          .data
+          .extraLinesData
+          .horizontalLines;
+      expect(temperatureLimits.first.label.alignment, Alignment.bottomRight);
+      expect(humidityLimits.first.label.alignment, Alignment.topRight);
+      expect(temperatureLimits.last.label.alignment, Alignment.topRight);
+      expect(humidityLimits.last.label.alignment, Alignment.bottomRight);
+    },
+  );
   testWidgets('Detalle entry zero loads and independent columns', (t) async {
     await t.binding.setSurfaceSize(const Size(1500, 2000));
     addTearDown(() => t.binding.setSurfaceSize(null));

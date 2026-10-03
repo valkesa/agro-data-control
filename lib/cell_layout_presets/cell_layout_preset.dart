@@ -12,7 +12,7 @@ enum CellFontRole { label, primaryValue, unit, secondary }
 
 enum CellVisibility { visible, hidden }
 
-enum CellSizeRole { xs, sm, md, lg, xl, xxl, hero }
+enum CellSizeRole { xs, sm, md, lg, xl, xxl, hero, fit }
 
 enum CellFontWeight { normal, medium, bold }
 
@@ -122,6 +122,12 @@ class CellLayoutElement {
       BoardParsing.fail(
         'invalid_text_style',
         'Text style applies only to text elements',
+      );
+    }
+    if (sizeRole == CellSizeRole.fit && type != CellElementType.value) {
+      BoardParsing.fail(
+        'invalid_fit_target',
+        'Fit size is currently supported only for value elements',
       );
     }
   }

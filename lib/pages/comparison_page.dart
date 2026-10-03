@@ -201,6 +201,14 @@ List<_EnvLabelGroup> _groupConsecutiveByLabel(
   return groups;
 }
 
+typedef EnvironmentOverviewCardWrapper =
+    Widget Function({
+      required String deviceId,
+      required String deviceName,
+      required Object? liveData,
+      required Widget legacyChild,
+    });
+
 class EnvironmentOverviewPage extends StatelessWidget {
   const EnvironmentOverviewPage({
     super.key,
@@ -219,6 +227,7 @@ class EnvironmentOverviewPage extends StatelessWidget {
     this.cerdasRepository = const CerdasRepository(),
     this.environmentHistoryRepository,
     this.deviceIds,
+    this.cardWrapper,
   });
 
   final List<MuntersModel> units;
@@ -246,6 +255,7 @@ class EnvironmentOverviewPage extends StatelessWidget {
   /// (`genetica-1`, real `plcIds`) but not from the structural one
   /// (`las-heras`, dynamic-Devices path, `plcIds` all null).
   final List<String?>? deviceIds;
+  final EnvironmentOverviewCardWrapper? cardWrapper;
 
   /// Access point for the historical-chart icons on Temperatura/HR cards
   /// (Prompt_Graficos_Etapa_1_de_2_Mejoras_UI §8-9). Shares the same
@@ -282,8 +292,10 @@ class EnvironmentOverviewPage extends StatelessWidget {
           templateResolver: templateResolver,
           cerdasRepository: cerdasRepository,
           environmentHistoryRepository:
-              environmentHistoryRepository ?? DeviceEnvironmentHistoryRepository(),
+              environmentHistoryRepository ??
+              DeviceEnvironmentHistoryRepository(),
           deviceIds: deviceIds,
+          cardWrapper: cardWrapper,
         ),
       ),
     );
@@ -1539,6 +1551,7 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
     this.cerdasRepository = const CerdasRepository(),
     required this.environmentHistoryRepository,
     this.deviceIds,
+    this.cardWrapper,
   });
 
   final List<MuntersModel> units;
@@ -1556,6 +1569,11 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
   final CerdasRepository cerdasRepository;
   final DeviceEnvironmentHistoryRepository environmentHistoryRepository;
   final List<String?>? deviceIds;
+
+  /// Optional, generic runtime boundary around a resolved Device card. A
+  /// caller may replace one card while retaining [legacyChild] as fallback;
+  /// when null the established renderer path is byte-for-byte unchanged.
+  final EnvironmentOverviewCardWrapper? cardWrapper;
 
   static const double _maxCardWidth = 406;
   static const double _minLargeTemplateCardWidth = 406;
@@ -1724,6 +1742,19 @@ class _EnvironmentOverviewPresetLayout extends StatelessWidget {
   }
 
   Widget _buildOverviewCard(_EnvironmentBoardCardData cardData) {
+    final Widget legacyChild = _buildLegacyOverviewCard(cardData);
+    final wrapper = cardWrapper;
+    final deviceId = cardData.realDeviceId;
+    if (wrapper == null || deviceId == null) return legacyChild;
+    return wrapper(
+      deviceId: deviceId,
+      deviceName: cardData.label,
+      liveData: cardData.deviceData,
+      legacyChild: legacyChild,
+    );
+  }
+
+  Widget _buildLegacyOverviewCard(_EnvironmentBoardCardData cardData) {
     final DeviceTemplate? template = cardData.template;
     if (template == null) {
       return _LargeEnvironmentUnitCard(

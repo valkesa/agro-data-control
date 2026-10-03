@@ -13,6 +13,7 @@ import 'package:agro_data_control/board_content/board_content_layout.dart';
 import 'package:agro_data_control/board_preview/board_editor_controller.dart';
 import 'package:agro_data_control/board_preview/board_editor_page.dart';
 import 'package:agro_data_control/device_metric_catalogs/device_metric_catalog.dart';
+import 'package:agro_data_control/device_capabilities/reference_capability_seeds.dart';
 import 'package:agro_data_control/layout_templates/grid_placement.dart';
 import 'package:agro_data_control/services/firestore_version_conflict.dart';
 
@@ -48,6 +49,7 @@ void main() {
         final controller = BoardEditorController.forDevice(
           tenantId: 'tenant-a',
           layout: _sampleLayout(layoutVersion: 4),
+          expectedRemoteVersion: 4,
           catalog: emptyDeviceMetricCatalog,
         );
         expect(controller.mode, BoardEditorMode.device);
@@ -64,6 +66,7 @@ void main() {
         final controller = BoardEditorController.forDevice(
           tenantId: 'tenant-a',
           layout: _sampleLayout(),
+          expectedRemoteVersion: 1,
           catalog: emptyDeviceMetricCatalog,
         );
         controller.selectItem('metric-0');
@@ -76,6 +79,7 @@ void main() {
         final controller = BoardEditorController.forDevice(
           tenantId: 'tenant-a',
           layout: _sampleLayout(),
+          expectedRemoteVersion: 1,
           catalog: emptyDeviceMetricCatalog,
           profileId: 'sala_a',
         );
@@ -91,6 +95,7 @@ void main() {
         final controller = BoardEditorController.forDevice(
           tenantId: 'tenant-a',
           layout: _sampleLayout(),
+          expectedRemoteVersion: 1,
           catalog: emptyDeviceMetricCatalog,
         );
         controller.selectItem('metric-0');
@@ -112,19 +117,27 @@ void main() {
           final controller = BoardEditorController.forDevice(
             tenantId: 'tenant-a',
             layout: _sampleLayout(layoutVersion: 1),
+            expectedRemoteVersion: 1,
             catalog: emptyDeviceMetricCatalog,
           );
           controller.selectItem('metric-0');
           controller.moveSelectedBy(1, 0);
           expect(controller.dirty, isTrue);
 
+          final sentLayout = controller.board;
+          final sentRevision = controller.revision;
           controller.markSaving();
           expect(controller.saveStatus, BoardSaveStatus.saving);
 
-          controller.markSaved(2);
+          controller.markSaved(
+            sentLayout: sentLayout,
+            savedLayoutVersion: 2,
+            sentRevision: sentRevision,
+          );
           expect(controller.saveStatus, BoardSaveStatus.saved);
           expect(controller.dirty, isFalse);
           expect(controller.loadedLayoutVersion, 2);
+          expect(controller.expectedRemoteVersion, 2);
         },
       );
 
@@ -133,6 +146,7 @@ void main() {
         final controller = BoardEditorController.forDevice(
           tenantId: 'tenant-a',
           layout: _sampleLayout(),
+          expectedRemoteVersion: 1,
           catalog: emptyDeviceMetricCatalog,
         );
         controller.selectItem('metric-0');
@@ -142,6 +156,34 @@ void main() {
         expect(controller.saveStatus, BoardSaveStatus.error);
         expect(controller.saveError, 'configuration_conflict');
         expect(controller.dirty, isTrue, reason: 'edits must not be discarded');
+      });
+
+      test('N7.1.1 A4 — an edit made while save A is in flight stays dirty', () {
+        final controller = BoardEditorController.forDevice(
+          tenantId: 'tenant-a',
+          layout: _sampleLayout(),
+          expectedRemoteVersion: 1,
+          catalog: emptyDeviceMetricCatalog,
+        );
+        controller.selectItem('metric-0');
+        controller.moveSelectedBy(1, 0);
+        final sentLayout = controller.board;
+        final sentRevision = controller.revision;
+        controller.markSaving();
+
+        controller.moveSelectedBy(1, 0); // state B while snapshot A saves
+        controller.markSaved(
+          sentLayout: sentLayout,
+          savedLayoutVersion: 2,
+          sentRevision: sentRevision,
+        );
+
+        expect(controller.dirty, isTrue);
+        expect(controller.items.single.placement.x, 2);
+        expect(controller.expectedRemoteVersion, 2);
+        controller.reset();
+        expect(controller.items.single.placement.x, 1,
+            reason: 'remote/reset baseline is exactly sent snapshot A');
       });
     },
   );
@@ -160,8 +202,9 @@ void main() {
             tenantId: 'tenant-a',
             deviceId: 'device-1',
             initialLayout: _sampleLayout(),
-            profile: null,
-            profileId: null,
+            expectedRemoteVersion: 1,
+            profile: referenceCapabilityProfile,
+            profileId: referenceCapabilityProfile.id,
             onSave: (layout, expectedVersion) async {
               savedLayout = layout;
               savedExpectedVersion = expectedVersion;
@@ -220,8 +263,9 @@ void main() {
               tenantId: 'tenant-a',
               deviceId: 'device-1',
               initialLayout: _sampleLayout(),
-              profile: null,
-              profileId: null,
+              expectedRemoteVersion: 1,
+              profile: referenceCapabilityProfile,
+              profileId: referenceCapabilityProfile.id,
               onSave: (layout, expectedVersion) async {
                 throw const FirestoreVersionConflict(
                   entityType: 'deviceBoardConfig',
@@ -267,8 +311,9 @@ void main() {
               tenantId: 'tenant-a',
               deviceId: 'device-1',
               initialLayout: _sampleLayout(layoutVersion: 2),
-              profile: null,
-              profileId: null,
+              expectedRemoteVersion: 2,
+              profile: referenceCapabilityProfile,
+              profileId: referenceCapabilityProfile.id,
               onSave: (layout, expectedVersion) async => expectedVersion + 1,
             ),
           ),

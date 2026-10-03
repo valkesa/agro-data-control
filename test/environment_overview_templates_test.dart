@@ -301,6 +301,43 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets(
+    'room climate overview with missing exterior values has no mobile overflow',
+    (WidgetTester tester) async {
+      await tester.binding.setSurfaceSize(const Size(429, 740));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          builder: (BuildContext context, Widget? child) => MediaQuery(
+            data: MediaQuery.of(
+              context,
+            ).copyWith(textScaler: const TextScaler.linear(1.2)),
+            child: child!,
+          ),
+          home: Scaffold(
+            body: EnvironmentOverviewPage(
+              units: <MuntersModel>[
+                _sala('Sala 1', missingExterior: true),
+                _sala('Sala 2', missingExterior: true),
+              ],
+              labels: const <String>['Sala 1', 'Sala 2'],
+              plcIds: const <String?>['munters1', 'munters2'],
+              tenantId: 'the-gene-pig',
+              siteId: 'genetica-1',
+              rangeSettings: const DashboardRangeSettings.defaults(),
+              showSnapshotPulse: false,
+              snapshotStale: false,
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets('cerdas llega por repository manual al renderer dinamico', (
     WidgetTester tester,
   ) async {
@@ -581,6 +618,7 @@ MuntersModel _sala(
   String name, {
   bool resistencia1 = false,
   bool resistencia2 = false,
+  bool missingExterior = false,
 }) {
   return MuntersModel(
     name: name,
@@ -588,8 +626,8 @@ MuntersModel _sala(
     tempInterior: 22.1,
     tempIngresoSala: null,
     humInterior: 60,
-    tempExterior: 18,
-    humExterior: 70,
+    tempExterior: missingExterior ? null : 18,
+    humExterior: missingExterior ? null : 70,
     tensionSalidaVentiladores: 450,
     bombaHumidificador: true,
     fanQ5: false,

@@ -141,6 +141,16 @@ class BoardPresetCatalog extends ChangeNotifier {
 
   List<BoardPreset> get presets => List.unmodifiable(_presets);
 
+  void replaceAll(Iterable<BoardPreset> presets) {
+    _presets = List.of(presets);
+    notifyListeners();
+  }
+
+  void remove(String id) {
+    _presets = _presets.where((preset) => preset.id != id).toList();
+    notifyListeners();
+  }
+
   BoardPreset? byId(String id) {
     for (final preset in _presets) {
       if (preset.id == id) return preset;
@@ -160,12 +170,9 @@ class BoardPresetCatalog extends ChangeNotifier {
   /// Creates an empty preset with the given [layout] (N6.2 §9). Always
   /// starts with `items: []` — content is added afterwards via the editor.
   ///
-  /// [capabilityProfileId] defaults to `null` ("Sin perfil", N6.5.1 §1/§3,
-  /// renamed in N6.5.2 §17/§18): before N6.5.1 this silently fell back to
-  /// the reference environment catalog, so a preset could end up bound to a
-  /// profile the user never picked. Callers that need a real profile (the
-  /// UI creation dialog, or a test exercising profile-dependent behavior)
-  /// now always pass it explicitly.
+  /// [capabilityProfileId] is legacy-compatible design metadata for the
+  /// initial picker filter. `null` means "Todas las métricas". It never
+  /// restricts validation or application compatibility by itself.
   BoardPreset create({
     required String name,
     String description = '',
@@ -213,10 +220,9 @@ class BoardPresetCatalog extends ChangeNotifier {
     );
   }
 
-  /// Live-commits the editor's current content back into the catalog entry
-  /// (N6.2 §12 preset mode: editing *is* saving, in-memory, no separate
-  /// publish step). Bumps [BoardPreset.presetVersion] so it is visible that
-  /// the preset changed since creation/duplication.
+  /// Legacy/programmatic content update. The visual BoardPreset editor now
+  /// keeps an isolated draft and calls [replacePersisted] only after its
+  /// explicit repository save succeeds.
   void updateContent(
     String id, {
     required LayoutTemplate layout,
@@ -243,6 +249,12 @@ class BoardPresetCatalog extends ChangeNotifier {
         presetVersion: preset.presetVersion + 1,
       ),
     );
+  }
+
+  /// Replaces a catalog entry with the exact version confirmed by the
+  /// persistence layer. It deliberately does not bump the version again.
+  void replacePersisted(BoardPreset preset) {
+    _replace(preset.id, (_) => preset);
   }
 
   void _replace(String id, BoardPreset Function(BoardPreset current) update) {

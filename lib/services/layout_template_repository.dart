@@ -46,17 +46,22 @@ class LayoutTemplateRepository {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       path,
     );
-    final DocumentSnapshot<Map<String, dynamic>> existing = await reference
-        .get();
-    if (existing.exists) {
-      throw StateError('Ya existe un LayoutTemplate con id "${template.id}".');
-    }
-    await reference.set(<String, Object?>{
-      ...template.toMap(),
-      'templateVersion': 1,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
+    final created = await firestore.runTransaction<bool>((transaction) async {
+      if ((await transaction.get(reference)).exists) return false;
+      transaction.set(reference, <String, Object?>{
+        ...template.toMap(),
+        'templateVersion': 1,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
     });
+    if (!created) {
+      throw FirestoreAlreadyExists(
+        entityType: 'layoutTemplate',
+        entityId: template.id,
+      );
+    }
   }
 
   /// Versioned update — N7.1 §15: throws [FirestoreVersionConflict] rather
@@ -65,9 +70,11 @@ class LayoutTemplateRepository {
   Future<int> save({
     required LayoutTemplate template,
     required int expectedVersion,
-  }) {
+  }) async {
     final String path = FirestorePaths.layoutTemplateDoc(template.id);
-    return firestore.runTransaction<int>((Transaction transaction) async {
+    final outcome = await firestore.runTransaction<Object>((
+      Transaction transaction,
+    ) async {
       final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
         path,
       );
@@ -79,12 +86,7 @@ class LayoutTemplateRepository {
       final int actualVersion =
           (snapshot.data()?['templateVersion'] as int?) ?? 0;
       if (actualVersion != expectedVersion) {
-        throw FirestoreVersionConflict(
-          entityType: 'layoutTemplate',
-          entityId: template.id,
-          expectedVersion: expectedVersion,
-          actualVersion: actualVersion,
-        );
+        return FirestoreVersionMismatchResult(actualVersion);
       }
       final int nextVersion = expectedVersion + 1;
       transaction.set(reference, <String, Object?>{
@@ -96,6 +98,15 @@ class LayoutTemplateRepository {
       });
       return nextVersion;
     });
+    if (outcome is FirestoreVersionMismatchResult) {
+      throw FirestoreVersionConflict(
+        entityType: 'layoutTemplate',
+        entityId: template.id,
+        expectedVersion: expectedVersion,
+        actualVersion: outcome.actualVersion,
+      );
+    }
+    return outcome as int;
   }
 
   /// Soft-disable only — same "never physically deleted" convention as

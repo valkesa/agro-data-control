@@ -29,5 +29,8 @@ class BoardRenderConfig {
         CellSizeRole.xl => 2.0,
         CellSizeRole.xxl => 3.0,
         CellSizeRole.hero => 4.0,
+        // `fit` is resolved from the element's real rectangle by
+        // CellLayoutCanvas. This fallback keeps generic/legacy callers safe.
+        CellSizeRole.fit => 4.0,
       };
 }

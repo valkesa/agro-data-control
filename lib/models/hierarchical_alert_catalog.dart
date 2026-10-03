@@ -102,7 +102,7 @@ class AlertDefinitionCatalog {
   static const List<AlertDefinition> definitions = <AlertDefinition>[
     AlertDefinition(
       id: 'munters_door_open',
-      label: 'Puerta Munters abierta',
+      label: 'Puerta Climatizador abierta',
       order: 1,
       scopeCapability: AlertScopeCapability.deviceOrRoom,
       thresholdKind: AlertThresholdKind.none,

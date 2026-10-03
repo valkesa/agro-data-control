@@ -53,7 +53,7 @@ Future<void> openAgregarTab(WidgetTester tester) async {
 void main() {
   group('N6.5.1 §1/§3 — BoardPresetCatalog.create() no longer auto-asigna', () {
     test(
-      'sin capabilityProfileId explícito, el preset nace con "Sin catálogo"',
+      'sin capabilityProfileId explícito, el preset nace con filtro global',
       () {
         final catalog = BoardPresetCatalog(initial: []);
         final preset = catalog.create(
@@ -77,8 +77,7 @@ void main() {
 
   group('N6.5.1 §2/§3/§10 — diálogo "Nuevo preset" pide el catálogo', () {
     testWidgets(
-      '"Sin catálogo" (valor inicial) persiste null y Agregar métrica no '
-      'ofrece ninguna métrica',
+      '"Todas las métricas" persiste null y ofrece la biblioteca global',
       (tester) async {
         final catalog = BoardPresetCatalog(initial: []);
         await pump(tester, BoardPresetsPage(isOwner: true, catalog: catalog));
@@ -93,18 +92,16 @@ void main() {
         await tester.tap(find.byKey(const ValueKey('editor-add-type-metric')));
         await tester.pumpAndSettle();
         expect(
-          find.byKey(const ValueKey('editor-pending-metric-empty-catalog')),
-          findsOneWidget,
-        );
-        expect(
           find.byKey(const ValueKey('editor-pending-metric-key')),
-          findsNothing,
-        );
-        expect(
-          find.text(
-            'Seleccioná un perfil de capacidades para agregar métricas.',
-          ),
           findsOneWidget,
+        );
+        final dropdown = tester.widget<DropdownButton<String>>(
+          find.byKey(const ValueKey('editor-pending-metric-key')),
+        );
+        expect(dropdown.items, isNotEmpty);
+        expect(
+          dropdown.items!.map((item) => item.value),
+          containsAll(['tempInterior', 'vehiclesTotalDaily']),
         );
       },
     );

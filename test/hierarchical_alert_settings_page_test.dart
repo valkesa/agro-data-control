@@ -359,7 +359,7 @@ void main() {
 
       // El catálogo completo se muestra (fallback documentado, Etapa B5 §8).
       expect(find.text('Temperatura interior'), findsOneWidget);
-      expect(find.text('Puerta Munters abierta'), findsOneWidget);
+      expect(find.text('Puerta Climatizador abierta'), findsOneWidget);
     },
   );
 

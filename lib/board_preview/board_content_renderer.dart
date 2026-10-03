@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import '../board_content/board_content_config.dart';
 import '../board_content/board_content_layout.dart';
 import '../board_content/board_content_validator.dart';
 import '../cell_layout_presets/cell_layout_catalog.dart';
 import '../device_board_layouts/layout_validation_issue.dart';
 import '../device_metric_catalogs/device_metric_catalog.dart';
+import '../board_runtime/configurable_board_visual_state.dart';
 import '../layout_templates/layout_template.dart';
 import 'preview_board_data.dart';
 import 'board_render_config.dart';
@@ -148,6 +150,8 @@ class BoardContentRenderer extends StatelessWidget {
             height: item.placement.heightCells * ch,
             child: BoardPreviewCard(
               gap: renderConfig.cardGap,
+              semanticBorderColor: _visualStateFor(item)?.borderColor,
+              semanticBorderWidth: _visualStateFor(item)?.borderWidth,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
@@ -190,6 +194,17 @@ class BoardContentRenderer extends StatelessWidget {
             ),
           ),
       ],
+    );
+  }
+
+  ConfigurableBoardMetricVisualState? _visualStateFor(BoardContentItem item) {
+    if (item.type != BoardContentType.metric) return null;
+    final metric = catalog.metricByKey(item.toMetricItem().metricKey);
+    if (metric == null) return null;
+    return resolveConfigurableBoardMetricVisualState(
+      metric: metric,
+      deviceData: data.metricData,
+      rangeSettings: data.rangeSettings,
     );
   }
 }

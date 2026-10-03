@@ -9,6 +9,7 @@ import 'package:agro_data_control/board_content/board_content_config.dart';
 import 'package:agro_data_control/board_content/board_content_layout.dart';
 import 'package:agro_data_control/board_presets/board_preset.dart';
 import 'package:agro_data_control/cell_layout_presets/cell_layout_catalog.dart';
+import 'package:agro_data_control/cell_layout_presets/cell_layout_preset.dart';
 import 'package:agro_data_control/device_board_config/apply_board_preset_to_device.dart';
 import 'package:agro_data_control/device_capabilities/capability_indicator_definition.dart';
 import 'package:agro_data_control/device_capabilities/capability_library_store.dart';
@@ -186,6 +187,59 @@ void main() {
       expect(layout.items, hasLength(1));
       expect(layout.sourceBoardPresetVersion, 3);
     });
+  });
+
+  test('N7.1.1 A2 — applying snapshots CellLayoutPreset composition', () {
+    final cell = CellLayoutPreset(
+      id: 'cell-a',
+      name: 'Celda A',
+      widthCells: 2,
+      heightCells: 2,
+      presetVersion: 7,
+      elements: buildDefaultCellLayoutElements(2, 2),
+    );
+    final preset = BoardPreset(
+      id: 'preset-cell',
+      name: 'Preset con celda',
+      layoutTemplateId: 'grid_6x4',
+      items: [
+        BoardContentItem(
+          id: 'metric-0',
+          placement: GridPlacement(x: 0, y: 0, widthCells: 2, heightCells: 2),
+          content: MetricBoardContent(
+            metricKey: 'tempInterior',
+            cellLayoutPresetId: cell.id,
+          ),
+        ),
+      ],
+    );
+    final result = applyBoardPresetToDevice(
+      deviceId: 'device-1',
+      preset: preset,
+      profile: profileWith(),
+      metricsLibrary: metrics,
+      indicatorsLibrary: indicators,
+      cellLayoutCatalog: CellLayoutCatalog([cell]),
+      nextLayoutVersion: 1,
+      capabilityProfileId: 'sala_a',
+    );
+
+    expect(result.isBlocked, isFalse);
+    final content = result.layout!.items.single.content as MetricBoardContent;
+    expect(content.cellLayoutSnapshot?.toMap(), cell.toMap());
+    expect(content.sourceCellLayoutPresetVersion, 7);
+    expect(content.cellLayoutPresetId, 'cell-a', reason: 'trazabilidad');
+
+    final editedGlobal = CellLayoutPreset(
+      id: 'cell-a',
+      name: 'Celda global modificada',
+      widthCells: 2,
+      heightCells: 2,
+      presetVersion: 8,
+      elements: buildDefaultCellLayoutElements(2, 2, icon: true),
+    );
+    expect(editedGlobal.toMap(), isNot(content.cellLayoutSnapshot!.toMap()));
+    expect(content.cellLayoutSnapshot!.name, 'Celda A');
   });
 
   group('N7.1 §11 — missing capability blocks the apply', () {

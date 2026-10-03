@@ -17,6 +17,7 @@ import 'package:agro_data_control/device_capabilities/capability_library_store.d
 import 'package:agro_data_control/device_capabilities/device_capability_profile.dart';
 import 'package:agro_data_control/device_capabilities/indicator_binding.dart';
 import 'package:agro_data_control/device_capabilities/metric_binding.dart';
+import 'package:agro_data_control/device_metric_catalogs/device_metric_catalog.dart';
 import 'package:agro_data_control/layout_templates/grid_placement.dart';
 import 'package:agro_data_control/models/agro_device.dart';
 import 'package:agro_data_control/pages/device_board_config_page.dart';
@@ -89,6 +90,8 @@ class _FakeDeviceBoardConfigRepository extends DeviceBoardConfigRepository {
     required String deviceId,
     required BoardContentLayout layout,
     required int expectedLayoutVersion,
+    required DeviceMetricCatalog metricCatalog,
+    required CellLayoutCatalog cellLayoutCatalog,
   }) async => expectedLayoutVersion + 1;
 }
 
@@ -189,6 +192,15 @@ void main() {
 
       expect(deviceRepo.applyCallCount, 1);
       expect(find.textContaining('DeviceBoardLayout v1'), findsOneWidget);
+      expect(find.text('Preset aplicado: Preset A (v1)'), findsOneWidget);
+      expect(
+        tester
+            .widget<DropdownButton<String?>>(
+              find.byKey(const ValueKey('device-board-config-preset')),
+            )
+            .value,
+        'preset_a',
+      );
     });
 
     testWidgets('a preset missing a capability the chosen profile lacks is not '

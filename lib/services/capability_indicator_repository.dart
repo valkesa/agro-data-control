@@ -55,30 +55,44 @@ class CapabilityIndicatorRepository {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.capabilityIndicatorDoc(indicator.key),
     );
-    if ((await reference.get()).exists) {
-      throw StateError(
-        'Ya existe un CapabilityIndicator con key "${indicator.key}".',
+    final created = await firestore.runTransaction<bool>((transaction) async {
+      if ((await transaction.get(reference)).exists) return false;
+      transaction.set(reference, <String, Object?>{
+        ...indicator.toMap(),
+        'schemaVersion': supportedCapabilityRecordSchemaVersion,
+        'enabled': true,
+        'recordVersion': 1,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return true;
+    });
+    if (!created) {
+      throw FirestoreAlreadyExists(
+        entityType: 'capabilityIndicator',
+        entityId: indicator.key,
       );
     }
-    await reference.set(<String, Object?>{
-      ...indicator.toMap(),
-      'schemaVersion': supportedCapabilityRecordSchemaVersion,
-      'enabled': true,
-      'recordVersion': 1,
-      'createdAt': FieldValue.serverTimestamp(),
-      'updatedAt': FieldValue.serverTimestamp(),
-    });
   }
+
+  Future<void> setEnabled(String indicatorKey, bool enabled) => firestore
+      .doc(FirestorePaths.capabilityIndicatorDoc(indicatorKey))
+      .update(<String, Object?>{
+        'enabled': enabled,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
 
   Future<int> save({
     required CapabilityIndicatorDefinition indicator,
     required bool enabled,
     required int expectedVersion,
-  }) {
+  }) async {
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.capabilityIndicatorDoc(indicator.key),
     );
-    return firestore.runTransaction<int>((Transaction transaction) async {
+    final outcome = await firestore.runTransaction<Object>((
+      Transaction transaction,
+    ) async {
       final DocumentSnapshot<Map<String, dynamic>> snapshot = await transaction
           .get(reference);
       if (!snapshot.exists) {
@@ -89,12 +103,7 @@ class CapabilityIndicatorRepository {
       final int actualVersion =
           (snapshot.data()?['recordVersion'] as int?) ?? 1;
       if (actualVersion != expectedVersion) {
-        throw FirestoreVersionConflict(
-          entityType: 'capabilityIndicator',
-          entityId: indicator.key,
-          expectedVersion: expectedVersion,
-          actualVersion: actualVersion,
-        );
+        return FirestoreVersionMismatchResult(actualVersion);
       }
       final int nextVersion = expectedVersion + 1;
       transaction.set(reference, <String, Object?>{
@@ -108,5 +117,14 @@ class CapabilityIndicatorRepository {
       });
       return nextVersion;
     });
+    if (outcome is FirestoreVersionMismatchResult) {
+      throw FirestoreVersionConflict(
+        entityType: 'capabilityIndicator',
+        entityId: indicator.key,
+        expectedVersion: expectedVersion,
+        actualVersion: outcome.actualVersion,
+      );
+    }
+    return outcome as int;
   }
 }

@@ -33,7 +33,7 @@ Future<void> main() async {
     await _testUnknownFieldOnBoardPresetDenied();
     await _testOwnerCanDeleteBoardPreset();
     await _testCapabilityProfileCannotBeDeleted();
-    await _testTenantAdminCanWriteOwnTenantDeviceBoardConfig();
+    await _testTenantAdminCannotWriteOwnTenantDeviceBoardConfig();
     await _testTenantAdminCannotWriteOtherTenantDeviceBoardConfig();
     await _testAnyTenantMemberCanReadDeviceBoardConfig();
     await _testDeviceIdMismatchDenied();
@@ -190,11 +190,94 @@ Future<void> _testOwnerCanDeleteBoardPreset() async {
     fields: _boardPresetFields(id: 'preset_to_delete'),
   );
   _expect(createStatus == 200, 'owner creates preset before delete test');
+  for (int i = 0; i < 3; i++) {
+    final fields = _boardConfigFields(deviceId: 'device-$i')
+      ..['sourceBoardPresetId'] = 'preset_to_delete'
+      ..['sourceBoardPresetVersion'] = 1;
+    final status = await _patchAs(
+      uid: 'owner-uid',
+      path: 'tenants/tenant-$i/devices/device-$i/settings/boardConfig',
+      fields: fields,
+    );
+    _expect(status == 200, 'owner seeds Device usage $i');
+  }
+  final aggregate = await _countPresetUsages(
+    uid: 'owner-uid',
+    presetId: 'preset_to_delete',
+  );
+  _expect(aggregate.status == 200, 'owner can run usage aggregate count');
+  _expect(aggregate.count == 3, 'aggregate count reports exactly 3 Devices');
   final int deleteStatus = await _deleteAs(
     uid: 'owner-uid',
     path: 'boardPresets/preset_to_delete',
   );
   _expect(deleteStatus == 200, 'owner can delete a BoardPreset (N7.1 §10)');
+  for (int i = 0; i < 3; i++) {
+    final status = await _getAs(
+      uid: 'owner-uid',
+      path: 'tenants/tenant-$i/devices/device-$i/settings/boardConfig',
+    );
+    _expect(status == 200, 'BoardPreset delete does not cascade to Device $i');
+  }
+}
+
+Future<({int status, int? count})> _countPresetUsages({
+  required String uid,
+  required String presetId,
+}) async {
+  final client = HttpClient();
+  try {
+    final uri = Uri.parse(
+      '$_baseUrl/v1/projects/$_projectId/databases/(default)/documents:runAggregationQuery',
+    );
+    final request = await client.postUrl(uri);
+    request.headers.set('Content-Type', 'application/json');
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer ${_jwt(uid)}');
+    request.write(
+      jsonEncode(<String, Object?>{
+        'structuredAggregationQuery': <String, Object?>{
+          'structuredQuery': <String, Object?>{
+            'from': <Object?>[
+              <String, Object?>{
+                'collectionId': 'settings',
+                'allDescendants': true,
+              },
+            ],
+            'where': <String, Object?>{
+              'fieldFilter': <String, Object?>{
+                'field': <String, Object?>{'fieldPath': 'sourceBoardPresetId'},
+                'op': 'EQUAL',
+                'value': <String, Object?>{'stringValue': presetId},
+              },
+            },
+          },
+          'aggregations': <Object?>[
+            <String, Object?>{
+              'alias': 'usageCount',
+              'count': <String, Object?>{},
+            },
+          ],
+        },
+      }),
+    );
+    final response = await request.close();
+    final body = await utf8.decoder.bind(response).join();
+    if (response.statusCode != 200) {
+      return (status: response.statusCode, count: null);
+    }
+    final decoded = jsonDecode(body) as List<Object?>;
+    final result = decoded.first as Map<String, Object?>;
+    final aggregateFields =
+        ((result['result'] as Map<String, Object?>)['aggregateFields']
+            as Map<String, Object?>);
+    final countValue = aggregateFields['usageCount'] as Map<String, Object?>;
+    return (
+      status: response.statusCode,
+      count: int.parse(countValue['integerValue']! as String),
+    );
+  } finally {
+    client.close(force: true);
+  }
 }
 
 Future<void> _testCapabilityProfileCannotBeDeleted() async {
@@ -208,15 +291,15 @@ Future<void> _testCapabilityProfileCannotBeDeleted() async {
   );
 }
 
-Future<void> _testTenantAdminCanWriteOwnTenantDeviceBoardConfig() async {
+Future<void> _testTenantAdminCannotWriteOwnTenantDeviceBoardConfig() async {
   final int status = await _patchAs(
     uid: 'admin-a',
     path: 'tenants/tenant-a/devices/device-1/settings/boardConfig',
     fields: _boardConfigFields(deviceId: 'device-1'),
   );
   _expect(
-    status == 200,
-    'tenant_admin can write their own tenant device board config',
+    status == 403,
+    'tenant_admin cannot write device board config while UI is owner-only',
   );
 }
 
@@ -230,8 +313,12 @@ Future<void> _testTenantAdminCannotWriteOtherTenantDeviceBoardConfig() async {
 }
 
 Future<void> _testAnyTenantMemberCanReadDeviceBoardConfig() async {
+  await _adminPatch(
+    'tenants/tenant-a/devices/device-1/settings/boardConfig',
+    _boardConfigFields(deviceId: 'device-1'),
+  );
   final int status = await _getAs(
-    uid: 'admin-a',
+    uid: 'owner-uid',
     path: 'tenants/tenant-a/devices/device-1/settings/boardConfig',
   );
   _expect(
@@ -242,7 +329,7 @@ Future<void> _testAnyTenantMemberCanReadDeviceBoardConfig() async {
 
 Future<void> _testDeviceIdMismatchDenied() async {
   final int status = await _patchAs(
-    uid: 'admin-a',
+    uid: 'owner-uid',
     path: 'tenants/tenant-a/devices/device-1/settings/boardConfig',
     fields: _boardConfigFields(deviceId: 'a-different-device-id'),
   );

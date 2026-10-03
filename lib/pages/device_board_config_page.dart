@@ -4,17 +4,19 @@ import '../board_content/board_content_layout.dart';
 import '../board_presets/board_preset.dart';
 import '../board_preview/board_editor_page.dart';
 import '../cell_layout_presets/cell_layout_catalog.dart';
-import '../cell_layout_presets/cell_layout_preset_catalog.dart'
-    show sharedCellLayoutPresetCatalog;
+import '../cell_layout_presets/cell_layout_preset_catalog.dart';
 import '../device_board_config/apply_board_preset_to_device.dart';
 import '../device_board_layouts/layout_validation_issue.dart';
 import '../device_capabilities/device_capability_profile.dart';
+import '../device_capabilities/capability_library_store.dart';
+import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../device_capabilities/reference_capability_seeds.dart';
 import '../models/agro_device.dart';
 import '../services/board_preset_repository.dart';
 import '../services/capability_profile_repository.dart';
 import '../services/device_board_config_repository.dart';
 import '../services/firestore_version_conflict.dart';
+import '../services/global_board_configuration_service.dart';
 
 /// N7.1 §12 — "Tenant → Site → Device → Configuración de Board": shows the
 /// Device's assigned [DeviceCapabilityProfile], its [BoardContentLayout]
@@ -38,6 +40,7 @@ class DeviceBoardConfigPage extends StatefulWidget {
     this.deviceBoardConfigRepository = const DeviceBoardConfigRepository(),
     this.capabilityProfileRepository = const CapabilityProfileRepository(),
     this.boardPresetRepository = const BoardPresetRepository(),
+    this.globalConfigurationService,
   });
 
   final bool isOwner;
@@ -46,6 +49,7 @@ class DeviceBoardConfigPage extends StatefulWidget {
   final DeviceBoardConfigRepository deviceBoardConfigRepository;
   final CapabilityProfileRepository capabilityProfileRepository;
   final BoardPresetRepository boardPresetRepository;
+  final GlobalBoardConfigurationService? globalConfigurationService;
 
   @override
   State<DeviceBoardConfigPage> createState() => _DeviceBoardConfigPageState();
@@ -62,9 +66,15 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
   List<BoardPreset> _presets = const [];
 
   String? _selectedProfileId;
+  String? _assignedProfileId;
   String? _selectedPresetId;
   bool _applying = false;
   List<LayoutValidationIssue>? _blockedIssues;
+  MetricLibraryStore _metrics = sharedMetricLibraryStore;
+  IndicatorLibraryStore _indicators = sharedIndicatorLibraryStore;
+  CellLayoutCatalog _cellLayouts = CellLayoutCatalog(
+    sharedCellLayoutPresetCatalog.presets,
+  );
 
   @override
   void initState() {
@@ -78,27 +88,67 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
       _errorMessage = null;
     });
     try {
-      final results = await Future.wait([
+      final globalService = widget.globalConfigurationService;
+      final results = await Future.wait<Object?>([
         widget.deviceBoardConfigRepository.fetchOne(
           tenantId: widget.tenantId,
           deviceId: widget.device.id,
         ),
-        widget.capabilityProfileRepository.fetchAll(),
-        widget.boardPresetRepository.fetchAll(),
+        if (globalService == null)
+          widget.capabilityProfileRepository.fetchAll(),
+        if (globalService == null) widget.boardPresetRepository.fetchAll(),
+        if (globalService != null) globalService.load(),
       ]);
       if (!mounted) return;
       final layout = results[0] as BoardContentLayout?;
-      final profileRecords = results[1] as List<CapabilityProfileRecord>;
-      final presets = results[2] as List<BoardPreset>;
+      final global = globalService == null
+          ? null
+          : results[1] as GlobalBoardConfigurationSnapshot;
+      final profileRecords =
+          global?.profiles ?? results[1] as List<CapabilityProfileRecord>;
+      final presets = global?.boardPresets ?? results[2] as List<BoardPreset>;
+      final activeProfiles = profileRecords
+          .where((r) => r.profile.enabled)
+          .map((r) => r.profile)
+          .toList();
+      final activePresets = presets.where((p) => p.enabled).toList();
+      final selectedProfile = activeProfiles
+          .where((profile) => profile.id == layout?.capabilityProfileId)
+          .cast<DeviceCapabilityProfile?>()
+          .firstOrNull;
+      final sourcePresetId = layout?.sourceBoardPresetId;
+      final sourcePresetIsSelectable = activePresets.any(
+        (preset) =>
+            preset.id == sourcePresetId &&
+            missingCapabilityIssues(
+              preset: preset,
+              profile: selectedProfile,
+            ).isEmpty,
+      );
+      if (global != null) {
+        _metrics = MetricLibraryStore(
+          initial: global.metrics
+              .where((r) => r.enabled)
+              .map((r) => r.metric)
+              .toList(),
+        );
+        _indicators = IndicatorLibraryStore(
+          initial: global.indicators
+              .where((r) => r.enabled)
+              .map((r) => r.indicator)
+              .toList(),
+        );
+        _cellLayouts = CellLayoutCatalog(
+          global.cellLayouts.where((p) => p.enabled).toList(),
+        );
+      }
       setState(() {
         _layout = layout;
-        _profiles = profileRecords
-            .where((r) => r.profile.enabled)
-            .map((r) => r.profile)
-            .toList();
-        _presets = presets.where((p) => p.enabled).toList();
+        _profiles = activeProfiles;
+        _presets = activePresets;
         _selectedProfileId = layout?.capabilityProfileId;
-        _selectedPresetId = null;
+        _assignedProfileId = layout?.capabilityProfileId;
+        _selectedPresetId = sourcePresetIsSelectable ? sourcePresetId : null;
         _state = _LoadState.loaded;
       });
     } catch (error) {
@@ -112,6 +162,15 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
 
   DeviceCapabilityProfile? get _selectedProfile {
     final id = _selectedProfileId;
+    if (id == null) return null;
+    for (final profile in _profiles) {
+      if (profile.id == id) return profile;
+    }
+    return null;
+  }
+
+  DeviceCapabilityProfile? get _assignedProfile {
+    final id = _assignedProfileId;
     if (id == null) return null;
     for (final profile in _profiles) {
       if (profile.id == id) return profile;
@@ -149,11 +208,9 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
         preset: preset,
         profile: _selectedProfile,
         profileId: _selectedProfileId,
-        metricsLibrary: sharedMetricLibraryStore,
-        indicatorsLibrary: sharedIndicatorLibraryStore,
-        cellLayoutCatalog: CellLayoutCatalog(
-          sharedCellLayoutPresetCatalog.presets,
-        ),
+        metricsLibrary: _metrics,
+        indicatorsLibrary: _indicators,
+        cellLayoutCatalog: _cellLayouts,
         expectedLayoutVersion: _layout?.layoutVersion ?? 0,
       );
       if (!mounted) return;
@@ -164,10 +221,16 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
         });
         return;
       }
+      final confirmed = await widget.deviceBoardConfigRepository.fetchOne(
+        tenantId: widget.tenantId,
+        deviceId: widget.device.id,
+      );
+      if (!mounted) return;
       setState(() {
-        _layout = result.layout;
+        _layout = confirmed ?? result.layout;
+        _assignedProfileId = _selectedProfileId;
         _applying = false;
-        _selectedPresetId = null;
+        _selectedPresetId = preset.id;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Preset aplicado al Device.')),
@@ -182,6 +245,48 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('No se pudo aplicar: $error')));
+    }
+  }
+
+  Future<void> _assignSelectedProfile() async {
+    final current =
+        _layout ??
+        BoardContentLayout(
+          deviceId: widget.device.id,
+          layoutTemplateId: 'grid_6x4',
+          items: const [],
+        );
+    final next = BoardContentLayout(
+      deviceId: current.deviceId,
+      layoutTemplateId: current.layoutTemplateId,
+      showTitle: current.showTitle,
+      titleOverride: current.titleOverride,
+      layoutVersion: current.layoutVersion,
+      capabilityProfileId: _selectedProfileId,
+      sourceBoardPresetId: current.sourceBoardPresetId,
+      sourceBoardPresetVersion: current.sourceBoardPresetVersion,
+      items: current.items,
+    );
+    setState(() => _applying = true);
+    try {
+      await widget.deviceBoardConfigRepository.saveLayout(
+        tenantId: widget.tenantId,
+        deviceId: widget.device.id,
+        layout: next,
+        expectedLayoutVersion: _layout?.layoutVersion ?? 0,
+        metricCatalog:
+            _selectedProfile?.resolve(_metrics, _indicators) ??
+            emptyDeviceMetricCatalog,
+        cellLayoutCatalog: _cellLayouts,
+      );
+      await _load();
+    } catch (error) {
+      if (mounted) {
+        setState(() => _applying = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('No se pudo asignar el perfil: $error')),
+        );
+      }
     }
   }
 
@@ -275,15 +380,34 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
             tenantId: widget.tenantId,
             deviceId: widget.device.id,
             initialLayout: layout,
-            profile: _selectedProfile,
-            profileId: _selectedProfileId,
+            // N7.1.1 §9 (finding A5) — `0` exactly when `_layout` is null
+            // (no remote document yet), never derived from the placeholder
+            // `layout` above (whose `layoutVersion` defaults to 1 — the
+            // model never allows less — which used to be sent as the
+            // expected version and always lost against the repository's
+            // correctly-computed "actual 0", producing a spurious conflict
+            // on every Device's very first save).
+            expectedRemoteVersion: _layout?.layoutVersion ?? 0,
+            profile: _assignedProfile,
+            profileId: _assignedProfileId,
             onSave: (nextLayout, expectedVersion) =>
                 widget.deviceBoardConfigRepository.saveLayout(
                   tenantId: widget.tenantId,
                   deviceId: widget.device.id,
                   layout: nextLayout,
                   expectedLayoutVersion: expectedVersion,
+                  // N7.1.1 §6 — the repository's own second validation pass
+                  // needs the same resolved catalogs the editor itself used.
+                  metricCatalog:
+                      _assignedProfile?.resolve(_metrics, _indicators) ??
+                      emptyDeviceMetricCatalog,
+                  cellLayoutCatalog: _cellLayouts,
                 ),
+          ),
+          metricLibrary: _metrics,
+          indicatorLibrary: _indicators,
+          cellLayoutPresetCatalog: CellLayoutPresetCatalog(
+            initial: _cellLayouts.presets,
           ),
         ),
       ),
@@ -315,6 +439,10 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
 
   Widget _buildLoaded(BuildContext context) {
     final layout = _layout;
+    final appliedPreset = _presets
+        .where((preset) => preset.id == layout?.sourceBoardPresetId)
+        .cast<BoardPreset?>()
+        .firstOrNull;
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: ConstrainedBox(
@@ -328,6 +456,13 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
             ),
             const SizedBox(height: 6),
             Text(
+              'Asignado: ${_assignedProfileId ?? 'Sin perfil'} · '
+              'Seleccionado: ${_selectedProfileId ?? 'Sin perfil'}',
+              key: const ValueKey('device-board-profile-state'),
+              style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            Text(
               layout == null
                   ? 'Este Device todavía no tiene un Board configurado.'
                   : 'DeviceBoardLayout v${layout.layoutVersion} · '
@@ -336,10 +471,32 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
               key: const ValueKey('device-board-config-status'),
             ),
             if (layout?.sourceBoardPresetId != null)
-              Text(
-                'Origen: preset "${layout!.sourceBoardPresetId}" '
-                '(v${layout.sourceBoardPresetVersion})',
-                style: const TextStyle(color: Color(0xFF64748B), fontSize: 12),
+              Container(
+                key: const ValueKey('device-board-config-applied-preset'),
+                margin: const EdgeInsets.only(top: 8),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0x3322C55E),
+                  border: Border.all(color: const Color(0xFF22C55E)),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.check_circle_outline,
+                      color: Color(0xFF22C55E),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Preset aplicado: '
+                        '${appliedPreset?.name ?? layout!.sourceBoardPresetId} '
+                        '(v${layout!.sourceBoardPresetVersion})',
+                        style: const TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             const SizedBox(height: 24),
             const Text(
@@ -364,6 +521,16 @@ class _DeviceBoardConfigPageState extends State<DeviceBoardConfigPage> {
                 _selectedProfileId = value;
                 _selectedPresetId = null;
               }),
+            ),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton(
+                key: const ValueKey('device-board-config-assign-profile'),
+                onPressed: _applying || _selectedProfileId == _assignedProfileId
+                    ? null
+                    : _assignSelectedProfile,
+                child: const Text('Asignar perfil'),
+              ),
             ),
             const SizedBox(height: 24),
             const Text(

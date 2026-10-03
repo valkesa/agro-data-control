@@ -21,12 +21,16 @@ class BoardPreviewCard extends StatefulWidget {
     required this.gap,
     this.selected = false,
     this.invalid = false,
+    this.semanticBorderColor,
+    this.semanticBorderWidth,
     this.onTap,
   });
   final Widget child;
   final double gap;
   final bool selected;
   final bool invalid;
+  final Color? semanticBorderColor;
+  final double? semanticBorderWidth;
   final VoidCallback? onTap;
   @override
   State<BoardPreviewCard> createState() => _BoardPreviewCardState();
@@ -40,6 +44,8 @@ class _BoardPreviewCardState extends State<BoardPreviewCard> {
         ? BoardCardTokens.boardCardBorderInvalid
         : widget.selected
         ? BoardCardTokens.boardCardBorderSelected
+        : widget.semanticBorderColor != null
+        ? widget.semanticBorderColor!
         : hovered
         ? BoardCardTokens.boardCardBorderHover
         : BoardCardTokens.boardCardBorder;
@@ -71,7 +77,10 @@ class _BoardPreviewCardState extends State<BoardPreviewCard> {
                         color: borderColor,
                         width: widget.selected
                             ? BoardCardTokens.borderWidth * 2
-                            : BoardCardTokens.borderWidth,
+                            : widget.semanticBorderColor == null
+                            ? BoardCardTokens.borderWidth
+                            : widget.semanticBorderWidth ??
+                                  BoardCardTokens.borderWidth,
                       ),
                     ),
                   ),

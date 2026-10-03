@@ -37,6 +37,11 @@ class DeviceCapabilityProfileStore extends ChangeNotifier {
 
   List<DeviceCapabilityProfile> get profiles => List.unmodifiable(_profiles);
 
+  void replaceAll(Iterable<DeviceCapabilityProfile> profiles) {
+    _profiles = List.of(profiles);
+    notifyListeners();
+  }
+
   DeviceCapabilityProfile? byId(String id) {
     for (final profile in _profiles) {
       if (profile.id == id) return profile;

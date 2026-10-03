@@ -1,12 +1,17 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../board_content/board_content_layout.dart';
+import '../board_content/board_content_validator.dart';
 import '../board_presets/board_preset.dart';
+import '../board_presets/board_preset_catalog.dart'
+    show resolveLayoutTemplateId;
 import '../cell_layout_presets/cell_layout_catalog.dart';
 import '../device_board_config/apply_board_preset_to_device.dart';
 import '../device_capabilities/capability_library_store.dart';
 import '../device_capabilities/device_capability_profile.dart';
+import '../device_metric_catalogs/device_metric_catalog.dart';
 import '../firebase/firestore_paths.dart';
+import 'board_validation_rejected.dart';
 import 'firestore_timestamp_adapter.dart';
 import 'firestore_version_conflict.dart';
 
@@ -122,19 +127,48 @@ class DeviceBoardConfigRepository {
     return outcome as BoardPresetApplicationResult;
   }
 
-  /// N7.1 §13/§14 — what `BoardEditorMode.device`'s "Guardar" calls: persists
-  /// an already-edited [layout] as-is (no re-validation against a source
-  /// preset — the Board Editor's own [BoardContentValidator.validate] pass
-  /// is what already gated the "Guardar" button). Preserves
-  /// `sourceBoardPresetId`/`sourceBoardPresetVersion` exactly as passed in
-  /// [layout] — editing a Device's board never fabricates new trazability,
-  /// it only carries forward whatever the layout already had.
+  /// N7.1 §13/§14, revised N7.1.1 §6 (finding A3) — what
+  /// `BoardEditorMode.device`'s "Guardar" calls: persists an already-edited
+  /// [layout]. The Board Editor's own Guardar button already gates on
+  /// [BoardContentValidator.validate] (§5 — the first, UI-layer defense),
+  /// but this is the *second* defense §6 explicitly asks for ("no confiar
+  /// solo en el botón"): [metricCatalog]/[cellLayoutCatalog] let this method
+  /// re-run the exact same validator right before writing, so a caller that
+  /// bypasses the editor entirely (a stale draft, a future programmatic
+  /// caller, a test) still can't persist a structurally invalid layout —
+  /// [BoardValidationRejected] is thrown instead, before the transaction
+  /// even starts. Preserves `sourceBoardPresetId`/`sourceBoardPresetVersion`
+  /// exactly as passed in [layout] — editing a Device's board never
+  /// fabricates new trazability, it only carries forward whatever the
+  /// layout already had.
   Future<int> saveLayout({
     required String tenantId,
     required String deviceId,
     required BoardContentLayout layout,
     required int expectedLayoutVersion,
+    required DeviceMetricCatalog metricCatalog,
+    required CellLayoutCatalog cellLayoutCatalog,
   }) async {
+    final materializedLayout = BoardContentLayout(
+      deviceId: layout.deviceId,
+      layoutTemplateId: layout.layoutTemplateId,
+      showTitle: layout.showTitle,
+      titleOverride: layout.titleOverride,
+      layoutVersion: layout.layoutVersion,
+      capabilityProfileId: layout.capabilityProfileId,
+      sourceBoardPresetId: layout.sourceBoardPresetId,
+      sourceBoardPresetVersion: layout.sourceBoardPresetVersion,
+      items: materializeCellLayoutSnapshots(layout.items, cellLayoutCatalog),
+    );
+    final issues = BoardContentValidator.validate(
+      materializedLayout,
+      resolveLayoutTemplateId(materializedLayout.layoutTemplateId),
+      metricCatalog,
+      cellLayoutCatalog,
+    );
+    if (issues.isNotEmpty) {
+      throw BoardValidationRejected(issues);
+    }
     final DocumentReference<Map<String, dynamic>> reference = firestore.doc(
       FirestorePaths.deviceBoardConfigDoc(tenantId, deviceId),
     );
@@ -153,15 +187,15 @@ class DeviceBoardConfigRepository {
       }
       final int nextVersion = actualVersion + 1;
       final BoardContentLayout toPersist = BoardContentLayout(
-        deviceId: layout.deviceId,
-        layoutTemplateId: layout.layoutTemplateId,
-        showTitle: layout.showTitle,
-        titleOverride: layout.titleOverride,
+        deviceId: materializedLayout.deviceId,
+        layoutTemplateId: materializedLayout.layoutTemplateId,
+        showTitle: materializedLayout.showTitle,
+        titleOverride: materializedLayout.titleOverride,
         layoutVersion: nextVersion,
-        capabilityProfileId: layout.capabilityProfileId,
-        sourceBoardPresetId: layout.sourceBoardPresetId,
-        sourceBoardPresetVersion: layout.sourceBoardPresetVersion,
-        items: layout.items,
+        capabilityProfileId: materializedLayout.capabilityProfileId,
+        sourceBoardPresetId: materializedLayout.sourceBoardPresetId,
+        sourceBoardPresetVersion: materializedLayout.sourceBoardPresetVersion,
+        items: materializedLayout.items,
       );
       transaction.set(reference, <String, Object?>{
         ...toPersist.toMap(),

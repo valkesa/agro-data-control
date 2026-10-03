@@ -287,8 +287,7 @@ class _LargeBoardPresetLayout extends StatelessWidget {
                     children: <Widget>[
                       SizedBox(height: geometry.largeHeight, child: _slot(1)),
                       SizedBox(height: geometry.gap),
-                      SizedBox(
-                        height: geometry.largeSecondaryHeight,
+                      Expanded(
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: <Widget>[
@@ -299,8 +298,7 @@ class _LargeBoardPresetLayout extends StatelessWidget {
                         ),
                       ),
                       SizedBox(height: geometry.gap),
-                      SizedBox(
-                        height: geometry.largeSecondaryHeight,
+                      Expanded(
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: <Widget>[
@@ -331,15 +329,9 @@ class _LargeBoardPresetLayout extends StatelessWidget {
                         ),
                       ),
                       SizedBox(height: geometry.gap),
-                      SizedBox(
-                        height: geometry.largeMiniBoxSize,
-                        child: _rightPair(10, 11),
-                      ),
+                      Expanded(child: _rightPair(10, 11)),
                       SizedBox(height: geometry.gap),
-                      SizedBox(
-                        height: geometry.largeMiniBoxSize,
-                        child: _rightPair(12, 13),
-                      ),
+                      Expanded(child: _rightPair(12, 13)),
                     ],
                   ),
                 ),
@@ -743,12 +735,16 @@ class _DeviceBoardSlotTile extends StatelessWidget {
                 ],
               ],
             ),
-          const Spacer(),
-          Center(
-            child: _IndicatorAwareValue(
-              value: valueWidget,
-              indicators: indicators,
-              geometry: geometry,
+          Expanded(
+            child: Center(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: _IndicatorAwareValue(
+                  value: valueWidget,
+                  indicators: indicators,
+                  geometry: geometry,
+                ),
+              ),
             ),
           ),
         ],
@@ -910,16 +906,14 @@ class _MetricValue extends StatelessWidget {
             size: geometry.valueIconSizeFor(slotSize),
           ),
           SizedBox(width: geometry.gap * 0.55),
-          Flexible(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: const Color(0xFFE5E7EB),
-                fontSize: geometry.valueFontSizeFor(slotSize) * 0.55,
-                fontWeight: FontWeight.w700,
-              ),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: const Color(0xFFE5E7EB),
+              fontSize: geometry.valueFontSizeFor(slotSize) * 0.55,
+              fontWeight: FontWeight.w700,
             ),
           ),
         ],
@@ -930,21 +924,19 @@ class _MetricValue extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.end,
       children: <Widget>[
-        Flexible(
-          child: Text(
-            formattedValue,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              color: value == null
-                  ? const Color(0xFF94A3B8)
-                  : visualState.valueColor,
-              fontSize: value == null
-                  ? geometry.valueFontSizeFor(slotSize) * 0.42
-                  : geometry.valueFontSizeFor(slotSize),
-              fontWeight: FontWeight.w800,
-              height: 1,
-            ),
+        Text(
+          formattedValue,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            color: value == null
+                ? const Color(0xFF94A3B8)
+                : visualState.valueColor,
+            fontSize: value == null
+                ? geometry.valueFontSizeFor(slotSize) * 0.42
+                : geometry.valueFontSizeFor(slotSize),
+            fontWeight: FontWeight.w800,
+            height: 1,
           ),
         ),
         if (formattedUnit.isNotEmpty) ...<Widget>[
@@ -998,7 +990,7 @@ class _IndicatorAwareValue extends StatelessWidget {
               _indicatorRow(left),
               SizedBox(width: geometry.gap * 0.6),
             ],
-            Flexible(child: value),
+            value,
             if (right.isNotEmpty) ...<Widget>[
               SizedBox(width: geometry.gap * 0.6),
               _indicatorRow(right),

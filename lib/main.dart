@@ -34,9 +34,11 @@ import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
 import 'pages/template_management_page.dart';
 import 'board_presets/board_presets_page.dart';
+import 'board_runtime/qa_device_board_runtime.dart';
 import 'board_preview/board_editor_page.dart';
 import 'board_preview/board_preview_page.dart';
 import 'device_capabilities/capability_admin_page.dart';
+import 'demo/demo.dart';
 import 'pages/tenant_management_page.dart';
 import 'pages/user_management_page.dart';
 import 'pages/validation_page.dart';
@@ -420,6 +422,30 @@ String _formatDashboardWashTime(DateTime value) {
       '${value.minute.toString().padLeft(2, '0')}';
 }
 
+class _DemoStopwatchClock implements DemoMonotonicClock {
+  final Stopwatch _stopwatch = Stopwatch();
+
+  @override
+  Duration get elapsed => _stopwatch.elapsed;
+
+  void start() {
+    if (!_stopwatch.isRunning) _stopwatch.start();
+  }
+}
+
+class _DemoTarget {
+  const _DemoTarget({
+    required this.label,
+    required this.deviceId,
+    required this.snapshotUnitKey,
+    required this.unit,
+  });
+  final String label;
+  final String deviceId;
+  final String snapshotUnitKey;
+  final MuntersModel unit;
+}
+
 class _AgroDataShellState extends State<AgroDataShell> {
   static const Duration _liveRefreshInterval = Duration(seconds: 5);
   static const Duration _snapshotStaleThreshold = Duration(seconds: 20);
@@ -460,6 +486,14 @@ class _AgroDataShellState extends State<AgroDataShell> {
   // changes so it can never leak into a different Site (see
   // `_applySiteOperationalState` callers).
   bool _ownerLegacyTablaPreview = false;
+  int _qaBoardRuntimeReloadToken = 0;
+  final DemoRuntimeSelector _demoRuntimeSelector = DemoRuntimeSelector();
+  final _DemoStopwatchClock _demoClock = _DemoStopwatchClock();
+  late final DemoScenarioController _demoScenarioController;
+  Timer? _demoTickTimer;
+  _DemoTarget? _selectedDemoTarget;
+  final Map<String, DemoScenarioDraft> _demoDrafts =
+      <String, DemoScenarioDraft>{};
   String? _activeSiteStatusLabel;
   String? _activeSiteNotOperationalMessage;
   String? _activeSiteNotOperationalDetail;
@@ -540,6 +574,18 @@ class _AgroDataShellState extends State<AgroDataShell> {
   @override
   void initState() {
     super.initState();
+    _demoScenarioController = DemoScenarioController(
+      selector: _demoRuntimeSelector,
+      clock: _demoClock,
+      onChanged: () {
+        if (!mounted) return;
+        if (!_demoScenarioController.isActive) {
+          _demoTickTimer?.cancel();
+          _demoTickTimer = null;
+        }
+        setState(() {});
+      },
+    );
     _disposeBrowserExitGuard = registerBrowserExitGuard();
     _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
     // Templates are global (not tenant-scoped, see Etapa 6A), so this warms
@@ -549,6 +595,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
   @override
   void dispose() {
+    _demoTickTimer?.cancel();
+    _demoScenarioController.dispose();
+    _demoRuntimeSelector.dispose();
     _disposeBrowserExitGuard();
     _refreshTimer?.cancel();
     _maintenanceExpiryTimer?.cancel();
@@ -713,6 +762,19 @@ class _AgroDataShellState extends State<AgroDataShell> {
 
   void _selectTab(String tab) {
     setState(() {
+      if (tab == 'munters1' || tab == 'munters2') {
+        final int index = tab == 'munters2' ? 1 : 0;
+        if (index < _snapshot.units.length) {
+          final unit = _snapshot.units[index];
+          final snapshotUnitKey = unit.historyPlcId;
+          if (snapshotUnitKey != null) {
+            _demoScenarioController.onDeviceChanged(
+              deviceId: snapshotUnitKey,
+              snapshotUnitKey: snapshotUnitKey,
+            );
+          }
+        }
+      }
       _selectedTab = tab;
     });
   }
@@ -749,7 +811,182 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _signOut() async {
+    _demoScenarioController.onLogout();
+    _demoDrafts.clear();
     await widget.authService.signOut();
+  }
+
+  List<_DemoTarget> _eligibleDemoTargets() {
+    if (_lastSuccessfulSnapshotAt == null) return const <_DemoTarget>[];
+    if (_activeSiteUsesDynamicDevices) {
+      return <_DemoTarget>[
+        for (final entry in DeviceDashboardEntry.listFrom(
+          devices: _devices,
+          snapshot: _snapshot,
+          roomsByDeviceId: _roomsByDeviceId,
+        ))
+          if (entry.liveUnit?.historyPlcId?.isNotEmpty == true)
+            _DemoTarget(
+              label: entry.displayName,
+              deviceId: entry.device.id,
+              snapshotUnitKey: entry.liveUnit!.historyPlcId!,
+              unit: entry.liveUnit!,
+            ),
+      ];
+    }
+    return <_DemoTarget>[
+      for (var index = 0; index < _snapshot.units.length; index++)
+        if (_snapshot.units[index].historyPlcId?.isNotEmpty == true)
+          _DemoTarget(
+            label: index < _plcConfigs.length
+                ? _plcConfigs[index].columnLabel
+                : _snapshot.units[index].name,
+            deviceId: index < _plcConfigs.length
+                ? _plcConfigs[index].plcId
+                : _snapshot.units[index].historyPlcId!,
+            snapshotUnitKey: _snapshot.units[index].historyPlcId!,
+            unit: _snapshot.units[index],
+          ),
+    ];
+  }
+
+  bool _activateManualDemo(_DemoTarget target) {
+    final tenantId = _historyTenantId;
+    final siteId = _historySiteId;
+    if (tenantId == null || siteId == null) return false;
+    _selectedDemoTarget = target;
+    return _demoScenarioController.startManual(
+      role: _userRole,
+      realSnapshot: _snapshot,
+      scope: DemoRuntimeScope(
+        tenantId: tenantId,
+        siteId: siteId,
+        deviceId: target.deviceId,
+        snapshotUnitKey: target.snapshotUnitKey,
+      ),
+    );
+  }
+
+  bool _startEditedScenario(_DemoTarget target, DemoScenario scenario) {
+    final tenantId = _historyTenantId;
+    final siteId = _historySiteId;
+    if (tenantId == null || siteId == null) return false;
+    _demoClock.start();
+    final activated = _demoScenarioController.start(
+      role: _userRole,
+      realSnapshot: _snapshot,
+      scope: DemoRuntimeScope(
+        tenantId: tenantId,
+        siteId: siteId,
+        deviceId: target.deviceId,
+        snapshotUnitKey: target.snapshotUnitKey,
+      ),
+      scenario: scenario,
+    );
+    if (!activated) return false;
+    _selectedDemoTarget = target;
+    _demoTickTimer?.cancel();
+    _demoTickTimer = Timer.periodic(
+      const Duration(milliseconds: 100),
+      (_) => _demoScenarioController.tick(),
+    );
+    return true;
+  }
+
+  Future<void> _openDemoManualPanel() async {
+    final targets = _eligibleDemoTargets();
+    await showDialog<void>(
+      context: context,
+      barrierColor: Colors.black38,
+      builder: (dialogContext) => _DemoManualPanel(
+        targets: targets,
+        initialTarget: targets
+            .where(
+              (target) =>
+                  target.snapshotUnitKey ==
+                  _selectedDemoTarget?.snapshotUnitKey,
+            )
+            .firstOrNull,
+        controller: _demoScenarioController,
+        drafts: _demoDrafts,
+        rangeSettings: _rangeSettings,
+        onActivateManual: _activateManualDemo,
+        onStartSequence: (target) {
+          _selectedDemoTarget = target;
+          _demoScenarioController.stop();
+          _toggleTechnicalDemoSequence();
+        },
+        onStop: _demoScenarioController.stop,
+        onPlayDraft: _startEditedScenario,
+      ),
+    );
+  }
+
+  /// Stage 2D's short technical sequence. The periodic callback is only a UI
+  /// scheduler; elapsed simulation time comes from the monotonic stopwatch.
+  void _toggleTechnicalDemoSequence() {
+    if (_demoScenarioController.isActive) {
+      _demoScenarioController.stop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Demo detenida: mostrando datos reales.')),
+      );
+      return;
+    }
+    if (!_demoRuntimeSelector.isAvailableForRole(_userRole)) return;
+
+    final String? tenantId = _historyTenantId;
+    final String? siteId = _historySiteId;
+    final target = _selectedDemoTarget;
+    final String? deviceId = target?.deviceId;
+    final String? snapshotUnitKey = target?.snapshotUnitKey;
+
+    if (tenantId == null ||
+        tenantId.isEmpty ||
+        siteId == null ||
+        siteId.isEmpty ||
+        deviceId == null ||
+        deviceId.isEmpty ||
+        snapshotUnitKey == null ||
+        snapshotUnitKey.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay un Device con snapshot real para la demo.'),
+        ),
+      );
+      return;
+    }
+
+    final source = target!.unit;
+    final scenario = buildTechnicalDemoScenario(
+      snapshotUnitKey: snapshotUnitKey,
+      temperature: source.tempInterior ?? 20,
+      humidity: source.humInterior ?? 60,
+    );
+    _demoClock.start();
+    final bool activated = _demoScenarioController.start(
+      role: _userRole,
+      realSnapshot: _snapshot,
+      scope: DemoRuntimeScope(
+        tenantId: tenantId,
+        siteId: siteId,
+        deviceId: deviceId,
+        snapshotUnitKey: snapshotUnitKey,
+      ),
+      scenario: scenario,
+    );
+    if (!activated || !mounted) return;
+    _demoTickTimer?.cancel();
+    _demoTickTimer = Timer.periodic(const Duration(milliseconds: 100), (_) {
+      _demoScenarioController.tick();
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Secuencia técnica activa en $deviceId ($snapshotUnitKey), 25 s. '
+          'El polling real continúa.',
+        ),
+      ),
+    );
   }
 
   void _scheduleMaintenanceExpiryTimer() {
@@ -848,6 +1085,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
   void didUpdateWidget(covariant AgroDataShell oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.user.uid != widget.user.uid) {
+      _demoScenarioController.onLogout();
       _dashboardBootstrapFuture = _createDashboardBootstrapFuture();
     }
   }
@@ -926,6 +1164,11 @@ class _AgroDataShellState extends State<AgroDataShell> {
     }
     if (mounted) {
       setState(() {
+        _demoScenarioController.onTenantChanged(result.effectiveTenantId ?? '');
+        _demoScenarioController.onSiteChanged(result.siteId);
+        if (!_demoRuntimeSelector.isAvailableForRole(result.userContext.role)) {
+          _demoScenarioController.stop();
+        }
         _historyTenantId = result.effectiveTenantId;
         _historySiteId = result.siteId;
         _ownerLegacyTablaPreview = false;
@@ -1216,6 +1459,8 @@ class _AgroDataShellState extends State<AgroDataShell> {
               _userRole == UserAppRole.owner &&
               _historyTenantId != null &&
               _historySiteId?.isNotEmpty == true,
+          demoAvailable: _demoRuntimeSelector.isAvailableForRole(_userRole),
+          demoActive: _demoRuntimeSelector.isActive,
         ),
       );
 
@@ -1224,6 +1469,9 @@ class _AgroDataShellState extends State<AgroDataShell> {
       }
 
       switch (action) {
+        case _SettingsMenuAction.demoFixedToggle:
+          await _openDemoManualPanel();
+          continue;
         case _SettingsMenuAction.changePassword:
           if (_userRole == UserAppRole.valkeTechnician) {
             continue;
@@ -2274,6 +2522,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _switchSite(String siteId) async {
+    if (_activeSiteId != siteId) _demoDrafts.clear();
+    if (_demoRuntimeSelector.isActive) {
+      setState(() => _demoScenarioController.onSiteChanged(siteId));
+    }
     final int mySwitchGeneration = _siteSwitchGuard.start();
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     final String? tenantId = bootstrap.effectiveTenantId;
@@ -2377,6 +2629,10 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _switchTenant(String tenantId) async {
+    if (_historyTenantId != tenantId) _demoDrafts.clear();
+    if (_demoRuntimeSelector.isActive) {
+      setState(() => _demoScenarioController.onTenantChanged(tenantId));
+    }
     final int mySwitchGeneration = _siteSwitchGuard.start();
     final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
     if (bootstrap.userContext.role != UserAppRole.owner) {
@@ -2512,9 +2768,55 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Future<void> _reloadActiveSiteAfterTenantManagement() async {
+    if (!mounted) return;
+
+    // Applying a preset or editing the Device board happens below Gestión de
+    // clientes. Re-entering Home is the explicit refresh boundary for the
+    // session-cached QA document.
+    sharedQaDeviceBoardRuntimeLoader.invalidate();
+
+    final _DashboardBootstrapResult bootstrap = await _dashboardBootstrapFuture;
+    final List<TenantDocument> refreshedTenants =
+        bootstrap.userContext.role == UserAppRole.owner
+        ? await _siteConfigService.fetchActiveTenants()
+        : _availableTenants;
+    if (!mounted) return;
+
+    // Gestión de clientes can enable/disable or rename a Tenant. The Home
+    // selector is backed by this list, which was previously populated only
+    // during the initial dashboard bootstrap and therefore stayed stale when
+    // returning from the administration page.
+    setState(() {
+      _qaBoardRuntimeReloadToken++;
+      _availableTenants = refreshedTenants;
+      _dashboardBootstrapFuture = Future<_DashboardBootstrapResult>.value(
+        _DashboardBootstrapResult(
+          userContext: bootstrap.userContext,
+          membership: bootstrap.membership,
+          config: bootstrap.config,
+          siteId: bootstrap.siteId,
+          resolvedTenantId: bootstrap.resolvedTenantId,
+          tenantDocument: bootstrap.tenantDocument,
+          siteDocument: bootstrap.siteDocument,
+          availableTenants: refreshedTenants,
+          availableSites: bootstrap.availableSites,
+          plcConfigs: bootstrap.plcConfigs,
+          devices: bootstrap.devices,
+          roomsByDeviceId: bootstrap.roomsByDeviceId,
+        ),
+      );
+    });
+
     final String? tenantId = _historyTenantId;
     final String? siteId = _activeSiteId;
-    if (!mounted || tenantId == null || siteId == null || siteId.isEmpty) {
+    if (tenantId == null ||
+        !refreshedTenants.any((tenant) => tenant.tenantId == tenantId)) {
+      if (refreshedTenants.isNotEmpty) {
+        await _switchTenant(refreshedTenants.first.tenantId);
+      }
+      return;
+    }
+    if (siteId == null || siteId.isEmpty) {
       return;
     }
 
@@ -3247,8 +3549,17 @@ class _AgroDataShellState extends State<AgroDataShell> {
   }
 
   Widget _buildDashboard(BuildContext context) {
+    final DemoSnapshotSelection demoSelection = DemoSnapshotSelection.resolve(
+      realSnapshot: _snapshot,
+      selector: _demoRuntimeSelector,
+    );
+    final DashboardSnapshot displaySnapshot = demoSelection.displaySnapshot;
+    // During Demo the simulated Q5–Q10 values have presentation precedence.
+    // With Demo OFF, the existing manual fan presentation overlay is kept.
     final List<MuntersModel> units = _applyMaintenanceToUnits(
-      _applyManualFanStatusToUnits(_snapshot.units),
+      _demoRuntimeSelector.isActive
+          ? displaySnapshot.units
+          : _applyManualFanStatusToUnits(displaySnapshot.units),
     );
     // Guard against 0 units: always true for legacy Sites (the placeholder
     // snapshot alone seeds 2), but a dynamic Site's real snapshot can now
@@ -3341,6 +3652,27 @@ class _AgroDataShellState extends State<AgroDataShell> {
                   backendOnline: _backendOnline,
                   lastSuccessfulSnapshotAt: _lastSuccessfulSnapshotAt,
                 ),
+              if (_demoScenarioController.isActive)
+                Container(
+                  key: const ValueKey('demo-playback-indicator'),
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 5,
+                  ),
+                  color: const Color(0xFF3B2F0B),
+                  child: Text(
+                    'DEMO · ${(_demoScenarioController.position.inMilliseconds / 1000).toStringAsFixed(1)} s / '
+                    '${_demoScenarioController.duration.inSeconds} s · '
+                    '${_demoScenarioController.speed}×',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: Color(0xFFFACC15),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
               Expanded(
                 child: PressMagnifierRegion(
                   controller: _magnifierController,
@@ -3368,7 +3700,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           final List<DeviceDashboardEntry> entries =
                               DeviceDashboardEntry.listFrom(
                                 devices: _devices,
-                                snapshot: _snapshot,
+                                snapshot: displaySnapshot,
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           return EnvironmentOverviewPage(
@@ -3407,6 +3739,23 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             showSnapshotPulse: _showSnapshotPulse,
                             snapshotStale: _snapshotStale,
                             environmentHistoryRepository: _environmentHistory,
+                            cardWrapper:
+                                ({
+                                  required deviceId,
+                                  required deviceName,
+                                  required liveData,
+                                  required legacyChild,
+                                }) => QaDeviceBoardRuntimeCard(
+                                  key: ValueKey('qa-board-runtime-$deviceId'),
+                                  tenantId: _historyTenantId,
+                                  siteId: _historySiteId,
+                                  deviceId: deviceId,
+                                  deviceName: deviceName,
+                                  liveData: liveData,
+                                  legacyChild: legacyChild,
+                                  reloadToken: _qaBoardRuntimeReloadToken,
+                                  rangeSettings: _rangeSettings,
+                                ),
                           );
                         }
                         const DeviceTemplateResolver templateResolver =
@@ -3463,7 +3812,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           final List<DeviceDashboardEntry> entries =
                               DeviceDashboardEntry.listFrom(
                                 devices: _devices,
-                                snapshot: _snapshot,
+                                snapshot: displaySnapshot,
                                 roomsByDeviceId: _roomsByDeviceId,
                               );
                           final bool ownerCanPreviewLegacyTabla =
@@ -3568,7 +3917,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                             _activeSiteUsesDynamicDevices
                             ? DeviceDashboardEntry.listFrom(
                                 devices: _devices,
-                                snapshot: _snapshot,
+                                snapshot: displaySnapshot,
                                 roomsByDeviceId: _roomsByDeviceId,
                               )
                             : const <DeviceDashboardEntry>[];
@@ -3577,7 +3926,7 @@ class _AgroDataShellState extends State<AgroDataShell> {
                           child: ComparisonPage(
                             munters1: munters1,
                             munters2: munters2,
-                            doorEvents: _snapshot.doorEvents,
+                            doorEvents: displaySnapshot.doorEvents,
                             tenantId: _historyTenantId,
                             siteId: _historySiteId,
                             showMunters1: _unitVisibilitySettings.showMunters1,
@@ -4571,7 +4920,852 @@ class _StaleSnapshotBanner extends StatelessWidget {
   }
 }
 
+class _DemoManualPanel extends StatefulWidget {
+  const _DemoManualPanel({
+    required this.targets,
+    required this.initialTarget,
+    required this.controller,
+    required this.drafts,
+    required this.rangeSettings,
+    required this.onActivateManual,
+    required this.onStartSequence,
+    required this.onStop,
+    required this.onPlayDraft,
+  });
+
+  final List<_DemoTarget> targets;
+  final _DemoTarget? initialTarget;
+  final DemoScenarioController controller;
+  final Map<String, DemoScenarioDraft> drafts;
+  final DashboardRangeSettings rangeSettings;
+  final bool Function(_DemoTarget target) onActivateManual;
+  final void Function(_DemoTarget target) onStartSequence;
+  final VoidCallback onStop;
+  final bool Function(_DemoTarget target, DemoScenario scenario) onPlayDraft;
+
+  @override
+  State<_DemoManualPanel> createState() => _DemoManualPanelState();
+}
+
+class _DemoManualPanelState extends State<_DemoManualPanel> {
+  _DemoTarget? selected;
+
+  @override
+  void initState() {
+    super.initState();
+    selected = widget.initialTarget;
+  }
+
+  bool get activeForSelection =>
+      selected != null &&
+      widget.controller.isActive &&
+      widget.controller.scope?.deviceId == selected!.deviceId &&
+      widget.controller.scope?.snapshotUnitKey == selected!.snapshotUnitKey &&
+      widget.controller.state != DemoPlaybackState.disposed &&
+      widget.controller.state != DemoPlaybackState.stopped;
+
+  Object? _realValue(DemoSignalKey key) {
+    final unit = selected?.unit;
+    if (unit == null) return null;
+    return switch (key) {
+      DemoSignalKey.indoorTemperature => unit.tempInterior,
+      DemoSignalKey.outdoorTemperature => unit.tempExterior,
+      DemoSignalKey.inletTemperature => unit.tempIngresoSala,
+      DemoSignalKey.indoorHumidity => unit.humInterior,
+      DemoSignalKey.outdoorHumidity => unit.humExterior,
+      DemoSignalKey.differentialPressure => unit.presionDiferencial,
+      DemoSignalKey.ammonia => unit.nh3,
+      DemoSignalKey.ventilationPower => unit.tensionSalidaVentiladores,
+      DemoSignalKey.heatingStage1 => unit.resistencia1,
+      DemoSignalKey.heatingStage2 => unit.resistencia2,
+      DemoSignalKey.humidifier => unit.bombaHumidificador,
+      DemoSignalKey.fanQ5 => unit.fanQ5,
+      DemoSignalKey.fanQ6 => unit.fanQ6,
+      DemoSignalKey.fanQ7 => unit.fanQ7,
+      DemoSignalKey.fanQ8 => unit.fanQ8,
+      DemoSignalKey.fanQ9 => unit.fanQ9,
+      DemoSignalKey.fanQ10 => unit.fanQ10,
+      DemoSignalKey.roomDoorOpen => unit.salaAbierta,
+      DemoSignalKey.equipmentDoorOpen => unit.munterAbierto,
+      DemoSignalKey.generalAlarm => unit.alarmaGeneral,
+      DemoSignalKey.networkFailure => unit.fallaRed,
+      DemoSignalKey.waterLevelAlarm => unit.nivelAguaAlarma,
+      DemoSignalKey.humidifierThermalFailure => unit.fallaTermicaBomba,
+      DemoSignalKey.configured => unit.configured,
+      DemoSignalKey.backendOnline => unit.backendOnline,
+      DemoSignalKey.plcReachable => unit.plcReachable,
+      DemoSignalKey.plcRunning => unit.plcRunning,
+      DemoSignalKey.dataFresh => unit.dataFresh,
+      DemoSignalKey.plcOnline => unit.plcOnline,
+      DemoSignalKey.equipmentState => unit.estadoEquipo,
+    };
+  }
+
+  Object? _value(DemoSignalKey key) =>
+      widget.controller.manualOverrides.containsKey(key)
+      ? widget.controller.manualOverrides[key]
+      : _realValue(key);
+
+  void _override(DemoSignalKey key, Object? value) {
+    try {
+      widget.controller.setManualOverride(key, value);
+      setState(() {});
+    } on Object catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Valor inválido: $error')));
+    }
+  }
+
+  Widget _numeric(DemoSignalKey key, String unit) {
+    final definition = DemoSignalCatalog.definitionFor(key);
+    final raw = _value(key);
+    if (_realValue(key) == null) return const SizedBox.shrink();
+    final value = (raw as num?)?.toDouble() ?? definition.min!;
+    return _DemoPanelSectionRow(
+      label: '${definition.label} ($unit)',
+      overridden: widget.controller.manualOverrides.containsKey(key),
+      onRelease: () {
+        widget.controller.releaseManualOverride(key);
+        setState(() {});
+      },
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Slider(
+              value: value.clamp(definition.min!, definition.max!),
+              min: definition.min!,
+              max: definition.max!,
+              onChanged: activeForSelection ? (v) => _override(key, v) : null,
+            ),
+          ),
+          SizedBox(
+            width: 62,
+            child: TextFormField(
+              key: ValueKey('demo-number-${key.wireName}-$value'),
+              initialValue: value.toStringAsFixed(1),
+              enabled: activeForSelection,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+                signed: true,
+              ),
+              onFieldSubmitted: (text) {
+                final parsed = double.tryParse(text.replaceAll(',', '.'));
+                if (parsed != null) _override(key, parsed);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _boolean(
+    DemoSignalKey key, {
+    required String trueLabel,
+    required String falseLabel,
+    bool technical = false,
+  }) {
+    if (_realValue(key) == null && !technical) return const SizedBox.shrink();
+    final value = _value(key) as bool?;
+    return _DemoPanelSectionRow(
+      label: DemoSignalCatalog.definitionFor(key).label,
+      overridden: widget.controller.manualOverrides.containsKey(key),
+      onRelease: () {
+        widget.controller.releaseManualOverride(key);
+        setState(() {});
+      },
+      child: technical
+          ? DropdownButton<bool?>(
+              value: value,
+              items: <DropdownMenuItem<bool?>>[
+                const DropdownMenuItem<bool?>(
+                  value: null,
+                  child: Text('Sin datos'),
+                ),
+                DropdownMenuItem<bool?>(value: false, child: Text(falseLabel)),
+                DropdownMenuItem<bool?>(value: true, child: Text(trueLabel)),
+              ],
+              onChanged: activeForSelection ? (v) => _override(key, v) : null,
+            )
+          : SwitchListTile.adaptive(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(value == true ? trueLabel : falseLabel),
+              value: value ?? false,
+              onChanged: activeForSelection ? (v) => _override(key, v) : null,
+            ),
+    );
+  }
+
+  Widget _equipmentState() {
+    const key = DemoSignalKey.equipmentState;
+    final value = _value(key) as String?;
+    return _DemoPanelSectionRow(
+      label: 'Estado del equipo',
+      overridden: widget.controller.manualOverrides.containsKey(key),
+      onRelease: () {
+        widget.controller.releaseManualOverride(key);
+        setState(() {});
+      },
+      child: DropdownButton<String?>(
+        value: value,
+        items: const <DropdownMenuItem<String?>>[
+          DropdownMenuItem<String?>(value: null, child: Text('Sin datos')),
+          DropdownMenuItem<String?>(value: 'RUN', child: Text('RUN')),
+          DropdownMenuItem<String?>(value: 'STOP', child: Text('STOP')),
+          DropdownMenuItem<String?>(value: 'FAULT', child: Text('FAULT')),
+        ],
+        onChanged: activeForSelection ? (v) => _override(key, v) : null,
+      ),
+    );
+  }
+
+  DemoScenarioDraft? get _draft =>
+      selected == null ? null : widget.drafts[selected!.snapshotUnitKey];
+
+  void _newDraft() {
+    final target = selected!;
+    widget.drafts[target.snapshotUnitKey] = DemoScenarioDraft(
+      id: 'user-${target.snapshotUnitKey}',
+      name: 'Nueva secuencia',
+      durationSeconds: 30,
+    );
+    setState(() {});
+  }
+
+  void _copyTechnicalDraft() {
+    final target = selected!;
+    widget.drafts[target.snapshotUnitKey] = DemoScenarioDraft.fromScenario(
+      buildTechnicalDemoScenario(
+        snapshotUnitKey: target.snapshotUnitKey,
+        temperature: target.unit.tempInterior ?? 20,
+        humidity: target.unit.humInterior ?? 60,
+      ),
+    );
+    setState(() {});
+  }
+
+  Future<void> _editEvent(DemoEventDraft original) async {
+    var signal = original.signalKey;
+    var transition = original.transition;
+    final name = TextEditingController(text: original.name);
+    final start = TextEditingController(text: '${original.startSeconds}');
+    final duration = TextEditingController(text: '${original.durationSeconds}');
+    final from = TextEditingController(
+      text: original.fromValue?.toString() ?? '',
+    );
+    final to = TextEditingController(text: original.toValue?.toString() ?? '');
+    final saved = await showDialog<DemoEventDraft>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final definition = DemoSignalCatalog.definitionFor(signal);
+          return AlertDialog(
+            title: Text('Editar ${original.id}'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  TextField(
+                    controller: name,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre descriptivo (opcional)',
+                    ),
+                  ),
+                  DropdownButtonFormField<DemoSignalKey>(
+                    initialValue: signal,
+                    decoration: const InputDecoration(labelText: 'Señal'),
+                    items: [
+                      for (final d in DemoSignalCatalog.definitions.where(
+                        (d) => d.key != DemoSignalKey.waterLevelAlarm,
+                      ))
+                        DropdownMenuItem(value: d.key, child: Text(d.label)),
+                    ],
+                    onChanged: (v) => setDialogState(() {
+                      if (v != null) {
+                        signal = v;
+                        transition =
+                            DemoSignalCatalog.definitionFor(v).interpolable
+                            ? transition
+                            : DemoTransition.instant;
+                      }
+                    }),
+                  ),
+                  TextField(
+                    controller: start,
+                    decoration: const InputDecoration(labelText: 'Inicio (s)'),
+                  ),
+                  TextField(
+                    controller: duration,
+                    decoration: const InputDecoration(
+                      labelText: 'Duración (s)',
+                    ),
+                  ),
+                  DropdownButtonFormField<DemoTransition>(
+                    initialValue: transition,
+                    decoration: const InputDecoration(labelText: 'Transición'),
+                    items: [
+                      const DropdownMenuItem(
+                        value: DemoTransition.instant,
+                        child: Text('Instantánea'),
+                      ),
+                      if (definition.interpolable)
+                        const DropdownMenuItem(
+                          value: DemoTransition.linear,
+                          child: Text('Lineal'),
+                        ),
+                    ],
+                    onChanged: (v) =>
+                        setDialogState(() => transition = v ?? transition),
+                  ),
+                  if (definition.kind == DemoSignalKind.number) ...<Widget>[
+                    if (transition == DemoTransition.linear)
+                      TextField(
+                        controller: from,
+                        decoration: InputDecoration(
+                          labelText:
+                              'Valor inicial (${definition.min}…${definition.max})',
+                        ),
+                      ),
+                    TextField(
+                      controller: to,
+                      decoration: InputDecoration(
+                        labelText:
+                            'Valor final (${definition.min}…${definition.max})',
+                      ),
+                    ),
+                  ] else if (definition.kind == DemoSignalKind.boolean)
+                    DropdownButtonFormField<String>(
+                      initialValue: original.toValue == null
+                          ? 'null'
+                          : '${original.toValue}',
+                      decoration: const InputDecoration(labelText: 'Estado'),
+                      items: const [
+                        DropdownMenuItem(
+                          value: 'true',
+                          child: Text('Activo / Abierta'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'false',
+                          child: Text('Inactivo / Cerrada'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'null',
+                          child: Text('Sin datos'),
+                        ),
+                      ],
+                      onChanged: (v) => to.text = v ?? 'null',
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      initialValue: original.toValue as String?,
+                      items: [
+                        for (final v in definition.allowedTextValues)
+                          DropdownMenuItem(value: v, child: Text(v)),
+                      ],
+                      onChanged: (v) => to.text = v ?? '',
+                    ),
+                ],
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Object? parseValue(String text) =>
+                      definition.kind == DemoSignalKind.number
+                      ? double.tryParse(text.replaceAll(',', '.'))
+                      : definition.kind == DemoSignalKind.boolean
+                      ? text == 'null'
+                            ? null
+                            : text == 'true'
+                      : text;
+                  Navigator.pop(
+                    context,
+                    original.copyWith(
+                      name: name.text.trim(),
+                      signalKey: signal,
+                      startSeconds: double.tryParse(start.text) ?? double.nan,
+                      durationSeconds:
+                          double.tryParse(duration.text) ?? double.nan,
+                      transition: transition,
+                      fromValue: transition == DemoTransition.linear
+                          ? parseValue(from.text)
+                          : null,
+                      toValue: parseValue(to.text),
+                    ),
+                  );
+                },
+                child: const Text('Aplicar'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    if (saved != null) {
+      _draft!.updateEvent(saved);
+      setState(() {});
+    }
+  }
+
+  Widget _sequenceEditor() {
+    final target = selected;
+    if (target == null) {
+      return const SizedBox.shrink();
+    }
+    final draft = _draft;
+    if (draft == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          const Divider(),
+          const Text(
+            'Secuencia',
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+          Wrap(
+            spacing: 8,
+            children: <Widget>[
+              OutlinedButton(
+                onPressed: _newDraft,
+                child: const Text('Nueva vacía'),
+              ),
+              OutlinedButton(
+                onPressed: _copyTechnicalDraft,
+                child: const Text('Copiar técnica 25 s'),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
+    final validation = draft.validate(target.snapshotUnitKey);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        const Divider(),
+        const Text('Secuencia', style: TextStyle(fontWeight: FontWeight.bold)),
+        TextFormField(
+          key: ValueKey('draft-name-${draft.id}'),
+          initialValue: draft.name,
+          decoration: const InputDecoration(labelText: 'Nombre'),
+          onChanged: (v) {
+            draft.name = v;
+            setState(() {});
+          },
+        ),
+        TextFormField(
+          key: ValueKey('draft-duration-${draft.id}'),
+          initialValue: '${draft.durationSeconds}',
+          decoration: const InputDecoration(labelText: 'Duración total (s)'),
+          onChanged: (v) {
+            draft.durationSeconds =
+                double.tryParse(v.replaceAll(',', '.')) ?? double.nan;
+            setState(() {});
+          },
+        ),
+        const Text(
+          'La duración puede dejar un tramo final vacío, pero debe cubrir el fin de todos los eventos.',
+          style: TextStyle(fontSize: 11),
+        ),
+        for (var i = 0; i < draft.events.length; i++)
+          Card(
+            child: ListTile(
+              key: ValueKey('draft-event-${draft.events[i].id}'),
+              title: Text(
+                '${draft.events[i].id}${draft.events[i].name.isEmpty ? '' : ' · ${draft.events[i].name}'} · ${DemoSignalCatalog.definitionFor(draft.events[i].signalKey).label}',
+              ),
+              subtitle: Text(
+                '${draft.events[i].startSeconds}s → ${draft.events[i].startSeconds + draft.events[i].durationSeconds}s · ${draft.events[i].transition.name} · ${draft.events[i].fromValue ?? ''} → ${draft.events[i].toValue}',
+              ),
+              onTap: () => _editEvent(draft.events[i]),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  IconButton(
+                    icon: const Icon(Icons.arrow_upward),
+                    onPressed: i == 0
+                        ? null
+                        : () {
+                            draft.moveEvent(draft.events[i].id, i - 1);
+                            setState(() {});
+                          },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.arrow_downward),
+                    onPressed: i == draft.events.length - 1
+                        ? null
+                        : () {
+                            draft.moveEvent(draft.events[i].id, i + 1);
+                            setState(() {});
+                          },
+                  ),
+                  IconButton(
+                    key: ValueKey('delete-${draft.events[i].id}'),
+                    icon: const Icon(Icons.delete_outline),
+                    onPressed: () {
+                      draft.removeEvent(draft.events[i].id);
+                      setState(() {});
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ),
+        OutlinedButton.icon(
+          key: const ValueKey('draft-add-event'),
+          onPressed: () {
+            draft.addEvent(signalKey: DemoSignalKey.indoorTemperature);
+            setState(() {});
+          },
+          icon: const Icon(Icons.add),
+          label: const Text('Agregar evento'),
+        ),
+        for (final warning in validation.warnings)
+          Text(
+            warning,
+            style: const TextStyle(color: Color(0xFFFACC15), fontSize: 11),
+          ),
+        for (final error in validation.errors)
+          Text(
+            error,
+            style: const TextStyle(color: Color(0xFFF87171), fontSize: 11),
+          ),
+        FilledButton.icon(
+          key: const ValueKey('draft-play'),
+          onPressed: validation.isValid
+              ? () {
+                  widget.onPlayDraft(target, validation.scenario!);
+                  setState(() {});
+                }
+              : null,
+          icon: const Icon(Icons.play_arrow),
+          label: const Text('Reproducir borrador validado'),
+        ),
+        const Text(
+          'Detiene la Demo actual, limpia overrides y captura un baseline real nuevo. Editar no cambia la reproducción activa.',
+          style: TextStyle(fontSize: 11),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final target = selected;
+    final temporal = widget.controller.duration > Duration.zero;
+    return Dialog(
+      alignment: Alignment.centerRight,
+      insetPadding: const EdgeInsets.all(12),
+      child: SizedBox(
+        width: 460,
+        height: MediaQuery.sizeOf(context).height - 24,
+        child: Column(
+          children: <Widget>[
+            ListTile(
+              title: const Text('Simulador AgroData'),
+              subtitle: Text(
+                widget.controller.isActive
+                    ? 'Demo activa · baseline real congelado'
+                    : 'Demo OFF',
+              ),
+              trailing: IconButton(
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: widget.targets.isEmpty
+                  ? const Padding(
+                      padding: EdgeInsets.all(24),
+                      child: Text(
+                        'No hay unidades elegibles con snapshot real. Elegí un Site operativo; QA Site no tiene baseline real.',
+                      ),
+                    )
+                  : ListView(
+                      padding: const EdgeInsets.all(14),
+                      children: <Widget>[
+                        DropdownButtonFormField<_DemoTarget>(
+                          initialValue: target,
+                          decoration: const InputDecoration(
+                            labelText: 'Device / unidad',
+                          ),
+                          items: [
+                            for (final t in widget.targets)
+                              DropdownMenuItem(
+                                value: t,
+                                child: Text(
+                                  '${t.label} · ${t.snapshotUnitKey}',
+                                ),
+                              ),
+                          ],
+                          onChanged: widget.controller.isActive
+                              ? null
+                              : (v) => setState(() {
+                                  final previous = selected;
+                                  if (previous != null && previous != v) {
+                                    widget.drafts.remove(
+                                      previous.snapshotUnitKey,
+                                    );
+                                  }
+                                  selected = v;
+                                }),
+                        ),
+                        const SizedBox(height: 12),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: <Widget>[
+                            FilledButton.icon(
+                              key: const ValueKey('demo-activate-manual'),
+                              onPressed:
+                                  target == null || widget.controller.isActive
+                                  ? null
+                                  : () {
+                                      widget.onActivateManual(target);
+                                      setState(() {});
+                                    },
+                              icon: const Icon(Icons.tune),
+                              label: const Text('Activar manual'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed:
+                                  target == null || widget.controller.isActive
+                                  ? null
+                                  : () {
+                                      widget.onStartSequence(target);
+                                      setState(() {});
+                                    },
+                              icon: const Icon(Icons.play_arrow),
+                              label: const Text('Secuencia 25 s'),
+                            ),
+                            OutlinedButton.icon(
+                              key: const ValueKey('demo-stop'),
+                              onPressed: widget.controller.isActive
+                                  ? () {
+                                      widget.onStop();
+                                      setState(() {});
+                                    }
+                                  : null,
+                              icon: const Icon(Icons.stop),
+                              label: const Text('Stop'),
+                            ),
+                          ],
+                        ),
+                        _sequenceEditor(),
+                        if (widget.controller.isActive) ...<Widget>[
+                          const SizedBox(height: 10),
+                          Row(
+                            children: <Widget>[
+                              Text(
+                                'Overrides: ${widget.controller.manualOverrides.length}',
+                              ),
+                              const Spacer(),
+                              TextButton(
+                                onPressed:
+                                    widget.controller.manualOverrides.isEmpty
+                                    ? null
+                                    : () {
+                                        widget.controller
+                                            .releaseAllManualOverrides();
+                                        setState(() {});
+                                      },
+                                child: const Text('Liberar todos'),
+                              ),
+                            ],
+                          ),
+                          if (temporal)
+                            Wrap(
+                              spacing: 8,
+                              children: <Widget>[
+                                IconButton(
+                                  tooltip:
+                                      widget.controller.state ==
+                                          DemoPlaybackState.paused
+                                      ? 'Reanudar'
+                                      : 'Pausar',
+                                  onPressed: () {
+                                    widget.controller.state ==
+                                            DemoPlaybackState.paused
+                                        ? widget.controller.resume()
+                                        : widget.controller.pause();
+                                    setState(() {});
+                                  },
+                                  icon: Icon(
+                                    widget.controller.state ==
+                                            DemoPlaybackState.paused
+                                        ? Icons.play_arrow
+                                        : Icons.pause,
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: 'Reiniciar (limpia overrides)',
+                                  onPressed: () {
+                                    widget.controller.restart();
+                                    setState(() {});
+                                  },
+                                  icon: const Icon(Icons.replay),
+                                ),
+                                DropdownButton<double>(
+                                  value: widget.controller.speed,
+                                  items: const <DropdownMenuItem<double>>[
+                                    DropdownMenuItem(
+                                      value: .5,
+                                      child: Text('0.5×'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 1,
+                                      child: Text('1×'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 2,
+                                      child: Text('2×'),
+                                    ),
+                                    DropdownMenuItem(
+                                      value: 4,
+                                      child: Text('4×'),
+                                    ),
+                                  ],
+                                  onChanged: (v) {
+                                    if (v != null) {
+                                      widget.controller.setSpeed(v);
+                                      setState(() {});
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          const Divider(),
+                          const Text(
+                            'Ambientales',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          _numeric(DemoSignalKey.indoorTemperature, '°C'),
+                          _numeric(DemoSignalKey.outdoorTemperature, '°C'),
+                          _numeric(DemoSignalKey.inletTemperature, '°C'),
+                          _numeric(DemoSignalKey.indoorHumidity, '%'),
+                          _numeric(DemoSignalKey.outdoorHumidity, '%'),
+                          _numeric(DemoSignalKey.differentialPressure, 'Pa'),
+                          _numeric(DemoSignalKey.ammonia, 'ppm'),
+                          _numeric(DemoSignalKey.ventilationPower, 'V'),
+                          Text(
+                            'Delta PR: derivado · Temp ${widget.rangeSettings.temperatureMin.toStringAsFixed(0)}–${widget.rangeSettings.temperatureMax.toStringAsFixed(0)} °C · HR amarilla ≥ ${widget.rangeSettings.humidityAlarmYellowMin.toStringAsFixed(0)} %',
+                          ),
+                          const Divider(),
+                          const Text(
+                            'Actuadores y puertas',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          _boolean(
+                            DemoSignalKey.heatingStage1,
+                            trueLabel: 'Activo',
+                            falseLabel: 'Inactivo',
+                          ),
+                          _boolean(
+                            DemoSignalKey.heatingStage2,
+                            trueLabel: 'Activo',
+                            falseLabel: 'Inactivo',
+                          ),
+                          _boolean(
+                            DemoSignalKey.humidifier,
+                            trueLabel: 'Activo',
+                            falseLabel: 'Inactivo',
+                          ),
+                          for (final key in <DemoSignalKey>[
+                            DemoSignalKey.fanQ5,
+                            DemoSignalKey.fanQ6,
+                            DemoSignalKey.fanQ7,
+                            DemoSignalKey.fanQ8,
+                            DemoSignalKey.fanQ9,
+                            DemoSignalKey.fanQ10,
+                          ])
+                            _boolean(
+                              key,
+                              trueLabel: 'Activo',
+                              falseLabel: 'Inactivo',
+                            ),
+                          _boolean(
+                            DemoSignalKey.roomDoorOpen,
+                            trueLabel: 'Abierta',
+                            falseLabel: 'Cerrada',
+                          ),
+                          _boolean(
+                            DemoSignalKey.equipmentDoorOpen,
+                            trueLabel: 'Abierta',
+                            falseLabel: 'Cerrada',
+                          ),
+                          const Divider(),
+                          const Text(
+                            'Estados técnicos y fallas',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          for (final key in <DemoSignalKey>[
+                            DemoSignalKey.generalAlarm,
+                            DemoSignalKey.networkFailure,
+                            DemoSignalKey.humidifierThermalFailure,
+                            DemoSignalKey.configured,
+                            DemoSignalKey.backendOnline,
+                            DemoSignalKey.plcReachable,
+                            DemoSignalKey.plcRunning,
+                            DemoSignalKey.dataFresh,
+                            DemoSignalKey.plcOnline,
+                          ])
+                            _boolean(
+                              key,
+                              trueLabel: 'Activo',
+                              falseLabel: 'Inactivo',
+                              technical: true,
+                            ),
+                          _equipmentState(),
+                        ],
+                      ],
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DemoPanelSectionRow extends StatelessWidget {
+  const _DemoPanelSectionRow({
+    required this.label,
+    required this.overridden,
+    required this.onRelease,
+    required this.child,
+  });
+  final String label;
+  final bool overridden;
+  final VoidCallback onRelease;
+  final Widget child;
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 5),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Row(
+          children: <Widget>[
+            Expanded(child: Text(label)),
+            if (overridden)
+              TextButton(onPressed: onRelease, child: const Text('Liberar')),
+          ],
+        ),
+        child,
+      ],
+    ),
+  );
+}
+
 enum _SettingsMenuAction {
+  demoFixedToggle,
   changePassword,
   alertSettings,
   hierarchicalAlertSettings,
@@ -4609,6 +5803,8 @@ class _SettingsMenuDialog extends StatelessWidget {
     required this.selectedTab,
     required this.canEditConfig,
     required this.canOpenRuntimeEvents,
+    required this.demoAvailable,
+    required this.demoActive,
     this.userRole,
   });
 
@@ -4616,6 +5812,8 @@ class _SettingsMenuDialog extends StatelessWidget {
   final String selectedTab;
   final bool canEditConfig;
   final bool canOpenRuntimeEvents;
+  final bool demoAvailable;
+  final bool demoActive;
   final String? userRole;
 
   @override
@@ -4789,6 +5987,35 @@ class _SettingsMenuDialog extends StatelessWidget {
               Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  if (demoAvailable) ...[
+                    FilledButton.tonal(
+                      onPressed: () => Navigator.of(
+                        context,
+                      ).pop(_SettingsMenuAction.demoFixedToggle),
+                      style: FilledButton.styleFrom(
+                        minimumSize: const Size(0, 42),
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                      ),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            demoActive
+                                ? Icons.stop_circle_outlined
+                                : Icons.science_outlined,
+                            size: 18,
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            demoActive
+                                ? 'Simulador AgroData (activo)'
+                                : 'Abrir Simulador AgroData',
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   FilledButton.tonal(
                     onPressed: () => Navigator.of(
                       context,

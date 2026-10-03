@@ -27,6 +27,12 @@ class CellLayoutPresetCatalog extends ChangeNotifier {
 
   List<CellLayoutPreset> get presets => List.unmodifiable(_presets);
 
+  void replaceAll(Iterable<CellLayoutPreset> presets) {
+    _presets = List.of(presets);
+    _descriptions.removeWhere((id, _) => !_presets.any((p) => p.id == id));
+    notifyListeners();
+  }
+
   CellLayoutPreset? byId(String id) {
     for (final preset in _presets) {
       if (preset.id == id) return preset;
