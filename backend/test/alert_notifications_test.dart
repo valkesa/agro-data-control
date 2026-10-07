@@ -37,6 +37,13 @@ void _testFormatter() {
     'formats dew point margin',
   );
   _expect(
+    formatter.format(
+          _alert(AlertType.sensorFailure, measured: -50, threshold: 0),
+        ) ==
+        'Falla sensor Temp. Interior (lectura: -50 C, minimo: 0 C). *Posible corte / micro-corte de luz*',
+    'formats sensor failure with possible power cut hint in bold',
+  );
+  _expect(
     formatter.format(_alert(AlertType.muntersDoorOpen)) ==
         'Puerta Munters abierta',
     'formats munters door without elapsed time when not gated by a delay',

@@ -292,7 +292,7 @@ class AlertNotificationFormatter {
       AlertType.roomDoorOpen =>
         'Puerta de sala abierta${_openSinceSuffix(alert.openSinceMinutes)}',
       AlertType.sensorFailure =>
-        'Falla sensor Temp. Interior (lectura: ${_value(alert.measuredValue)} C, minimo: ${_value(alert.thresholdValue)} C)',
+        'Falla sensor Temp. Interior (lectura: ${_value(alert.measuredValue)} C, minimo: ${_value(alert.thresholdValue)} C). *Posible corte / micro-corte de luz*',
       AlertType.temperatureInterior =>
         alert.thresholdKind == AlertThresholdKind.minimum
             ? 'Temperatura interior: ${_value(alert.measuredValue)} C (min: ${_value(alert.thresholdValue)} C)'
