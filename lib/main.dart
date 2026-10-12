@@ -30,6 +30,7 @@ import 'pages/alerts/hierarchical_alert_settings_page.dart';
 import 'pages/comparison_page.dart';
 import 'services/device_environment_history_repository.dart';
 import 'pages/dashboard_page.dart';
+import 'pages/historical_export_page.dart';
 import 'pages/munters_page.dart';
 import 'pages/runtime_events_page.dart';
 import 'pages/template_management_page.dart';
@@ -71,6 +72,7 @@ import 'widgets/dashboard_header.dart';
 import 'widgets/cerdas_module.dart';
 import 'widgets/press_magnifier_region.dart';
 import 'utils/browser_exit_guard.dart';
+import 'utils/demo_scenario_file_adapter.dart';
 import 'utils/latest_only_guard.dart';
 
 Future<void> main() async {
@@ -1519,6 +1521,23 @@ class _AgroDataShellState extends State<AgroDataShell> {
           continue;
         case _SettingsMenuAction.visualConfig:
           await _openVisualConfig();
+          continue;
+        case _SettingsMenuAction.exportHistoricalData:
+          // Visible to every active role (not owner-gated) — reuses exactly
+          // the Tenant/Site scoping the dashboard bootstrap already
+          // resolved for this session, never a second permission system.
+          await Navigator.of(
+            // ignore: use_build_context_synchronously
+            context,
+          ).push(
+            MaterialPageRoute(
+              builder: (context) => HistoricalExportPage(
+                isOwner: _userRole == UserAppRole.owner,
+                activeTenantId: bootstrap.userContext.activeTenantId,
+                allowedSiteIds: bootstrap.userContext.allowedSiteIds,
+              ),
+            ),
+          );
           continue;
         case _SettingsMenuAction.manageUsers:
           await showDialog<void>(
@@ -5146,16 +5165,180 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
     setState(() {});
   }
 
+  void _showScenarioMessage(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  Future<void> _exportDraft() async {
+    final target = selected;
+    final draft = _draft;
+    if (target == null || draft == null) return;
+    final validation = draft.validate(target.snapshotUnitKey);
+    if (!validation.isValid) {
+      _showScenarioMessage(
+        'No se puede exportar: ${validation.errors.join(' ')}',
+      );
+      return;
+    }
+    try {
+      final contents = DemoScenarioFileCodec.encode(draft);
+      final safeName = draft.name
+          .trim()
+          .toLowerCase()
+          .replaceAll(RegExp(r'[^a-z0-9áéíóúñ]+'), '-')
+          .replaceAll(RegExp(r'^-+|-+$'), '');
+      await downloadDemoScenarioFile(
+        '${safeName.isEmpty ? 'escenario-demo' : safeName}.json',
+        contents,
+      );
+      _showScenarioMessage(
+        'Escenario exportado. Sólo se incluyeron los eventos confirmados.',
+      );
+    } on Object catch (error) {
+      _showScenarioMessage('No se pudo exportar el escenario: $error');
+    }
+  }
+
+  Future<void> _importDraft() async {
+    try {
+      final contents = await pickDemoScenarioFile();
+      if (contents == null) return;
+      if (contents == '__AGRO_DEMO_FILE_TOO_LARGE__') {
+        throw const DemoScenarioFileException(
+          'El archivo supera el límite de 1 MB.',
+        );
+      }
+      if (contents == '__AGRO_DEMO_FILE_READ_ERROR__') {
+        throw const DemoScenarioFileException(
+          'No se pudo leer el archivo seleccionado.',
+        );
+      }
+      final imported = DemoScenarioFileCodec.decode(contents);
+      if (!mounted || selected == null) return;
+      if (_draft != null) {
+        final replace = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Reemplazar borrador'),
+            content: const Text(
+              'La secuencia actual tiene cambios en memoria. ¿Querés reemplazarla por el archivo importado?',
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Reemplazar'),
+              ),
+            ],
+          ),
+        );
+        if (replace != true || !mounted || selected == null) return;
+      }
+      widget.drafts[selected!.snapshotUnitKey] = imported;
+      setState(() {});
+      _showScenarioMessage(
+        'Escenario importado como borrador. La reproducción actual no cambió.',
+      );
+    } on Object catch (error) {
+      _showScenarioMessage('No se pudo importar el escenario: $error');
+    }
+  }
+
+  String _eventSummary(DemoEventDraft event) {
+    final end = event.startSeconds + event.durationSeconds;
+    final valueChange = event.fromValue == null
+        ? '${event.toValue}'
+        : '${event.fromValue} → ${event.toValue}';
+    final completion = event.endMode == DemoEventEndMode.setValue
+        ? ' → ${event.endValue} al finalizar'
+        : event.durationSeconds > 0 &&
+              DemoSignalCatalog.definitionFor(
+                event.signalKey,
+              ).supportsTimedFinalState
+        ? ' · conserva el estado al finalizar'
+        : '';
+    return '${event.startSeconds}–$end s · ${event.transition.name} · $valueChange$completion';
+  }
+
   Future<void> _editEvent(DemoEventDraft original) async {
     var signal = original.signalKey;
     var transition = original.transition;
+    var endMode = original.endMode;
+    Object? endValue = original.endValue;
+    var endSelectionTouched = false;
+    final initialDefinition = DemoSignalCatalog.definitionFor(signal);
     final name = TextEditingController(text: original.name);
     final start = TextEditingController(text: '${original.startSeconds}');
     final duration = TextEditingController(text: '${original.durationSeconds}');
     final from = TextEditingController(
       text: original.fromValue?.toString() ?? '',
     );
-    final to = TextEditingController(text: original.toValue?.toString() ?? '');
+    final to = TextEditingController(
+      text:
+          original.toValue?.toString() ??
+          (initialDefinition.kind == DemoSignalKind.boolean
+              ? 'null'
+              : initialDefinition.kind == DemoSignalKind.text
+              ? '__null__'
+              : ''),
+    );
+
+    void normalizeValuesForSignal(
+      DemoSignalDefinition definition, {
+      required bool forceReset,
+    }) {
+      final defaultValue = definition.editorDefaultValue;
+      switch (definition.kind) {
+        case DemoSignalKind.number:
+          if (forceReset) {
+            final text = defaultValue?.toString() ?? '';
+            from.text = text;
+            to.text = text;
+          }
+        case DemoSignalKind.boolean:
+          final valid =
+              to.text == 'true' ||
+              to.text == 'false' ||
+              (definition.nullable && to.text == 'null');
+          if (forceReset || !valid) to.text = '$defaultValue';
+          from.clear();
+        case DemoSignalKind.text:
+          final valid =
+              definition.allowedTextValues.contains(to.text) ||
+              (definition.nullable && to.text == '__null__');
+          if (forceReset || !valid) {
+            to.text = defaultValue?.toString() ?? '__null__';
+          }
+          from.clear();
+      }
+    }
+
+    normalizeValuesForSignal(
+      DemoSignalCatalog.definitionFor(signal),
+      forceReset: false,
+    );
+    void proposeFinalState() {
+      final definition = DemoSignalCatalog.definitionFor(signal);
+      final seconds = double.tryParse(duration.text.replaceAll(',', '.')) ?? 0;
+      if (!endSelectionTouched &&
+          original.isNew &&
+          definition.supportsTimedFinalState &&
+          seconds > 0 &&
+          (to.text == 'true' || to.text == 'false')) {
+        endMode = DemoEventEndMode.setValue;
+        endValue = false;
+      } else if (!definition.supportsTimedFinalState || seconds <= 0) {
+        endMode = DemoEventEndMode.keepApplied;
+        endValue = null;
+      }
+    }
+
     final saved = await showDialog<DemoEventDraft>(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -5185,10 +5368,18 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                     onChanged: (v) => setDialogState(() {
                       if (v != null) {
                         signal = v;
-                        transition =
-                            DemoSignalCatalog.definitionFor(v).interpolable
-                            ? transition
-                            : DemoTransition.instant;
+                        final nextDefinition = DemoSignalCatalog.definitionFor(
+                          v,
+                        );
+                        transition = DemoTransition.instant;
+                        endSelectionTouched = false;
+                        endMode = DemoEventEndMode.keepApplied;
+                        endValue = null;
+                        normalizeValuesForSignal(
+                          nextDefinition,
+                          forceReset: true,
+                        );
+                        proposeFinalState();
                       }
                     }),
                   ),
@@ -5201,8 +5392,10 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                     decoration: const InputDecoration(
                       labelText: 'Duración (s)',
                     ),
+                    onChanged: (_) => setDialogState(proposeFinalState),
                   ),
                   DropdownButtonFormField<DemoTransition>(
+                    key: ValueKey('event-transition-${signal.wireName}'),
                     initialValue: transition,
                     decoration: const InputDecoration(labelText: 'Transición'),
                     items: [
@@ -5237,9 +5430,8 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                     ),
                   ] else if (definition.kind == DemoSignalKind.boolean)
                     DropdownButtonFormField<String>(
-                      initialValue: original.toValue == null
-                          ? 'null'
-                          : '${original.toValue}',
+                      key: ValueKey('event-boolean-${signal.wireName}'),
+                      initialValue: to.text,
                       decoration: const InputDecoration(labelText: 'Estado'),
                       items: const [
                         DropdownMenuItem(
@@ -5255,16 +5447,65 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                           child: Text('Sin datos'),
                         ),
                       ],
-                      onChanged: (v) => to.text = v ?? 'null',
+                      onChanged: (v) => setDialogState(() {
+                        to.text = v ?? 'null';
+                        proposeFinalState();
+                      }),
                     )
                   else
                     DropdownButtonFormField<String>(
-                      initialValue: original.toValue as String?,
+                      key: ValueKey('event-text-${signal.wireName}'),
+                      initialValue: to.text,
+                      decoration: const InputDecoration(labelText: 'Estado'),
                       items: [
                         for (final v in definition.allowedTextValues)
                           DropdownMenuItem(value: v, child: Text(v)),
+                        if (definition.nullable)
+                          const DropdownMenuItem(
+                            value: '__null__',
+                            child: Text('Sin datos'),
+                          ),
                       ],
-                      onChanged: (v) => to.text = v ?? '',
+                      onChanged: (v) => to.text = v ?? '__null__',
+                    ),
+                  if (definition.supportsTimedFinalState &&
+                      transition == DemoTransition.instant &&
+                      (double.tryParse(duration.text.replaceAll(',', '.')) ??
+                              0) >
+                          0)
+                    DropdownButtonFormField<String>(
+                      key: ValueKey(
+                        'event-end-${signal.wireName}-$endMode-$endValue',
+                      ),
+                      initialValue: endMode == DemoEventEndMode.keepApplied
+                          ? 'keep'
+                          : endValue == true
+                          ? 'true'
+                          : 'false',
+                      decoration: const InputDecoration(
+                        labelText: 'Al finalizar',
+                      ),
+                      items: const <DropdownMenuItem<String>>[
+                        DropdownMenuItem(
+                          value: 'keep',
+                          child: Text('Conservar el estado aplicado'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'false',
+                          child: Text('Inactivo / Cerrada'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'true',
+                          child: Text('Activo / Abierta'),
+                        ),
+                      ],
+                      onChanged: (value) => setDialogState(() {
+                        endSelectionTouched = true;
+                        endMode = value == 'keep'
+                            ? DemoEventEndMode.keepApplied
+                            : DemoEventEndMode.setValue;
+                        endValue = value == 'keep' ? null : value == 'true';
+                      }),
                     ),
                 ],
               ),
@@ -5283,6 +5524,8 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                       ? text == 'null'
                             ? null
                             : text == 'true'
+                      : text == '__null__'
+                      ? null
                       : text;
                   Navigator.pop(
                     context,
@@ -5297,6 +5540,11 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                           ? parseValue(from.text)
                           : null,
                       toValue: parseValue(to.text),
+                      endMode: endMode,
+                      endValue: endMode == DemoEventEndMode.setValue
+                          ? endValue
+                          : null,
+                      isNew: false,
                     ),
                   );
                 },
@@ -5339,17 +5587,45 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
                 onPressed: _copyTechnicalDraft,
                 child: const Text('Copiar técnica 25 s'),
               ),
+              OutlinedButton.icon(
+                key: const ValueKey('draft-import'),
+                onPressed: _importDraft,
+                icon: const Icon(Icons.upload_file),
+                label: const Text('Importar escenario'),
+              ),
             ],
           ),
         ],
       );
     }
     final validation = draft.validate(target.snapshotUnitKey);
+    final unavailableSignals = <DemoSignalKey>{
+      for (final event in draft.events)
+        if (_realValue(event.signalKey) == null) event.signalKey,
+    };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
         const Divider(),
         const Text('Secuencia', style: TextStyle(fontWeight: FontWeight.bold)),
+        Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          children: <Widget>[
+            OutlinedButton.icon(
+              key: const ValueKey('draft-export'),
+              onPressed: _exportDraft,
+              icon: const Icon(Icons.download),
+              label: const Text('Exportar escenario'),
+            ),
+            OutlinedButton.icon(
+              key: const ValueKey('draft-import'),
+              onPressed: _importDraft,
+              icon: const Icon(Icons.upload_file),
+              label: const Text('Importar escenario'),
+            ),
+          ],
+        ),
         TextFormField(
           key: ValueKey('draft-name-${draft.id}'),
           initialValue: draft.name,
@@ -5380,9 +5656,7 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
               title: Text(
                 '${draft.events[i].id}${draft.events[i].name.isEmpty ? '' : ' · ${draft.events[i].name}'} · ${DemoSignalCatalog.definitionFor(draft.events[i].signalKey).label}',
               ),
-              subtitle: Text(
-                '${draft.events[i].startSeconds}s → ${draft.events[i].startSeconds + draft.events[i].durationSeconds}s · ${draft.events[i].transition.name} · ${draft.events[i].fromValue ?? ''} → ${draft.events[i].toValue}',
-              ),
+              subtitle: Text(_eventSummary(draft.events[i])),
               onTap: () => _editEvent(draft.events[i]),
               trailing: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -5436,9 +5710,14 @@ class _DemoManualPanelState extends State<_DemoManualPanel> {
             error,
             style: const TextStyle(color: Color(0xFFF87171), fontSize: 11),
           ),
+        if (unavailableSignals.isNotEmpty)
+          Text(
+            'Este Device no expone: ${unavailableSignals.map((key) => DemoSignalCatalog.definitionFor(key).label).join(', ')}. Resolvé esos eventos antes de reproducir.',
+            style: const TextStyle(color: Color(0xFFF87171), fontSize: 11),
+          ),
         FilledButton.icon(
           key: const ValueKey('draft-play'),
-          onPressed: validation.isValid
+          onPressed: validation.isValid && unavailableSignals.isEmpty
               ? () {
                   widget.onPlayDraft(target, validation.scenario!);
                   setState(() {});
@@ -5791,6 +6070,7 @@ enum _SettingsMenuAction {
   rolesHelp,
   rolesCompare,
   visualConfig,
+  exportHistoricalData,
   legacyInterfaces,
   legacyDashboard,
   legacyMunters1,
@@ -6069,6 +6349,26 @@ class _SettingsMenuDialog extends StatelessWidget {
                     ),
                   ],
                 ],
+              ),
+              const SizedBox(height: 18),
+              const _SettingsMenuSectionTitle('Datos'),
+              const SizedBox(height: 8),
+              FilledButton.tonal(
+                onPressed: () => Navigator.of(
+                  context,
+                ).pop(_SettingsMenuAction.exportHistoricalData),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size(0, 42),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                ),
+                child: const Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.file_download_outlined, size: 18),
+                    SizedBox(width: 8),
+                    Text('Exportar datos'),
+                  ],
+                ),
               ),
               if (canAccessTemplatesUi(userRole)) ...[
                 const SizedBox(height: 18),

@@ -291,7 +291,7 @@ void main() {
           '— registrado en el informe de Etapa 5B, incluye las entidades '
           'extra creadas durante el smoke test manual', () {
         final String report = File(
-          'no_git/informes_de_codigo/informe_etapa5b_normalizacion_la_payana_2026-08-07.html',
+          'no_git/informes_de_codigo_AgroDC/informe_etapa5b_normalizacion_la_payana_2026-08-07.html',
         ).readAsStringSync();
         expect(report, contains('qa-structural-test'));
         expect(report, contains('qb_site'));

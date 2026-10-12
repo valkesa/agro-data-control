@@ -52,6 +52,7 @@ class DemoSignalDefinition {
     this.min,
     this.max,
     this.interpolable = false,
+    this.supportsTimedFinalState = false,
     Iterable<String> allowedTextValues = const <String>{},
   }) : allowedTextValues = Set<String>.unmodifiable(allowedTextValues) {
     if (label.trim().isEmpty) {
@@ -66,6 +67,11 @@ class DemoSignalDefinition {
     if (interpolable && kind != DemoSignalKind.number) {
       throw ArgumentError('Only numeric signals may be interpolated');
     }
+    if (supportsTimedFinalState && kind != DemoSignalKind.boolean) {
+      throw ArgumentError(
+        'Only boolean signals may define a timed final state',
+      );
+    }
     if (allowedTextValues.isNotEmpty && kind != DemoSignalKind.text) {
       throw ArgumentError('Only text signals may define allowed values');
     }
@@ -78,7 +84,21 @@ class DemoSignalDefinition {
   final double? min;
   final double? max;
   final bool interpolable;
+  final bool supportsTimedFinalState;
   final Set<String> allowedTextValues;
+
+  /// A valid neutral seed for editors when the user changes signal kind.
+  /// It prevents a value from the previous kind (for example numeric `90`)
+  /// from being fed into a boolean/text dropdown.
+  Object? get editorDefaultValue => switch (kind) {
+    DemoSignalKind.number => 0.0.clamp(
+      min ?? double.negativeInfinity,
+      max ?? double.infinity,
+    ),
+    DemoSignalKind.boolean => false,
+    DemoSignalKind.text =>
+      allowedTextValues.isEmpty ? null : allowedTextValues.first,
+  };
 
   void validateValue(Object? value, {String parameterName = 'value'}) {
     if (value == null) {
@@ -220,6 +240,19 @@ class DemoSignalCatalog {
             label: entry.value,
             kind: DemoSignalKind.boolean,
             nullable: true,
+            supportsTimedFinalState: const <DemoSignalKey>{
+              DemoSignalKey.heatingStage1,
+              DemoSignalKey.heatingStage2,
+              DemoSignalKey.humidifier,
+              DemoSignalKey.fanQ5,
+              DemoSignalKey.fanQ6,
+              DemoSignalKey.fanQ7,
+              DemoSignalKey.fanQ8,
+              DemoSignalKey.fanQ9,
+              DemoSignalKey.fanQ10,
+              DemoSignalKey.roomDoorOpen,
+              DemoSignalKey.equipmentDoorOpen,
+            }.contains(entry.key),
           ),
         DemoSignalKey.equipmentState: DemoSignalDefinition(
           key: DemoSignalKey.equipmentState,

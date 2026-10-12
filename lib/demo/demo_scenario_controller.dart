@@ -9,9 +9,10 @@ abstract interface class DemoMonotonicClock {
 
 enum DemoPlaybackState { stopped, running, paused, completed, disposed }
 
-/// Pure deterministic evaluator. Final values persist after an event ends.
-/// For overlaps on one signal, the event with the latest start wins; equal
-/// starts are ordered by id and the lexicographically greatest id wins.
+/// Pure deterministic evaluator. The latest event start for each signal owns
+/// that signal. Equal starts are ordered by id. This also means an older
+/// event's automatic end can never overwrite a later event; when one event
+/// starts exactly as another ends, the new start wins.
 class DemoScenarioEvaluator {
   const DemoScenarioEvaluator._();
 
@@ -27,14 +28,22 @@ class DemoScenarioEvaluator {
             final byTime = a.startTime.compareTo(b.startTime);
             return byTime != 0 ? byTime : a.id.compareTo(b.id);
           });
-    final result = <DemoSignalKey, Object?>{};
+    final owners = <DemoSignalKey, DemoEvent>{};
     for (final event in started) {
-      result[event.signalKey] = _valueAt(event, elapsed);
+      owners[event.signalKey] = event;
     }
+    final result = <DemoSignalKey, Object?>{
+      for (final entry in owners.entries)
+        entry.key: _valueAt(entry.value, elapsed),
+    };
     return result;
   }
 
   static Object? _valueAt(DemoEvent event, Duration elapsed) {
+    if (event.endMode == DemoEventEndMode.setValue &&
+        elapsed >= event.endTime) {
+      return event.endValue;
+    }
     if (event.transition == DemoTransition.instant ||
         elapsed >= event.endTime) {
       return event.toValue;

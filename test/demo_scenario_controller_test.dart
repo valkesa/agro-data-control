@@ -273,6 +273,162 @@ void main() {
     );
   });
 
+  test('estado final se aplica exactamente al fin y persiste después', () {
+    final timedDoor = scenario(
+      events: <DemoEvent>[
+        DemoEvent(
+          id: 'door',
+          targetSnapshotUnitKey: 'unit-1',
+          signalKey: DemoSignalKey.roomDoorOpen,
+          startTime: const Duration(seconds: 10),
+          duration: const Duration(seconds: 8),
+          toValue: true,
+          endMode: DemoEventEndMode.setValue,
+          endValue: false,
+        ),
+      ],
+      duration: const Duration(seconds: 25),
+    );
+    expect(
+      DemoScenarioEvaluator.overridesAt(timedDoor, const Duration(seconds: 9)),
+      isEmpty,
+    );
+    expect(
+      DemoScenarioEvaluator.overridesAt(
+        timedDoor,
+        const Duration(seconds: 10),
+      )[DemoSignalKey.roomDoorOpen],
+      isTrue,
+    );
+    expect(
+      DemoScenarioEvaluator.overridesAt(
+        timedDoor,
+        const Duration(seconds: 17, milliseconds: 999),
+      )[DemoSignalKey.roomDoorOpen],
+      isTrue,
+    );
+    expect(
+      DemoScenarioEvaluator.overridesAt(
+        timedDoor,
+        const Duration(seconds: 18),
+      )[DemoSignalKey.roomDoorOpen],
+      isFalse,
+    );
+    expect(
+      DemoScenarioEvaluator.overridesAt(
+        timedDoor,
+        const Duration(seconds: 22),
+      )[DemoSignalKey.roomDoorOpen],
+      isFalse,
+    );
+  });
+
+  test('duración cero y evento antiguo conservan valor sin cierre', () {
+    for (final duration in <Duration>[
+      Duration.zero,
+      const Duration(seconds: 4),
+    ]) {
+      final legacy = scenario(
+        events: <DemoEvent>[
+          DemoEvent(
+            id: 'legacy',
+            targetSnapshotUnitKey: 'unit-1',
+            signalKey: DemoSignalKey.heatingStage1,
+            startTime: const Duration(seconds: 2),
+            duration: duration,
+            toValue: true,
+          ),
+        ],
+      );
+      expect(
+        DemoScenarioEvaluator.overridesAt(
+          legacy,
+          const Duration(seconds: 10),
+        )[DemoSignalKey.heatingStage1],
+        isTrue,
+      );
+    }
+  });
+
+  test(
+    'inicio posterior gana a final antiguo, también en el mismo instante',
+    () {
+      DemoEvent oldTimed() => DemoEvent(
+        id: 'old',
+        targetSnapshotUnitKey: 'unit-1',
+        signalKey: DemoSignalKey.roomDoorOpen,
+        startTime: const Duration(seconds: 2),
+        duration: const Duration(seconds: 8),
+        toValue: true,
+        endMode: DemoEventEndMode.setValue,
+        endValue: false,
+      );
+      for (final laterStart in <Duration>[
+        const Duration(seconds: 6),
+        const Duration(seconds: 10),
+      ]) {
+        final overlap = scenario(
+          events: <DemoEvent>[
+            oldTimed(),
+            DemoEvent(
+              id: 'new',
+              targetSnapshotUnitKey: 'unit-1',
+              signalKey: DemoSignalKey.roomDoorOpen,
+              startTime: laterStart,
+              duration: Duration.zero,
+              toValue: true,
+            ),
+          ],
+        );
+        expect(
+          DemoScenarioEvaluator.overridesAt(
+            overlap,
+            const Duration(seconds: 12),
+          )[DemoSignalKey.roomDoorOpen],
+          isTrue,
+        );
+      }
+    },
+  );
+
+  test(
+    'tick que salta el fin y liberar override muestran el final temporal',
+    () {
+      final timed = scenario(
+        events: <DemoEvent>[
+          DemoEvent(
+            id: 'heat',
+            targetSnapshotUnitKey: 'unit-1',
+            signalKey: DemoSignalKey.heatingStage1,
+            startTime: const Duration(seconds: 2),
+            duration: const Duration(seconds: 5),
+            toValue: true,
+            endMode: DemoEventEndMode.setValue,
+            endValue: false,
+          ),
+        ],
+      );
+      controller.start(
+        role: 'owner',
+        realSnapshot: snapshot(20),
+        scope: scope(),
+        scenario: timed,
+      );
+      controller.setManualOverride(DemoSignalKey.heatingStage1, true);
+      clock.advance(const Duration(seconds: 9));
+      controller.tick();
+      expect(
+        selector.selectForPresentation(snapshot(99)).units.single.resistencia1,
+        isTrue,
+      );
+      controller.releaseManualOverride(DemoSignalKey.heatingStage1);
+      expect(
+        selector.selectForPresentation(snapshot(99)).units.single.resistencia1,
+        isFalse,
+      );
+    },
+  );
+
   test('rechaza eventos fuera del snapshotUnitKey del scope', () {
     final invalid = scenario(
       events: <DemoEvent>[

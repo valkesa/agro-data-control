@@ -11,6 +11,9 @@ class DemoEventDraft {
     required this.transition,
     this.fromValue,
     this.toValue,
+    this.endMode = DemoEventEndMode.keepApplied,
+    this.endValue,
+    this.isNew = false,
   });
   final String id;
   final String name;
@@ -20,6 +23,9 @@ class DemoEventDraft {
   final DemoTransition transition;
   final Object? fromValue;
   final Object? toValue;
+  final DemoEventEndMode endMode;
+  final Object? endValue;
+  final bool isNew;
   DemoEventDraft copyWith({
     String? name,
     DemoSignalKey? signalKey,
@@ -28,6 +34,9 @@ class DemoEventDraft {
     DemoTransition? transition,
     Object? fromValue = _unset,
     Object? toValue = _unset,
+    DemoEventEndMode? endMode,
+    Object? endValue = _unset,
+    bool? isNew,
   }) => DemoEventDraft(
     id: id,
     name: name ?? this.name,
@@ -37,6 +46,9 @@ class DemoEventDraft {
     transition: transition ?? this.transition,
     fromValue: identical(fromValue, _unset) ? this.fromValue : fromValue,
     toValue: identical(toValue, _unset) ? this.toValue : toValue,
+    endMode: endMode ?? this.endMode,
+    endValue: identical(endValue, _unset) ? this.endValue : endValue,
+    isNew: isNew ?? this.isNew,
   );
   static const _unset = Object();
 }
@@ -84,6 +96,7 @@ class DemoScenarioDraft {
             : d.kind == DemoSignalKind.boolean
             ? false
             : d.allowedTextValues.firstOrNull,
+        isNew: true,
       ),
     );
     return id;
@@ -133,6 +146,8 @@ class DemoScenarioDraft {
             fromValue: e.fromValue,
             toValue: e.toValue,
             transition: e.transition,
+            endMode: e.endMode,
+            endValue: e.endValue,
           ),
         );
       } catch (error) {
@@ -188,6 +203,8 @@ class DemoScenarioDraft {
               transition: e.transition,
               fromValue: e.fromValue,
               toValue: e.toValue,
+              endMode: e.endMode,
+              endValue: e.endValue,
             ),
         ],
       );

@@ -2,6 +2,8 @@ import 'demo_signal_definition.dart';
 
 enum DemoTransition { instant, linear }
 
+enum DemoEventEndMode { keepApplied, setValue }
+
 /// One validated, side-effect-free change in a demo scenario.
 class DemoEvent {
   DemoEvent({
@@ -13,6 +15,8 @@ class DemoEvent {
     required this.toValue,
     this.fromValue,
     this.transition = DemoTransition.instant,
+    this.endMode = DemoEventEndMode.keepApplied,
+    this.endValue,
   }) {
     if (id.trim().isEmpty) {
       throw ArgumentError.value(id, 'id', 'Must not be empty');
@@ -57,6 +61,23 @@ class DemoEvent {
         );
       }
     }
+    if (endMode == DemoEventEndMode.setValue) {
+      if (!definition.supportsTimedFinalState) {
+        throw ArgumentError.value(
+          signalKey.wireName,
+          'signalKey',
+          'Signal does not support a timed final state',
+        );
+      }
+      if (transition != DemoTransition.instant || duration == Duration.zero) {
+        throw ArgumentError(
+          'An explicit final state requires an instant event with positive duration',
+        );
+      }
+      definition.validateValue(endValue, parameterName: 'endValue');
+    } else if (endValue != null) {
+      throw ArgumentError('endValue requires endMode setValue');
+    }
   }
 
   factory DemoEvent.fromMap(Map<String, Object?> map) {
@@ -80,6 +101,17 @@ class DemoEvent {
       fromValue: map['fromValue'],
       toValue: map['toValue'],
       transition: transition.single,
+      endMode: _parseEndMode(map['endMode']),
+      endValue: map['endValue'],
+    );
+  }
+
+  static DemoEventEndMode _parseEndMode(Object? raw) {
+    if (raw == null) return DemoEventEndMode.keepApplied;
+    return DemoEventEndMode.values.firstWhere(
+      (value) => value.name == raw,
+      orElse: () =>
+          throw ArgumentError.value(raw, 'endMode', 'Unsupported end mode'),
     );
   }
 
@@ -91,6 +123,8 @@ class DemoEvent {
   final Object? fromValue;
   final Object? toValue;
   final DemoTransition transition;
+  final DemoEventEndMode endMode;
+  final Object? endValue;
 
   Duration get endTime => startTime + duration;
 
@@ -103,6 +137,8 @@ class DemoEvent {
     if (fromValue != null) 'fromValue': fromValue,
     'toValue': toValue,
     'transition': transition.name,
+    if (endMode != DemoEventEndMode.keepApplied) 'endMode': endMode.name,
+    if (endMode == DemoEventEndMode.setValue) 'endValue': endValue,
   };
 }
 

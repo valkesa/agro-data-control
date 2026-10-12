@@ -2,6 +2,31 @@ import 'package:agro_data_control/demo/demo.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test(
+    'todos los tipos de señal tienen un valor inicial válido para editor',
+    () {
+      for (final definition in DemoSignalCatalog.definitions) {
+        expect(
+          () => definition.validateValue(definition.editorDefaultValue),
+          returnsNormally,
+          reason: definition.key.wireName,
+        );
+      }
+      expect(
+        DemoSignalCatalog.definitionFor(
+          DemoSignalKey.heatingStage1,
+        ).editorDefaultValue,
+        isFalse,
+      );
+      expect(
+        DemoSignalCatalog.definitionFor(
+          DemoSignalKey.equipmentState,
+        ).editorDefaultValue,
+        isIn(<String>['RUN', 'STOP', 'FAULT']),
+      );
+    },
+  );
+
   test('CRUD conserva identidades y reorder no cambia tiempos', () {
     final d = DemoScenarioDraft(id: 'd', name: 'Demo', durationSeconds: 20);
     final a = d.addEvent(signalKey: DemoSignalKey.indoorTemperature);
@@ -91,5 +116,47 @@ void main() {
     final v = d.validate('u');
     expect(v.scenario, isNull);
     expect(v.errors.length, greaterThanOrEqualTo(2));
+  });
+
+  test('final explícito sólo admite booleanos temporizados soportados', () {
+    expect(
+      () => DemoEvent(
+        id: 'zero',
+        targetSnapshotUnitKey: 'u',
+        signalKey: DemoSignalKey.roomDoorOpen,
+        startTime: Duration.zero,
+        duration: Duration.zero,
+        toValue: true,
+        endMode: DemoEventEndMode.setValue,
+        endValue: false,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => DemoEvent(
+        id: 'failure',
+        targetSnapshotUnitKey: 'u',
+        signalKey: DemoSignalKey.networkFailure,
+        startTime: Duration.zero,
+        duration: const Duration(seconds: 2),
+        toValue: true,
+        endMode: DemoEventEndMode.setValue,
+        endValue: false,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => DemoEvent(
+        id: 'door',
+        targetSnapshotUnitKey: 'u',
+        signalKey: DemoSignalKey.roomDoorOpen,
+        startTime: Duration.zero,
+        duration: const Duration(seconds: 2),
+        toValue: true,
+        endMode: DemoEventEndMode.setValue,
+        endValue: false,
+      ),
+      returnsNormally,
+    );
   });
 }

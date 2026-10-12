@@ -91,6 +91,7 @@ void main() {
             final target = match.group(1)!;
             expect(
               target.startsWith('demo_') ||
+                  target == 'dart:convert' ||
                   allowedModelImports.contains(target),
               isTrue,
               reason: '${file.path} must not depend on $target',
